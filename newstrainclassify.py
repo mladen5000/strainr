@@ -6,7 +6,7 @@ import time
 import pandas as pd
 from dask import delayed
 from dask.distributed import Client
-
+import pickle
 # kmerset = {bytes(seqview[i : i + KMERLEN]) for i in range(max_index)}
 def count_kmers(seqrecord):
     max_index = len(seqrecord.seq) - KMERLEN + 1
@@ -29,16 +29,27 @@ def get_hits(read):
 def final(results):
     return results
 
+def load_pdatabase(dbfile):
+    df = pd.read_pickle(dbfile)
+    return df
+
+def df_to_dict(df):
+    strain_array = list(df.to_numpy())
+    strain_ids = df.columns
+    kmers = df.index.to_list()
+    db = dict(zip(kmers,larrays))
+    return strain_ids,db
+
 if __name__ == "__main__":
+    p = pathlib.Path().cwd()
+    params = get_args()
+    main()
+
     KMERLEN = 31
     t0 = time.time()
-    df = pd.read_pickle("new_databases/new_method.sdb")
-    larrays = list(df.to_numpy())
-    kmers = df.index.to_list()
-    print("making a dict")
-    db = dict(zip(kmers,larrays))
-    # for k,v in db.items():
-    #     print(k)
+    df = load_pdatabase("new_method.sdb")
+    strains,db = df_to_dict(df)
+
     results = []
     for i,read in enumerate(SeqIO.parse("inputs/test_R1.fastq", "fastq")):
         res = count_kmers(read)

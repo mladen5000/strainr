@@ -136,7 +136,7 @@ def build_database(genome_files):
                 acc = genome_file.stem[:15]
                 with memoryview(bytes(record.seq)) as seq_buffer:
                     for i in range(max_index):
-                        kmer = seq_buffer[i : i + 31]
+                        kmer = seq_buffer[i : i + kmerlen]
                         database[bytes(kmer)].append(acc)
     return database
 
