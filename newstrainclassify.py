@@ -90,7 +90,7 @@ def get_kmer_len(df):
 
 def classify():
     # Classify reads
-    print("Begining maponly classification")
+    print("Begining classification")
     t0 = time.time()
     records = list(SeqIO.parse(f1, "fastq"))
     with mp.Pool() as pool:
@@ -124,15 +124,24 @@ def get_mode(hitcounts):
     return clear_hits, ambig_hits, none_hits
 
 
+def print_relab(posterior_prob, nstrains=10):
+    """Displays Top 10 relative abundance strains"""
+    print(f"\nRelative Abundance Estimation")
+    for k, v in posterior_prob.most_common(n=nstrains):
+        print(k, "\t", round(v, 5))
+    print(f"\n")
+
+def normalize_dist(countdict):
+    total = sum(countdict.values())
+    # TODO: test out new dict
+    # return { k: v/total for k,v in countdict.items() }
+    for el in countdict.keys():
+        countdict[el] /= total
+    return countdict
+
 def generate_likelihood(clear_hits):
-    prior = {}
-    fullhits = np.array(list(clear_hits.values()))
-    top_strains = np.argmax(fullhits, axis=1)
-    strain_counter = Counter(top_strains)
-    for strain, num_occurences in strain_counter.items():
-        percentage = num_occurences / len(top_strains)
-        prior[strain] = percentage
-    print(prior)
+    unique_hit_distribution = Counter([np.argmax(v) for v in clear_hits.values()])
+    prior = normalize_dist(unique_hit_distribution)
     return prior
 
 
@@ -147,7 +156,8 @@ if __name__ == "__main__":
     kmerlen = 31
     f1 = "test_R1.fastq"
     t0 = time.time()
-    df = load_database("new_method.sdb")
+    # df = load_database("new_method.sdb")
+    df = load_database("hflu_complete_genbank.db")
     t1 = time.time()
     kmerlen = get_kmer_len(df)
     strains, db = df_to_dict(df)
