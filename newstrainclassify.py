@@ -125,12 +125,10 @@ def get_mode(hitcounts):
 
 
 def generate_likelihood(clear_hits):
+    prior = {}
     fullhits = np.array(list(clear_hits.values()))
-    print(fullhits)
-    top_strains = np.argmax(fullhits, axis=0)
-    print(top_strains)
+    top_strains = np.argmax(fullhits, axis=1)
     strain_counter = Counter(top_strains)
-    print(strain_counter)
     for strain, num_occurences in strain_counter.items():
         percentage = num_occurences / len(top_strains)
         prior[strain] = percentage
