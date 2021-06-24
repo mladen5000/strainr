@@ -4,6 +4,7 @@ import time
 import pickle
 import pathlib
 import argparse
+import random
 
 import numpy as np
 import pandas as pd
@@ -95,14 +96,14 @@ def classify():
     records = list(SeqIO.parse(f1, "fastq"))
     with mp.Pool() as pool:
         results = list(
-                zip(
+            zip(
+                records,
+                pool.map(
+                    count_kmers,
                     records,
-                        pool.map(
-                        count_kmers,
-                        records,
-                    ),
-                )
+                ),
             )
+        )
     print(f"Ending classification: {time.time() - t0}s")
     return results
 
@@ -131,22 +132,60 @@ def print_relab(posterior_prob, nstrains=10):
         print(k, "\t", round(v, 5))
     print(f"\n")
 
-def normalize_dist(countdict):
+
+def normalize_dist(countdict, num_strains):
+    """
+    Convert hits per strain into % of each strain.
+    Also convert the dict of strain_index: value to a numpy array
+    where the value is placed in the index
+    example input: {2: 0.24, 4: 0.51, 10: 0.25}
+    example output: [0,0,0.24,0,0.51,0,0,0,0,0,0.25,0,0,0]
+    """
+    prior_array = np.zeros(num_strains)
     total = sum(countdict.values())
-    # TODO: test out new dict
-    # return { k: v/total for k,v in countdict.items() }
-    for el in countdict.keys():
-        countdict[el] /= total
-    return countdict
+    for k, v in countdict.items():
+        prior_array[k] = v / total
+
+    # return {k:v/total for k,v in countdict.items()}
+    return prior_array
+
 
 def generate_likelihood(clear_hits):
+    """
+    Aggregate clear hits in order to get initial estimate of distribution
+    """
     unique_hit_distribution = Counter([np.argmax(v) for v in clear_hits.values()])
-    prior = normalize_dist(unique_hit_distribution)
+    nstrains = len(list(clear_hits.values())[0])  # TODO
+    prior = normalize_dist(unique_hit_distribution, nstrains)
     return prior
 
 
-# def resolve_ties(ambig_hits):
-#     for k,v in ambig_hits.items():
+def resolve_ties(ambig_hits, prior):
+    updated_ambig = {read: np.argmax(hits * prior) for read, hits in ambig_hits.items()}
+    # print(updated_ambig)
+    assert len(updated_ambig) == len(ambig_hits)
+    return updated_ambig
+
+
+def assess_resolve_ties():
+    """Not implemented, but use this in case of multiple rounds of resolution"""
+    # TODO
+    new_clear, new_ambig = {}, {}
+    for read, hits in ambig_hits.items():
+        mlehits = hits * prior
+        max_ind = np.argwhere(mlehits == np.max(mlehits)).flatten()
+        if len(max_ind) == 1:
+            new_clear[read] = mlehits
+        elif len(max_ind) > 1:
+            new_ambig[read] = mlehits
+    print(f"Ties Resolved:{len(new_clear)}, Still ambiguous: {len(new_ambig)}")
+    return new_clear, new_ambig
+
+
+def joined_abundance(clear_hits, new_ambig, na_hits, ambig_hits):
+    all_dict = {}
+    all_dict = clear_hits | new_ambig | na_hits
+    assert len(all_dict) == len(clear_hits) + len(new_ambig) + len(na_hits)
 
 
 if __name__ == "__main__":
@@ -154,10 +193,11 @@ if __name__ == "__main__":
     p = pathlib.Path().cwd()
     params = vars(get_args().parse_args())
     kmerlen = 31
-    f1 = "test_R1.fastq"
+    f1 = "short_R1.fastq"
     t0 = time.time()
     # df = load_database("new_method.sdb")
-    df = load_database("hflu_complete_genbank.db")
+    # df = load_database("hflu_complete_genbank.db")
+    df = load_database("database.db")
     t1 = time.time()
     kmerlen = get_kmer_len(df)
     strains, db = df_to_dict(df)
@@ -169,11 +209,5 @@ if __name__ == "__main__":
     t4 = time.time()
     print(f"classifying : {t3-t2}, separating : {t4-t3}")
     prior = generate_likelihood(clear_hits)
-    # for i,read in enumerate(SeqIO.parse("inputs/short_R1.fastq", "fastq")):
-    #     print(i)
-    #     kset = delayed(count_kmers)(read)
-    #     res = delayed(get_hits)(kset)
-    #     results.append(res)
-    # results = delayed(final)(results)
-    # resultsf = results.compute()
-    # print(resultsf)
+    new_ambig = resolve_ties(ambig_hits, prior)
+    # print(ambig_hits)
