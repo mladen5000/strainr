@@ -1,16 +1,16 @@
-# new
+#!/usr/bin/env python
+import argparse
+import multiprocessing as mp
+import functools
+import pathlib
+import pickle
+import random
 import sys
 import time
-import pickle
-import pathlib
-import argparse
-import random
-import functools
+from collections import Counter
 
 import numpy as np
 import pandas as pd
-import multiprocessing as mp
-from collections import Counter
 from Bio import SeqIO
 
 
@@ -95,7 +95,7 @@ def classify():
     print("Begining classification")
     t0 = time.time()
     records = list(SeqIO.parse(f1, "fastq"))
-    with mp.Pool(processes=16) as pool:
+    with mp.Pool(processes=procs) as pool:
         results = list(
             zip(
                 records,
@@ -147,6 +147,46 @@ def counter_to_array(prior_counter, nstrains):
     for k, v in prior_counter.items():
         prior_array[k] = v / total
     return prior_array
+
+
+def parallel_resolve(hits, prior, selection):
+    # Treshold at max
+    belowmax = hits < np.max(hits)
+    hits[belowmax] = 0
+    mlehits = hits * prior  # Apply prior
+
+    if selection == "random":  # Weighted assignment
+        return random.choices(range(len(hits)), weights=mlehits, k=1).pop()
+
+    elif selection == "max":  # Maximum Likelihood assignment
+        return int(np.argwhere(mlehits == np.max(mlehits)).flatten())
+
+    elif selection == "dirichlet":  # Dirichlet assignment
+        mlehits[mlehits == 0] = 1e-10
+        return np.argmax(rng.dirichlet(mlehits, 1))
+
+    elif selection == "multinomial":  # Multinomial
+        mlehits[mlehits == 0] = 1e-10
+        return np.argmax(rng.multinomial(1, mlehits / sum(mlehits)))
+
+    else:
+        raise ValueError("Must select a selection mode")
+
+
+
+
+def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
+    new_clear, new_ambig = {}, {}
+    mapfunc = functools.partial(parallel_resolve, prior=prior,selection=selection, )
+
+    with mp.Pool(processes=procs) as pool:
+        for read, outhits in zip(
+            ambig_hits.keys(),
+            pool.map(mapfunc, ambig_hits.values()),
+        ):
+            new_clear[read] = outhits
+
+    return new_clear, new_ambig
 
 
 def disambiguate(ambig_hits, prior, selection="multinomial"):
@@ -272,12 +312,15 @@ if __name__ == "__main__":
     # df = load_database("new_method.sdb")
     df = load_database("hflu_complete_genbank.db")
     # df = load_database("database.db")
+    procs = 8
 
     # Initialize
+    rng = np.random.default_rng()
     p = pathlib.Path().cwd()
     kmerlen = get_kmer_len(df)
     strains, db = df_to_dict(df)
     nstrains = len(strains)
+
 
     # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
@@ -290,7 +333,8 @@ if __name__ == "__main__":
     prior[prior == 0] = 1e-10
 
     # Assign ambiguous
-    new_clear, new_ambig = disambiguate(ambig_hits, prior)
+    # new_clear, new_ambig = disambiguate(ambig_hits, prior)
+    new_clear, new_ambig = parallel_resolve_helper(ambig_hits, prior, 'multinomial')
     if len(new_ambig) > 0:
         pass  # TODO
 
