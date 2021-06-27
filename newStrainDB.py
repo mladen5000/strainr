@@ -29,13 +29,14 @@ def parse_assembly_level():
     Return ncbi-genome-download parameters based on input
     """
     c = params["assembly_levels"]
+    print(c)
     if c == "complete1" or c == "complete2":
         return "complete"
-    elif "chromosome":
+    elif c == "chromosome":
         return "complete,chromosome"
-    elif "scaffold":
+    elif c == "scaffold":
         return "complete,chromosome,scaffold"
-    elif "contig":
+    elif c == "contig":
         return "complete,chromosome,scaffold,contig"
     else:
         raise ValueError("Incorrect assembly level selected.")
@@ -46,6 +47,7 @@ def download_strains():
     """ """
 
     assembly_level = parse_assembly_level()
+    print(assembly_level)
     if params["taxid"] and params["assembly_accessions"]:
         raise ValueError("Cannot select both taxid and accession")
     elif params["taxid"]:
@@ -60,7 +62,7 @@ def download_strains():
             section=params["source"],
             parallel=params["procs"],
         )
-    elif params["assembly_accesions"]:
+    elif params["assembly_accessions"]:
         ngd.download(
             flat_output=True,
             groups="bacteria",
@@ -211,9 +213,11 @@ def save_df(df, filename, method="pickle"):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "taxid",
+        "-t",
+        "--taxid",
         type=str,
         help="Species taxonomic ID from which all strains will be downloaded",
+        required=False,
     )
     parser.add_argument(
         "-f",
