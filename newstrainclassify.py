@@ -109,6 +109,14 @@ def classify():
     return results
 
 
+def raw_to_dict(raw_classified):
+    """
+    Go from list of tuples (SeqRecord,hits)
+    to dict {ReadID:hits}
+    """
+    return {read.id: hits for read, hits in raw_classified if isinstance(hits,np.ndarray)}
+
+
 def separate_hits(hitcounts):
     clear_hits, ambig_hits = {}, {}
     none_hits = []
@@ -128,9 +136,10 @@ def separate_hits(hitcounts):
 
 def print_relab(acounter, nstrains=10, prefix=""):
     """Pretty print for counter"""
+    print("\n")
     print(f"{prefix}")
-    for k, v in acounter.most_common(n=nstrains):
-        print(k, "\t", round(v, 5))
+    for idx, ab in acounter.most_common(n=nstrains):
+        print(strains[idx], "\t", round(ab, 5))
 
 
 def prior_counter(clear_hits):
@@ -146,6 +155,8 @@ def counter_to_array(prior_counter, nstrains):
     total = sum(prior_counter.values())
     for k, v in prior_counter.items():
         prior_array[k] = v / total
+
+    prior_array[prior_array == 0] = 1e-20
     return prior_array
 
 
@@ -173,11 +184,18 @@ def parallel_resolve(hits, prior, selection):
         raise ValueError("Must select a selection mode")
 
 
-
-
 def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
+    """
+    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
+    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
+    For all 3, threshold spectra to only include maxima, multiply w/ prior.
+    """
     new_clear, new_ambig = {}, {}
-    mapfunc = functools.partial(parallel_resolve, prior=prior,selection=selection, )
+    mapfunc = functools.partial(
+        parallel_resolve,
+        prior=prior,
+        selection=selection,
+    )
 
     with mp.Pool(processes=procs) as pool:
         for read, outhits in zip(
@@ -191,26 +209,9 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
 
 def disambiguate(ambig_hits, prior, selection="multinomial"):
     """
-    Description:
-        Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-        Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
-        For all 3, threshold spectra to only include maxima, multiply w/ prior.
-
-    Selection mode:
-        For random, randomly select strain from given maxima according to the intersection of
-        prior and k-mer spectra.
-
-        For max, assign strain from intersection of read's k-mer spectra and prior with the maximum prob.
-
-        For dirichlet, draw from largest probability in dirichlet of length nstrains.
-
-    Raises:
-        ValueError: Incorrect selection mode
-
-    Returns:
-        dict: new_clear: Reads with assigned strains.
-        dict: new_ambig: Reads with unassigned strains.
-
+    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
+    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
+    For all 3, threshold spectra to only include maxima, multiply w/ prior.
     """
 
     rng = np.random.default_rng()
@@ -303,16 +304,25 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     return normalize_counter(thresh_results)
 
 
+def save_intermediate(intermediate_results, strains):
+    """
+    Take a dict of readid:hits and convert to a dataframe
+    then save the output
+    """
+    df = pd.DataFrame.from_dict(intermediate_results, orient="index", columns=strains)
+    df.to_csv("intermed.csv")
+    return
+
+
 if __name__ == "__main__":
 
     # Parameters
     params = vars(get_args().parse_args())
     kmerlen = 31
     f1 = "test_R1.fastq"
-    # df = load_database("new_method.sdb")
     df = load_database("hflu_complete_genbank.db")
-    # df = load_database("database.db")
-    procs = 8
+    procs = 16
+    mle_mode = "random"
 
     # Initialize
     rng = np.random.default_rng()
@@ -320,7 +330,6 @@ if __name__ == "__main__":
     kmerlen = get_kmer_len(df)
     strains, db = df_to_dict(df)
     nstrains = len(strains)
-
 
     # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
@@ -330,13 +339,10 @@ if __name__ == "__main__":
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
     prior = counter_to_array(cprior, nstrains)  # counter to vector
-    prior[prior == 0] = 1e-10
 
     # Assign ambiguous
+    new_clear, new_ambig = parallel_resolve_helper(ambig_hits, prior, mle_mode)
     # new_clear, new_ambig = disambiguate(ambig_hits, prior)
-    new_clear, new_ambig = parallel_resolve_helper(ambig_hits, prior, 'multinomial')
-    if len(new_ambig) > 0:
-        pass  # TODO
 
     total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
@@ -349,3 +355,7 @@ if __name__ == "__main__":
 
     final_threshab = threshold_by_relab(final_relab, threshold=0.02)
     print_relab(final_threshab, prefix="Overall relative abundance")
+
+    # Save intermediate results
+    initial_results = raw_to_dict(results_raw)
+    save_intermediate(initial_results, strains)
