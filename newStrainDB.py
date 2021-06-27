@@ -29,8 +29,7 @@ def parse_assembly_level():
     Return ncbi-genome-download parameters based on input
     """
     c = params["assembly_levels"]
-    print(c)
-    if c == "complete1" or c == "complete2":
+    if c == "complete":
         return "complete"
     elif c == "chromosome":
         return "complete,chromosome"
@@ -40,14 +39,12 @@ def parse_assembly_level():
         return "complete,chromosome,scaffold,contig"
     else:
         raise ValueError("Incorrect assembly level selected.")
-    return
 
 
 def download_strains():
     """ """
 
     assembly_level = parse_assembly_level()
-    print(assembly_level)
     if params["taxid"] and params["assembly_accessions"]:
         raise ValueError("Cannot select both taxid and accession")
     elif params["taxid"]:
@@ -78,6 +75,7 @@ def download_strains():
         raise ValueError(
             "Need to choose either taxid or provide an accession list from a file"
         )
+
     return
 
 
@@ -209,6 +207,26 @@ def save_df(df, filename, method="pickle"):
         pd.DataFrame().to_hdf
     return
 
+def parse_meta():
+    """ Parse assembly data """
+    meta = pd.read_csv('ngd_meta.tsv',sep='\t').set_index('assembly_accession')
+    # meta_vars = list(meta.T.index)
+    return meta
+
+def filter_strains():
+    """ 
+    To be used with complete 1 and filter out for genomes without
+    strain taxonomic IDs and those without unique strain taxonomic IDs
+    Ideally to be used for large genomes such as ecoli with large redundancy
+    """
+    meta = pd.read_csv('ngdmeta.tsv',sep='\t').set_index('assembly_accession')
+    mask1 = meta.taxid != meta.species_taxid
+    mask2 = meta.taxid.notna()
+    filtered = meta[mask1 & mask2]
+    filtered.to_csv('ngdmeta2.tsv',sep='\t')
+    strain_files = filtered.local_filename.to_list()
+    strain_files = [p / i for i in strain_files]
+    return strain_files 
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -236,15 +254,13 @@ def get_args():
         "-l",
         "--assembly_levels",
         help="""
-        Assembly levels of genomes to download (default: complete1).
+        Assembly levels of genomes to download (default: complete).
         Each option includes previous options e.g) 'contig' will download
-        complete genomes, chromosomes and scaffolds as well.
-        Complete1 only downloads complete genomes which have taxonomic IDs
-        whereas complete2 will download all complete genomes\n
+        complete genomes, chromosomes and scaffolds as well.\n
         """,
-        choices=["complete1", "complete2", "chromosome", "scaffold", "contig"],
+        choices=["complete", "chromosome", "scaffold", "contig"],
         type=str,
-        default="complete1",
+        default="complete",
     )
     parser.add_argument(
         "-s",
@@ -269,17 +285,43 @@ def get_args():
         default="database",
         help="Output name of the database (optional)\n",
     )
+    parser.add_argument(
+        "--custom",
+        type=str,
+        required=False,
+        help="Folder containing custom set of genomes for download",
+    )
+    parser.add_argument("--unique-taxid", action="store_true",required=False,help="""
+                        Optional flag to only build the database for genomes that 
+                        have a unique strain taxonomic ID, all downloaded
+                        genomes without a taxid 
+                        or only with a species-taxid will be downloaded, 
+                        but not incorporated into the final database. 
+                        Useful for species which have a large number of 
+                        genomes in the database, such as E. Coli."""
+                        )
     return parser
 
+def select_genomes():
+    if params["custom"]:
+        file_list = list((p / params["custom"]).glob("*"))
+    else:
+        download_strains()
+        # Filter strains
+        if params["unique_taxid"]:
+            file_list = filter_strains()
+        else:
+            file_list = list((p / "genomes").glob("*fna.gz"))
+    return file_list
 
 def main():
     # Run - Download
-    download_strains()
-    file_list = list((p / "genomes").glob("*fna.gz"))
-    logger.info(f"{len(file_list)} genomes found.")
+    genomes = select_genomes()
 
-    # Run - Build
-    database = build_database(file_list)
+
+    # Build Database
+    logger.info(f"{len(genomes)} genomes found.")
+    database = build_database(genomes)
 
     logger.debug("Before modifications")
     logger.debug(f"{len(database)} kmers in database")
@@ -297,10 +339,10 @@ def main():
     df = build_df(database, encoded, strain_list)
     save_df(df, params["out"])
 
-    logger.info("After modifications")
-    logger.debug(len(database))
-    logger.debug(sys.getsizeof(database))
-    pickle_db(database)
+    # logger.info("After modifications")
+    # logger.debug(len(database))
+    # logger.debug(sys.getsizeof(database))
+    # pickle_db(database)
 
 
 if __name__ == "__main__":
