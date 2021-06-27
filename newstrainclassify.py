@@ -15,8 +15,7 @@ from Bio import SeqIO
 
 
 def get_args():
-    """
-    """
+    """ """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "input",
@@ -45,7 +44,25 @@ def get_args():
         help="Output folder",
         default="strainr_out",
     )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        help="""
+        Selection mode for diambiguation
+        """,
+        choices=["random", "max", "multinomial", "dirichlet"],
+        type=str,
+        default="random",
+    )
     parser.add_argument("-a", "--thresh", help="", type=float, default=0.001)
+    parser.add_argument(
+        "--save-raw-hits",
+        action="store_true",
+        required=False,
+        help="""
+                        Save the intermediate results as a csv file containing each read's strain information.
+                        """,
+    )
     # Examples
     # parser.add_argument('--source_file', type=open)
     # parser.add_argument('--dest_file', type=argparse.FileType('w', encoding='latin-1'))
@@ -54,7 +71,7 @@ def get_args():
 
 
 def count_kmers(seqrecord):
-    """ Main function to assign strain hits to reads"""
+    """Main function to assign strain hits to reads"""
     max_index = len(seqrecord.seq) - kmerlen + 1
     matched_kmer_strains = []
     with memoryview(bytes(seqrecord.seq)) as seqview:
@@ -66,15 +83,15 @@ def count_kmers(seqrecord):
 
 
 def load_database(dbfile):
-    """ Load the database in dataframe format"""
-    print('Loading Database...',file=sys.stderr)
+    """Load the database in dataframe format"""
+    print("Loading Database...", file=sys.stderr)
     df = pd.read_pickle(dbfile)
     print(f"Database of {len(df.columns)} strains loaded")
     return df
 
 
 def df_to_dict(df):
-    """ Convert database to dict for lookup """
+    """Convert database to dict for lookup"""
     hit_arrays = list(df.to_numpy())
     strain_ids = list(df.columns)
     kmers = df.index.to_list()
@@ -83,7 +100,7 @@ def df_to_dict(df):
 
 
 def get_kmer_len(df):
-    """ Obtain k-mer length of the database """
+    """Obtain k-mer length of the database"""
     kmerlen = len(df.index[0])
     assert all(df.index.str.len() == kmerlen)
     return kmerlen
@@ -91,7 +108,7 @@ def get_kmer_len(df):
 
 def classify():
     """
-    Call multiprocessing library to lookup k-mers 
+    Call multiprocessing library to lookup k-mers
     """
     # Classify reads
     print("Begining classification")
@@ -116,11 +133,13 @@ def raw_to_dict(raw_classified):
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
     """
-    return {read.id: hits for read, hits in raw_classified if isinstance(hits,np.ndarray)}
+    return {
+        read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)
+    }
 
 
 def separate_hits(hitcounts):
-    """ Return maps of reads with 1 (clear), multiple (ambiguous), or no signal """
+    """Return maps of reads with 1 (clear), multiple (ambiguous), or no signal"""
     clear_hits, ambig_hits = {}, {}
     none_hits = []
     for read, hits in hitcounts:
@@ -149,7 +168,7 @@ def print_relab(acounter, nstrains=10, prefix=""):
 
 
 def prior_counter(clear_hits):
-    """ Aggregate values """
+    """Aggregate values"""
     return Counter(clear_hits.values())
 
 
@@ -168,7 +187,7 @@ def counter_to_array(prior_counter, nstrains):
 
 
 def parallel_resolve(hits, prior, selection):
-    """ Main function called by helper for parallel disambiguation """
+    """Main function called by helper for parallel disambiguation"""
     # Treshold at max
     belowmax = hits < np.max(hits)
     hits[belowmax] = 0
@@ -263,10 +282,10 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
 
 def collect_reads(clear_hits, updated_hits, na_hits):
-    """ Assign the NA string to na and join all 3 dicts """
+    """Assign the NA string to na and join all 3 dicts"""
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
-    print(len(all_dict),len(clear_hits),len(updated_hits),len(na_hits))
+    print(len(all_dict), len(clear_hits), len(updated_hits), len(na_hits))
     # assert len(all_dict) == len(clear_hits) + len(updated_hits) + len(na_hits)
     return all_dict
 
@@ -301,8 +320,8 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     thresh_results = Counter(
         {k: v for k, v in norm_counter_all.items() if v > threshold}
     )
-    if thresh_results['NA']:
-        thresh_results.pop('NA')
+    if thresh_results["NA"]:
+        thresh_results.pop("NA")
     return normalize_counter(thresh_results)
 
 
@@ -315,16 +334,17 @@ def save_intermediate(intermediate_results, strains):
     df.to_csv("intermed.csv")
     return
 
+
 if __name__ == "__main__":
 
     # Parameters
-    params= get_args().parse_args()
+    params = get_args().parse_args()
     params = vars(params)
+    f1 = params["input"]
+    df = load_database(params["db"])
+    procs = params["procs"]
+    mle_mode = params["mode"]
     print(params)
-    f1 = params['input']
-    df = load_database(params['db'])
-    procs = params['procs']
-    mle_mode = "max"
 
     # Initialize
     rng = np.random.default_rng()
@@ -335,6 +355,7 @@ if __name__ == "__main__":
 
     # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
+    del df
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
     # Clear and Prior building
@@ -356,8 +377,11 @@ if __name__ == "__main__":
     final_relab = normalize_counter(final_hits)
     print_relab(final_relab, prefix="Overall abundance")
 
-    final_threshab = threshold_by_relab(final_relab, threshold=params['thresh'])
-    print_relab(final_threshab, prefix="Overall relative abundance",)
+    final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
+    print_relab(
+        final_threshab,
+        prefix="Overall relative abundance",
+    )
 
     # Save intermediate results
     # initial_results = raw_to_dict(results_raw)

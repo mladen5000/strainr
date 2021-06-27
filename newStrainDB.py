@@ -207,26 +207,29 @@ def save_df(df, filename, method="pickle"):
         pd.DataFrame().to_hdf
     return
 
+
 def parse_meta():
-    """ Parse assembly data """
-    meta = pd.read_csv('ngd_meta.tsv',sep='\t').set_index('assembly_accession')
+    """Parse assembly data"""
+    meta = pd.read_csv("ngd_meta.tsv", sep="\t").set_index("assembly_accession")
     # meta_vars = list(meta.T.index)
     return meta
 
+
 def filter_strains():
-    """ 
+    """
     To be used with complete 1 and filter out for genomes without
     strain taxonomic IDs and those without unique strain taxonomic IDs
     Ideally to be used for large genomes such as ecoli with large redundancy
     """
-    meta = pd.read_csv('ngdmeta.tsv',sep='\t').set_index('assembly_accession')
+    meta = pd.read_csv("ngdmeta.tsv", sep="\t").set_index("assembly_accession")
     mask1 = meta.taxid != meta.species_taxid
     mask2 = meta.taxid.notna()
     filtered = meta[mask1 & mask2]
-    filtered.to_csv('ngdmeta2.tsv',sep='\t')
+    filtered.to_csv("ngdmeta2.tsv", sep="\t")
     strain_files = filtered.local_filename.to_list()
     strain_files = [p / i for i in strain_files]
-    return strain_files 
+    return strain_files
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -291,16 +294,21 @@ def get_args():
         required=False,
         help="Folder containing custom set of genomes for download",
     )
-    parser.add_argument("--unique-taxid", action="store_true",required=False,help="""
+    parser.add_argument(
+        "--unique-taxid",
+        action="store_true",
+        required=False,
+        help="""
                         Optional flag to only build the database for genomes that 
                         have a unique strain taxonomic ID, all downloaded
                         genomes without a taxid 
                         or only with a species-taxid will be downloaded, 
                         but not incorporated into the final database. 
                         Useful for species which have a large number of 
-                        genomes in the database, such as E. Coli."""
-                        )
+                        genomes in the database, such as E. Coli.""",
+    )
     return parser
+
 
 def select_genomes():
     if params["custom"]:
@@ -314,10 +322,10 @@ def select_genomes():
             file_list = list((p / "genomes").glob("*fna.gz"))
     return file_list
 
+
 def main():
     # Run - Download
     genomes = select_genomes()
-
 
     # Build Database
     logger.info(f"{len(genomes)} genomes found.")
