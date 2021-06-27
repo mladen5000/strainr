@@ -150,27 +150,36 @@ def counter_to_array(prior_counter, nstrains):
     return prior_array
 
 
-def disambiguate(ambig_hits, prior):
+def disambiguate(ambig_hits, prior, selection="random"):
     """
-    Take ambiguous values (arrays) and multiple with prior and take maxima
+    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
+    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
+    For all 3, threshold spectra to only include maxima, multiply w/ prior.
+
+    For random, randomly select strain from given maxima according to the intersection of
+    prior and k-mer spectra.
+
+    For max, assign strain from intersection of read's k-mer spectra and prior with the maximum prob.
+    
+    For dirichlet, draw from largest probability in dirichlet of length nstrains.
+
+    Output: Reads with assigned strains.
 
     """
-    new_clear, new_ambig = {}, {}
+
     rng = np.random.default_rng()
-    # Selection criteria
-    selection = "random"
+    new_clear, new_ambig = {}, {}
 
     for read, hits in ambig_hits.items():
-
-        # Get max values of ambigs first
-        belowmax = hits != np.max(hits)
+        # Treshold at max
+        belowmax = hits < np.max(hits)
         hits[belowmax] = 0
+
         # Apply prior
         mlehits = hits * prior
 
-        # Probabilistic assignment
+        # Weighted assignment
         if selection == "random":
-            # select_random = rng.choice(len(hits), p=mlehits / sum(mlehits))
             select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
             new_clear[read] = select_random
 
@@ -180,16 +189,12 @@ def disambiguate(ambig_hits, prior):
             if len(select_max) == 1:
                 new_clear[read] = int(select_max)
 
-            elif len(select_max) > 1:  # Do nothing
-                new_ambig[read] = hits
-
-            else:
-                raise ValueError("Length 0 for final strain array")
-        # TODO
+        # Dirichlet assignment
         elif selection == "dirichlet":
             mlehits[mlehits == 0] = 1e-10
             select_dirichlet = rng.dirichlet(mlehits, 1)
             new_clear[read] = np.argmax(select_dirichlet)
+
         else:
             raise ValueError("Must select a selection mode")
 
