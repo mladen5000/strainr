@@ -134,23 +134,6 @@ def print_relab(posterior_prob, nstrains=10):
     print(f"\n")
 
 
-# def normalize_dist(countdict, num_strains):
-#     """
-#     Convert hits per strain into % of each strain.
-#     Also convert the dict of strain_index: value to a numpy array
-#     where the value is placed in the index
-#     example input: {2: 0.24, 4: 0.51, 10: 0.25}
-#     example output: [0,0,0.24,0,0.51,0,0,0,0,0,0.25,0,0,0]
-#     """
-#     prior_array = np.zeros(num_strains)
-#     total = sum(countdict.values())
-#     for k, v in countdict.items():
-#         prior_array[k] = v / total
-
-#     # return {k:v/total for k,v in countdict.items()}
-#     return prior_array
-
-
 def prior_counter(clear_hits):
     return Counter(clear_hits.values())
 
@@ -167,26 +150,7 @@ def counter_to_array(prior_counter, nstrains):
     return prior_array
 
 
-# def normalize_dist(countdict):
-#     total = sum(countdict.values())
-#     # TODO: test out new dict
-#     # return { k: v/total for k,v in countdict.items() }
-#     for el in countdict.keys():
-#         countdict[el] /= total
-#     return countdict
-
-
-def generate_likelihood(clear_hits):
-    """
-    Aggregate clear hits in order to get initial estimate of distribution
-    """
-    unique_hit_distribution = Counter([np.argmax(v) for v in clear_hits.values()])
-    nstrains = len(list(clear_hits.values())[0])  # TODO
-    prior = normalize_dist(unique_hit_distribution, nstrains)
-    return prior
-
-
-def resolve_ties(ambig_hits, prior):
+def disambiguate(ambig_hits, prior):
     """
     Take ambiguous values (arrays) and multiple with prior and take maxima
 
@@ -204,10 +168,10 @@ def resolve_ties(ambig_hits, prior):
         # Apply prior
         mlehits = hits * prior
 
-
         # Probabilistic assignment
         if selection == "random":
-            select_random = rng.choice(len(hits), p=mlehits / sum(mlehits))
+            # select_random = rng.choice(len(hits), p=mlehits / sum(mlehits))
+            select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
             new_clear[read] = select_random
 
         # Maximum Likelihood assignment
@@ -227,24 +191,9 @@ def resolve_ties(ambig_hits, prior):
             select_dirichlet = rng.dirichlet(mlehits, 1)
             new_clear[read] = np.argmax(select_dirichlet)
         else:
-            raise ValueError('Must select a selection mode')
+            raise ValueError("Must select a selection mode")
 
     assert len(ambig_hits) == len(new_clear) + len(new_ambig)
-    return new_clear, new_ambig
-
-
-def assess_resolve_ties():
-    """Not implemented, but use this in case of multiple rounds of resolution"""
-    # TODO
-    new_clear, new_ambig = {}, {}
-    for read, hits in ambig_hits.items():
-        mlehits = hits * prior
-        max_ind = np.argwhere(mlehits == np.max(mlehits)).flatten()
-        if len(max_ind) == 1:
-            new_clear[read] = mlehits
-        elif len(max_ind) > 1:
-            new_ambig[read] = mlehits
-    print(f"Ties Resolved:{len(new_clear)}, Still ambiguous: {len(new_ambig)}")
     return new_clear, new_ambig
 
 
@@ -264,75 +213,6 @@ def normalize(counter_abundance):
 def threshold(norm_counter, threshval):
     threshed_counter = {k: v for k, v in norm_counter.items() if v > threshval}
     return normalize(threshed_counter)
-
-
-def generate_initial_probability(clear_hits):
-    print(f"Generating initial probability estimate of strains")
-
-    unique_hit_distribution = Counter([np.argmax(v) for v in clear_hits.values()])
-    normalized_prob = normalize_dist(unique_hit_distribution)
-
-    print_relab(normalized_prob)
-    print(f"Initial model complete, updating ambiguous reads..")
-    return normalized_prob
-
-
-def mp_break_ties(kcount: list, prior: dict):
-    """Intersect prior probability for all strains with available strains in that read and return the maximum strain"""
-    # Get columns with max score
-    max_ind = np.argwhere(hits == np.max(hits)).flatten()
-
-    # Convert to vector of probabilities
-    strain_to_prob = {strain_id: prior[strain_id] for strain_id in kcount}
-    # Select max choice only
-    selection_max = (max(strain_to_prob, key=strain_to_prob.get),)
-
-    # random choice
-    if sum(strain_to_prob.values()) > 0:
-        selection_randweighted = tuple(
-            random.choices(
-                list(strain_to_prob.keys()), weights=strain_to_prob.values(), k=1
-            )
-        )
-    else:
-        selection_randweighted = selection_max
-
-    return (
-        # selection_randweighted
-        selection_max
-    )
-
-
-def disambiguate(clear_hits: dict, ambig_reads: dict):
-    """
-    Disambiguate the remaining strains
-    """
-    t0 = time.time()
-    resolved_reads, new_ambig = {}, {}
-
-    # Generate initial probability from clear reads
-    normalized_prob = generate_initial_probability(clear_hits)
-
-    maximize_strain_probability = functools.partial(
-        mp_break_ties, prior=normalized_prob
-    )
-
-    # if nproc ==1:
-    # for read, argmax_strain in zip(
-    #     ambig_reads.keys(), map(maximize_strain_probability, ambig_reads.values())
-    # ):
-    #     resolved_reads[read] = argmax_strain
-
-    with mp.Pool(processes=16) as pool:
-        for read, argmax_strain in zip(
-            ambig_reads.keys(),
-            pool.map(maximize_strain_probability, ambig_reads.values()),
-        ):
-            resolved_reads[read] = argmax_strain
-
-    print(f"The time for tie_breaking is {time.time() - t0}")
-
-    return resolved_reads, new_ambig, normalized_prob
 
 
 def resolve_clear_hits(clear_hits):
@@ -378,7 +258,7 @@ if __name__ == "__main__":
 
     # Assign ambig
     # function to identify arg max, then create a vector with just those 2 values and the rest 0s
-    new_clear, new_ambig = resolve_ties(ambig_hits, prior)
+    new_clear, new_ambig = disambiguate(ambig_hits, prior)
 
     if len(new_ambig) > 0:
         pass
