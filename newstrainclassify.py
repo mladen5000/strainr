@@ -150,20 +150,27 @@ def counter_to_array(prior_counter, nstrains):
     return prior_array
 
 
-def disambiguate(ambig_hits, prior, selection="random"):
+def disambiguate(ambig_hits, prior, selection="multinomial"):
     """
-    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include maxima, multiply w/ prior.
+    Description:
+        Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
+        Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
+        For all 3, threshold spectra to only include maxima, multiply w/ prior.
 
-    For random, randomly select strain from given maxima according to the intersection of
-    prior and k-mer spectra.
+    Selection mode:
+        For random, randomly select strain from given maxima according to the intersection of
+        prior and k-mer spectra.
 
-    For max, assign strain from intersection of read's k-mer spectra and prior with the maximum prob.
-    
-    For dirichlet, draw from largest probability in dirichlet of length nstrains.
+        For max, assign strain from intersection of read's k-mer spectra and prior with the maximum prob.
 
-    Output: Reads with assigned strains.
+        For dirichlet, draw from largest probability in dirichlet of length nstrains.
+
+    Raises:
+        ValueError: Incorrect selection mode
+
+    Returns:
+        dict: new_clear: Reads with assigned strains.
+        dict: new_ambig: Reads with unassigned strains.
 
     """
 
@@ -195,6 +202,11 @@ def disambiguate(ambig_hits, prior, selection="random"):
             select_dirichlet = rng.dirichlet(mlehits, 1)
             new_clear[read] = np.argmax(select_dirichlet)
 
+        elif selection == "multinomial":
+            mlehits[mlehits == 0] = 1e-10
+            select_multi = rng.multinomial(1,mlehits/sum(mlehits))
+            new_clear[read] = np.argmax(select_multi)
+
         else:
             raise ValueError("Must select a selection mode")
 
@@ -202,10 +214,9 @@ def disambiguate(ambig_hits, prior, selection="random"):
     return new_clear, new_ambig
 
 
-def joined_abundance(clear_hits, new_ambig, na_hits):
-    clear = {k: np.argmax(v) for k, v in clear_hits.items()}
-    na = {k: None for k in na_hits}
-    all_dict = clear | new_ambig | na
+def collect_reads(clear_hits, updated_hits, na_hits):
+    na = {k: "NA" for k in na_hits}
+    all_dict = clear_hits | updated_hits| na
     assert len(all_dict) == len(clear_hits) + len(new_ambig) + len(na_hits)
     return all_dict
 
@@ -236,21 +247,27 @@ def resolve_ambig_hits(ambig_hits):
 def build_na_dict(na_hits):
     return {k: None for k in na_hits}
 
+def normalize_counter(acounter):
+    total = sum(acounter.values())
+    return Counter({k: v / total for k, v in acounter.items()})
 
 if __name__ == "__main__":
 
-    p = pathlib.Path().cwd()
+    # Parameters
     params = vars(get_args().parse_args())
     kmerlen = 31
     f1 = "test_R1.fastq"
-    t0 = time.time()
     # df = load_database("new_method.sdb")
     df = load_database("hflu_complete_genbank.db")
     # df = load_database("database.db")
+
+    # Initialize
+    p = pathlib.Path().cwd()
     kmerlen = get_kmer_len(df)
     strains, db = df_to_dict(df)
-    print(strains)
     nstrains = len(strains)
+
+    # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
@@ -261,18 +278,17 @@ if __name__ == "__main__":
     prior[prior == 0] = 1e-10
     print(prior)
 
-    # Assign ambig
-    # function to identify arg max, then create a vector with just those 2 values and the rest 0s
+    # Assign ambiguous
     new_clear, new_ambig = disambiguate(ambig_hits, prior)
+    if len(new_ambig) > 0: pass # TODO
 
-    if len(new_ambig) > 0:
-        pass
+    total_hits = collect_reads(clear_hits, new_clear , na_hits)
 
     # Build counter of hits
-    counter_hits = cprior + Counter(new_clear.values())
-    total = sum(counter_hits.values())
-    norm_hits = Counter({k: v / total for k, v in counter_hits.items()})
-    print(norm_hits.most_common())
+    counter_all = Counter(total_hits)
+    total = sum(counter_all.values())
+    norm_counter_all = normalize_counter(counter_all)
+    print(norm_counter_all.most_common())
 
     # norm_prior = generate_initial_probability(clear_hits)
     # print("\nUpdating estimates..\n")
