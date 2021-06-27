@@ -126,12 +126,11 @@ def separate_hits(hitcounts):
     return clear_hits, ambig_hits, none_hits
 
 
-def print_relab(posterior_prob, nstrains=10):
-    """Displays Top 10 relative abundance strains"""
-    print(f"\nRelative Abundance Estimation")
-    for k, v in posterior_prob.most_common(n=nstrains):
+def print_relab(acounter, nstrains=10, prefix=""):
+    """Pretty print for counter"""
+    print(f"{prefix}")
+    for k, v in acounter.most_common(n=nstrains):
         print(k, "\t", round(v, 5))
-    print(f"\n")
 
 
 def prior_counter(clear_hits):
@@ -204,7 +203,7 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
         elif selection == "multinomial":
             mlehits[mlehits == 0] = 1e-10
-            select_multi = rng.multinomial(1,mlehits/sum(mlehits))
+            select_multi = rng.multinomial(1, mlehits / sum(mlehits))
             new_clear[read] = np.argmax(select_multi)
 
         else:
@@ -216,8 +215,8 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
 def collect_reads(clear_hits, updated_hits, na_hits):
     na = {k: "NA" for k in na_hits}
-    all_dict = clear_hits | updated_hits| na
-    assert len(all_dict) == len(clear_hits) + len(new_ambig) + len(na_hits)
+    all_dict = clear_hits | updated_hits | na
+    assert len(all_dict) == len(clear_hits) + len(updated_hits) + len(na_hits)
     return all_dict
 
 
@@ -247,9 +246,22 @@ def resolve_ambig_hits(ambig_hits):
 def build_na_dict(na_hits):
     return {k: None for k in na_hits}
 
+
 def normalize_counter(acounter):
     total = sum(acounter.values())
     return Counter({k: v / total for k, v in acounter.items()})
+
+
+def threshold_by_relab(norm_counter_all, threshold=0.02):
+    """
+    Given a percentage cutoff [threshold], remove strains
+    which do not meet the criteria and recalculate relab
+    """
+    thresh_results = Counter(
+        {k: v for k, v in norm_counter_all.items() if v > threshold}
+    )
+    return normalize_counter(thresh_results)
+
 
 if __name__ == "__main__":
 
@@ -276,58 +288,20 @@ if __name__ == "__main__":
     cprior = prior_counter(assigned_clear)
     prior = counter_to_array(cprior, nstrains)  # counter to vector
     prior[prior == 0] = 1e-10
-    print(prior)
 
     # Assign ambiguous
     new_clear, new_ambig = disambiguate(ambig_hits, prior)
-    if len(new_ambig) > 0: pass # TODO
+    if len(new_ambig) > 0:
+        pass  # TODO
 
-    total_hits = collect_reads(clear_hits, new_clear , na_hits)
+    total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
     # Build counter of hits
-    counter_all = Counter(total_hits)
-    total = sum(counter_all.values())
-    norm_counter_all = normalize_counter(counter_all)
-    print(norm_counter_all.most_common())
+    final_hits = Counter(total_hits.values())
+    print_relab(final_hits, prefix="Overall hits")
 
-    # norm_prior = generate_initial_probability(clear_hits)
-    # print("\nUpdating estimates..\n")
-    # res_reads, ambig_reads, prior = disambiguate(clear_hits, ambig_hits)
+    final_relab = normalize_counter(final_hits)
+    print_relab(final_relab, prefix="Overall abundance")
 
-    # print(len(res_reads))
-
-    # assigned_ambig = resolve_ambig_hits(res_reads)
-    # assigned_na = build_na_dict(na_hits)
-    # all_dict = assigned_clear | assigned_ambig | assigned_na
-    # assert len(all_dict) == len(assigned_clear) + len(assigned_ambig) + len(assigned_na)
-    # print('hi')
-
-    # all_dict = dict(sorted(all_dict.items(), key=lambda kv: kv[1]))
-    # ccres = Counter(all_dict.values())
-    # total = sum(ccres.values())
-    # results = {k:v/total for k,v in ccres.items()}
-    # print_relab(Counter(results))
-    # print('hi2')
-    # named_results = {strains[k]:v for k,v in results.items() if k is not None}
-    # rawfinal = Counter(named_results).most_common()
-    # print(rawfinal)
-    # print(rawfinal)
-
-    # prior = generate_likelihood(clear_hits)
-    # cprior = Counter(prior)
-    # print_relab(cprior)
-    # new_ambig = resolve_ties(ambig_hits, prior)
-    # all_dict = joined_abundance(clear_hits, new_ambig, na_hits)
-
-    # relab = Counter(list(all_dict.values()))
-    # # relab = {str(k):v for k,v in relab}
-    # print(relab)
-    # relab2 = normalize(relab)
-    # print(relab2)
-    # relab3 = threshold(relab2,0.02)
-    # print(relab3)
-    # for k,v in relab3.items():
-    #     if k:
-    #         print(strains[k],v)
-
-    # print(ambig_hits)
+    final_threshab = threshold_by_relab(final_relab, threshold=0.02)
+    print_relab(final_threshab, prefix="Overall relative abundance")
