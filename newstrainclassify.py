@@ -16,21 +16,11 @@ from Bio import SeqIO
 
 def get_args():
     """
-    # Examples
-    parser.add_argument('--source_file', type=open)
-    parser.add_argument('--dest_file', type=argparse.FileType('w', encoding='latin-1'))
-    parser.add_argument('--datapath', type=pathlib.Path)
     """
     parser = argparse.ArgumentParser()
-    # parser.add_argument(
-    #     "input",
-    #     help="input file",
-    #     type=str,
-    # )
     parser.add_argument(
-        "-j",
-        "--reverse-pair",
-        help="reverse reads",
+        "input",
+        help="input file",
         type=str,
     )
     parser.add_argument(
@@ -38,14 +28,13 @@ def get_args():
         "--db",
         # required=True,
         help="Database file",
-        type=int,
-        default=31,
+        type=str,
     )
     parser.add_argument(
         "-p",
         "--procs",
         type=int,
-        default=1,
+        default=4,
         help="Number of cores to use (default: 1)",
     )
     parser.add_argument(
@@ -56,11 +45,16 @@ def get_args():
         help="Output folder",
         default="strainr_out",
     )
+    parser.add_argument("-a", "--thresh", help="", type=float, default=0.001)
+    # Examples
+    # parser.add_argument('--source_file', type=open)
+    # parser.add_argument('--dest_file', type=argparse.FileType('w', encoding='latin-1'))
+    # parser.add_argument('--datapath', type=pathlib.Path)
     return parser
 
 
-# kmerset = {bytes(seqview[i : i + KMERLEN]) for i in range(max_index)}
 def count_kmers(seqrecord):
+    """ Main function to assign strain hits to reads"""
     max_index = len(seqrecord.seq) - kmerlen + 1
     matched_kmer_strains = []
     with memoryview(bytes(seqrecord.seq)) as seqview:
@@ -72,11 +66,15 @@ def count_kmers(seqrecord):
 
 
 def load_database(dbfile):
+    """ Load the database in dataframe format"""
+    print('Loading Database...',file=sys.stderr)
     df = pd.read_pickle(dbfile)
+    print(f"Database of {len(df.columns)} strains loaded")
     return df
 
 
 def df_to_dict(df):
+    """ Convert database to dict for lookup """
     hit_arrays = list(df.to_numpy())
     strain_ids = list(df.columns)
     kmers = df.index.to_list()
@@ -85,12 +83,16 @@ def df_to_dict(df):
 
 
 def get_kmer_len(df):
+    """ Obtain k-mer length of the database """
     kmerlen = len(df.index[0])
     assert all(df.index.str.len() == kmerlen)
     return kmerlen
 
 
 def classify():
+    """
+    Call multiprocessing library to lookup k-mers 
+    """
     # Classify reads
     print("Begining classification")
     t0 = time.time()
@@ -118,6 +120,7 @@ def raw_to_dict(raw_classified):
 
 
 def separate_hits(hitcounts):
+    """ Return maps of reads with 1 (clear), multiple (ambiguous), or no signal """
     clear_hits, ambig_hits = {}, {}
     none_hits = []
     for read, hits in hitcounts:
@@ -146,6 +149,7 @@ def print_relab(acounter, nstrains=10, prefix=""):
 
 
 def prior_counter(clear_hits):
+    """ Aggregate values """
     return Counter(clear_hits.values())
 
 
@@ -164,6 +168,7 @@ def counter_to_array(prior_counter, nstrains):
 
 
 def parallel_resolve(hits, prior, selection):
+    """ Main function called by helper for parallel disambiguation """
     # Treshold at max
     belowmax = hits < np.max(hits)
     hits[belowmax] = 0
@@ -173,7 +178,7 @@ def parallel_resolve(hits, prior, selection):
         return random.choices(range(len(hits)), weights=mlehits, k=1).pop()
 
     elif selection == "max":  # Maximum Likelihood assignment
-        return int(np.argwhere(mlehits == np.max(mlehits)).flatten())
+        return np.argmax(mlehits)
 
     elif selection == "dirichlet":  # Dirichlet assignment
         mlehits[mlehits == 0] = 1e-10
@@ -258,20 +263,12 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
 
 def collect_reads(clear_hits, updated_hits, na_hits):
+    """ Assign the NA string to na and join all 3 dicts """
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
-    assert len(all_dict) == len(clear_hits) + len(updated_hits) + len(na_hits)
+    print(len(all_dict),len(clear_hits),len(updated_hits),len(na_hits))
+    # assert len(all_dict) == len(clear_hits) + len(updated_hits) + len(na_hits)
     return all_dict
-
-
-def normalize(counter_abundance):
-    total = sum(counter_abundance.values())
-    return {read: hits / total for read, hits in counter_abundance.items()}
-
-
-def threshold(norm_counter, threshval):
-    threshed_counter = {k: v for k, v in norm_counter.items() if v > threshval}
-    return normalize(threshed_counter)
 
 
 def resolve_clear_hits(clear_hits):
@@ -304,6 +301,8 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     thresh_results = Counter(
         {k: v for k, v in norm_counter_all.items() if v > threshold}
     )
+    if thresh_results['NA']:
+        thresh_results.pop('NA')
     return normalize_counter(thresh_results)
 
 
@@ -316,18 +315,16 @@ def save_intermediate(intermediate_results, strains):
     df.to_csv("intermed.csv")
     return
 
-
 if __name__ == "__main__":
 
     # Parameters
-    params = vars(get_args().parse_args())
-    kmerlen = 31
-    f1 = "test_R1.fastq"
-    f1 = "12_1.fastq"
-    # df = load_database("hflu_complete_genbank.db")
-    df = load_database("hi.db")
-    procs = 4
-    mle_mode = "random"
+    params= get_args().parse_args()
+    params = vars(params)
+    print(params)
+    f1 = params['input']
+    df = load_database(params['db'])
+    procs = params['procs']
+    mle_mode = "max"
 
     # Initialize
     rng = np.random.default_rng()
@@ -343,6 +340,7 @@ if __name__ == "__main__":
     # Clear and Prior building
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
+    print_relab(cprior, prefix="Prior Estimate")
     prior = counter_to_array(cprior, nstrains)  # counter to vector
 
     # Assign ambiguous
@@ -358,9 +356,9 @@ if __name__ == "__main__":
     final_relab = normalize_counter(final_hits)
     print_relab(final_relab, prefix="Overall abundance")
 
-    final_threshab = threshold_by_relab(final_relab, threshold=0.05)
-    print_relab(final_threshab, prefix="Overall relative abundance")
+    final_threshab = threshold_by_relab(final_relab, threshold=params['thresh'])
+    print_relab(final_threshab, prefix="Overall relative abundance",)
 
     # Save intermediate results
-    initial_results = raw_to_dict(results_raw)
-    save_intermediate(initial_results, strains)
+    # initial_results = raw_to_dict(results_raw)
+    # save_intermediate(initial_results, strains)
