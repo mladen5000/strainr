@@ -139,7 +139,10 @@ def print_relab(acounter, nstrains=10, prefix=""):
     print("\n")
     print(f"{prefix}")
     for idx, ab in acounter.most_common(n=nstrains):
-        print(strains[idx], "\t", round(ab, 5))
+        try:
+            print(strains[idx], "\t", round(ab, 5))
+        except:
+            print(idx, "\t", round(ab, 5))
 
 
 def prior_counter(clear_hits):
@@ -320,8 +323,10 @@ if __name__ == "__main__":
     params = vars(get_args().parse_args())
     kmerlen = 31
     f1 = "test_R1.fastq"
-    df = load_database("hflu_complete_genbank.db")
-    procs = 16
+    f1 = "12_1.fastq"
+    # df = load_database("hflu_complete_genbank.db")
+    df = load_database("hi.db")
+    procs = 4
     mle_mode = "random"
 
     # Initialize
@@ -353,7 +358,7 @@ if __name__ == "__main__":
     final_relab = normalize_counter(final_hits)
     print_relab(final_relab, prefix="Overall abundance")
 
-    final_threshab = threshold_by_relab(final_relab, threshold=0.02)
+    final_threshab = threshold_by_relab(final_relab, threshold=0.05)
     print_relab(final_threshab, prefix="Overall relative abundance")
 
     # Save intermediate results
