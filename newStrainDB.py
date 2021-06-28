@@ -50,7 +50,7 @@ def download_strains():
     if params["taxid"] and params["assembly_accessions"]:
         raise ValueError("Cannot select both taxid and accession")
     elif params["taxid"]:
-        exitcode =ngd.download(
+        exitcode = ngd.download(
             flat_output=True,
             groups="bacteria",
             file_formats="fasta",
@@ -78,9 +78,9 @@ def download_strains():
             "Need to choose either taxid or provide an accession list from a file."
         )
     if exitcode != 0:
-        raise ValueError(f'Downloading strains returned with exit code {exitcode}')
+        raise ValueError(f"Downloading strains returned with exit code {exitcode}")
 
-    return exitcode 
+    return exitcode
 
 
 def count_kmers(genome_file):
@@ -115,7 +115,7 @@ def pickle_genome(metadata, kmerdir):
     return
 
 
-def build_database(genome_files,strain_names):
+def build_database(genome_files, strain_names):
     """
     Input: List of single-sequence (genome) fasta files
     Full build - functional programming style.
@@ -126,7 +126,7 @@ def build_database(genome_files,strain_names):
     """
     logger.info("Building database....")
     # database = defaultdict(list)
-    database = defaultdict(partial(np.zeros, len(strain_names), dtype=int))
+    database = defaultdict(partial(np.zeros, len(strain_names), dtype=bool))
     kmerlen = params["kmerlen"]
     for genome_file in tqdm(genome_files):
         encoding = guess_type(genome_file)[1]  # uses file extension
@@ -141,8 +141,8 @@ def build_database(genome_files,strain_names):
                     for i in range(max_index):
                         kmer = seq_buffer[i : i + kmerlen]
                         # database[bytes(kmer)].append(acc)
-                        database[bytes(kmer)][strain_names.index(acc)] += 1  
-    print(list(database.items())[:100])
+                        database[bytes(kmer)][strain_names.index(acc)] = True
+    print(list(database.items())[:10])
     return database
 
 
@@ -192,12 +192,11 @@ def multi_encode(db):
     return strains, val_array
 
 
-def build_df(db,  strain_list):
+def build_df(db, strain_list):
     """Build the dataframe"""
-    df = pd.DataFrame.from_dict(db, orient='index',columns=strain_list, dtype=int)
-    # df = pd.DataFrame(val_array, index=db.keys(), dtype=bool)
-    # df.columns = strain_list
-    # df.index = df.index  # .str.decode('utf-8')
+    values = np.array(list(db.values()))
+    df = pd.DataFrame(values, index=db.keys(), columns=strain_list, dtype=bool)
+    # df = pd.DataFrame.from_dict(db, orient="index", columns=strain_list, dtype=bool)
     logger.debug(df)
     return df
 
@@ -325,44 +324,45 @@ def download_and_filter_genomes():
             file_list = unique_taxid_strains()
         else:
             file_list = list((p / "genomes").glob("*fna.gz"))
-    else: # custom
+
+    else:  # custom
         file_list = list((p / params["custom"]).glob("*"))
+
     return file_list
 
+
 def get_genome_names(genome_files):
-    """ Function to go from files -> genome names"""
-    if not params['custom']:
+    """Function to go from files -> genome names"""
+    if not params["custom"]:
         return [gf.stem[:15] for gf in genome_files]
     else:
         return [gf.stem[:15] for gf in genome_files]
-        
+
 
 def main():
     # Run - Download
     genome_files = download_and_filter_genomes()
-    print(genome_files)
     genome_ids = get_genome_names(genome_files)
+    logger.info(f"{len(genome_files)} genomes found.")
 
     # Build Database
-    logger.info(f"{len(genome_files)} genomes found.")
-    database = build_database(genome_files,genome_ids)
+    database = build_database(genome_files, genome_ids)
+    df = build_df(database, genome_ids)
+    save_df(df, params["out"])
 
     logger.debug("Before modifications")
     logger.debug(f"{len(database)} kmers in database")
-    logger.debug(sys.getsizeof(database))
-    logger.debug("DB complete, encoding..")
+    logger.debug(f"{sys.getsizeof(database)//1e6} MB")
+    logger.debug("Kmer-building complete, creating db..")
 
     # Modifications 2
     # strain_list, encoded = multi_encode(database)
-    df = build_df(database, genome_ids)
-    save_df(df, params["out"])
 
     # Modifications
     # database = convert_to_presence_absence(database)
     # database = filter_most(database, len(file_list))
     # database = filter_by_length(database, 5)
     # database = full_sort(database)
-
 
     # logger.info("After modifications")
     # logger.debug(len(database))
