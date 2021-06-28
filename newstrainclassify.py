@@ -158,8 +158,7 @@ def separate_hits(hitcounts):
 
 def print_relab(acounter, nstrains=10, prefix=""):
     """Pretty print for counter"""
-    print("\n")
-    print(f"{prefix}")
+    print(f"\n{prefix}")
     for idx, ab in acounter.most_common(n=nstrains):
         try:
             print(strains[idx], "\t", round(ab, 5))

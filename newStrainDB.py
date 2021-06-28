@@ -1,22 +1,21 @@
 #!/usr/bin/env python
 
 import argparse
-import numpy as np
+import shutil
 import gzip
 import pathlib
 import pickle
 import sys
 import logging
 from collections import defaultdict
-from functools import partial
 from mimetypes import guess_type
 from functools import partial
 
 from tqdm import tqdm
 from Bio import SeqIO
+import numpy as np
 import pandas as pd
 import ncbi_genome_download as ngd
-from sklearn.preprocessing import MultiLabelBinarizer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -180,18 +179,6 @@ def pickle_db(database):
     return
 
 
-def multi_encode(db):
-    """
-    Return each hit as a binary set of presence/absence
-    Requires sklearn
-    """
-    mlb = MultiLabelBinarizer()
-    val_array = mlb.fit_transform(db.values())
-    strains = mlb.classes_
-    logger.info(strains)
-    return strains, val_array
-
-
 def build_df(db, strain_list):
     """Build the dataframe"""
     values = np.array(list(db.values()))
@@ -317,13 +304,16 @@ def get_args():
 
 
 def download_and_filter_genomes():
+    gdir = p / "genomes"
     if not params["custom"]:
+        if gdir.is_dir():
+            shutil.rmtree(gdir)
         download_strains()
 
         if params["unique_taxid"]:
             file_list = unique_taxid_strains()
         else:
-            file_list = list((p / "genomes").glob("*fna.gz"))
+            file_list = list(gdir.glob("*fna.gz"))
 
     else:  # custom
         file_list = list((p / params["custom"]).glob("*"))
