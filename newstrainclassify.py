@@ -2,22 +2,29 @@
 import argparse
 import multiprocessing as mp
 import functools
+from os import path
 import pathlib
-import pickle
 import random
 import sys
 import time
-from mimetypes import guess_type
 import gzip
-from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
+from mimetypes import guess_type
+from collections import (
+    Counter,
+    defaultdict,
+)
 
 
-def get_args():
-    """ """
+def args():
+    """ Gets arguments
+
+    Returns:
+        parser: Object to be converted to dict for parameters
+    """    
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "input",
@@ -53,28 +60,42 @@ def get_args():
         help="""
         Selection mode for diambiguation
         """,
-        choices=["random", "max", "multinomial", "dirichlet"],
+        choices=[
+            "random",
+            "max",
+            "multinomial",
+            "dirichlet",
+        ],
         type=str,
         default="random",
     )
-    parser.add_argument("-a", "--thresh", help="", type=float, default=0.001)
+    parser.add_argument(
+        "-a",
+        "--thresh",
+        help="",
+        type=float,
+        default=0.001,
+    )
     parser.add_argument(
         "--save-raw-hits",
         action="store_true",
         required=False,
-        help="""
-                        Save the intermediate results as a csv file containing each read's strain information.
-                        """,
+        help=""" Save the intermediate results as a csv file
+        containing each read's strain information.
+        """,
     )
     # Examples
     # parser.add_argument('--source_file', type=open)
-    # parser.add_argument('--dest_file', type=argparse.FileType('w', encoding='latin-1'))
+    # parser.add_argument('--dest_file',
+    # type=argparse.FileType('w', encoding='latin-1'))
     # parser.add_argument('--datapath', type=pathlib.Path)
     return parser
 
 
 def load_database(dbfile):
-    """Load the database in dataframe format"""
+    """
+    Load the database in dataframe format
+    """
     print("Loading Database...", file=sys.stderr)
     df = pd.read_pickle(dbfile)
     print(f"Database of {len(df.columns)} strains loaded")
@@ -121,7 +142,7 @@ def classify():
     t0 = time.time()
     records = SeqIO.parse(_open(f1), "fastq")
     print("Beginning classification")
-    with mp.Pool(processes=procs) as pool:
+    with mp.Pool(processes=params["procs"]) as pool:
         results = list(
             pool.map(
                 count_kmers,
@@ -137,13 +158,13 @@ def raw_to_dict(raw_classified):
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
     """
-    return {
-        read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)
-    }
+    return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
 
 
 def separate_hits(hitcounts):
-    """Return maps of reads with 1 (clear), multiple (ambiguous), or no signal"""
+    """
+    Return maps of reads with 1 (clear), multiple (ambiguous), or no signal
+    """
     clear_hits, ambig_hits = {}, {}
     none_hits = []
     for read, hits in hitcounts:
@@ -155,11 +176,17 @@ def separate_hits(hitcounts):
         else:
             none_hits.append(read.id)
     print(
-        f"Clear:{len(clear_hits)}, Ambiguous: {len(ambig_hits)}, None:{len(none_hits)}"
+        f"""
+        Clear:{len(clear_hits)},
+        Ambiguous: {len(ambig_hits)},
+        None:{len(none_hits)}
+        """
     )
-    return clear_hits, ambig_hits, none_hits
-
-
+    return (
+        clear_hits,
+        ambig_hits,
+        none_hits,
+    )
 
 
 def prior_counter(clear_hits):
@@ -199,7 +226,11 @@ def parallel_resolve(hits, prior, selection):
     mlehits = hits * prior  # Apply prior
 
     if selection == "random":  # Weighted assignment
-        return random.choices(range(len(hits)), weights=mlehits, k=1).pop()
+        return random.choices(
+            range(len(hits)),
+            weights=mlehits,
+            k=1,
+        ).pop()
 
     elif selection == "max":  # Maximum Likelihood assignment
         return np.argmax(mlehits)
@@ -210,17 +241,28 @@ def parallel_resolve(hits, prior, selection):
 
     elif selection == "multinomial":  # Multinomial
         mlehits[mlehits == 0] = 1e-10
-        return np.argmax(rng.multinomial(1, mlehits / sum(mlehits)))
+        return np.argmax(
+            rng.multinomial(
+                1,
+                mlehits / sum(mlehits),
+            )
+        )
 
     else:
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
+def parallel_resolve_helper(
+    ambig_hits,
+    prior,
+    selection="multinomial",
+):
     """
-    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include maxima, multiply w/ prior.
+    Assign a strain to reads with ambiguous k-mer signals
+    by maximum likelihood.  Currently 3 options: random, max,
+    and dirichlet. (dirichlet is slow and performs similar to random)
+    For all 3, threshold spectra to only include
+    maxima, multiply w/ prior.
     """
     new_clear, new_ambig = {}, {}
     mapfunc = functools.partial(
@@ -229,27 +271,40 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
         selection=selection,
     )
 
-    with mp.Pool(processes=procs) as pool:
+    with mp.Pool(processes=params["procs"]) as pool:
         for read, outhits in zip(
             ambig_hits.keys(),
-            pool.map(mapfunc, ambig_hits.values()),
+            pool.map(
+                mapfunc,
+                ambig_hits.values(),
+            ),
         ):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
 
 
-def disambiguate(ambig_hits, prior, selection="multinomial"):
+def disambiguate(
+    ambig_hits,
+    prior,
+    selection="multinomial",
+):
     """
-    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-    Currently 3 options: random, max, and dirichlet. (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include maxima, multiply w/ prior.
+    Assign a strain to reads with ambiguous k-mer signals
+    by maximum likelihood.
+    Currently 3 options: random, max, and dirichlet.
+    (dirichlet is slow and performs similar to random)
+    For all 3, threshold spectra to only
+    include maxima, multiply w/ prior.
     """
 
     rng = np.random.default_rng()
     new_clear, new_ambig = {}, {}
 
-    for read, hits in ambig_hits.items():
+    for (
+        read,
+        hits,
+    ) in ambig_hits.items():
         # Treshold at max
         belowmax = hits < np.max(hits)
         hits[belowmax] = 0
@@ -259,7 +314,11 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
         # Weighted assignment
         if selection == "random":
-            select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
+            select_random = random.choices(
+                range(len(hits)),
+                weights=mlehits,
+                k=1,
+            ).pop()
             new_clear[read] = select_random
 
         # Maximum Likelihood assignment
@@ -276,7 +335,10 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
         elif selection == "multinomial":
             mlehits[mlehits == 0] = 1e-10
-            select_multi = rng.multinomial(1, mlehits / sum(mlehits))
+            select_multi = rng.multinomial(
+                1,
+                mlehits / sum(mlehits),
+            )
             new_clear[read] = np.argmax(select_multi)
 
         else:
@@ -290,8 +352,14 @@ def collect_reads(clear_hits, updated_hits, na_hits):
     """Assign the NA string to na and join all 3 dicts"""
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
-    print(len(all_dict), len(clear_hits), len(updated_hits), len(na_hits))
-    # assert len(all_dict) == len(clear_hits) + len(updated_hits) + len(na_hits)
+    print(
+        len(all_dict),
+        len(clear_hits),
+        len(updated_hits),
+        len(na_hits),
+    )
+    # assert len(all_dict) == len(clear_hits) +
+    # len(updated_hits) + len(na_hits)
     return all_dict
 
 
@@ -322,9 +390,7 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     Given a percentage cutoff [threshold], remove strains
     which do not meet the criteria and recalculate relab
     """
-    thresh_results = Counter(
-        {k: v for k, v in norm_counter_all.items() if v > threshold}
-    )
+    thresh_results = Counter({k: v for k, v in norm_counter_all.items() if v > threshold})
     if thresh_results["NA"]:
         thresh_results.pop("NA")
     return normalize_counter(thresh_results)
@@ -335,7 +401,11 @@ def save_intermediate(intermediate_results, strains):
     Take a dict of readid:hits and convert to a dataframe
     then save the output
     """
-    df = pd.DataFrame.from_dict(intermediate_results, orient="index", columns=strains)
+    df = pd.DataFrame.from_dict(
+        intermediate_results,
+        orient="index",
+        columns=strains,
+    )
     df.to_csv("intermed.csv")
     return
 
@@ -345,18 +415,21 @@ def print_relab(acounter, nstrains=10, prefix=""):
     print(f"\n{prefix}")
     for idx, ab in acounter.most_common(n=nstrains):
         try:
-            print(strains[idx], "\t", round(ab, 5))
+            print(
+                strains[idx],
+                "\t",
+                round(ab, 5),
+            )
         except:
             print(idx, "\t", round(ab, 5))
 
 
-def output_abundance(strain_names, idx_relab, outfile):
+def write_abundance_file(strain_names, idx_relab, outfile):
     """
     For each strain in the database,
     grab the relab gathered from classification, else print 0.0
     """
     full_relab = defaultdict(float)
-    print(idx_relab)
 
     for idx, name in enumerate(strain_names):
         full_relab[name] = idx_relab[idx]
@@ -369,6 +442,54 @@ def output_abundance(strain_names, idx_relab, outfile):
     return
 
 
+def output_results(results, strains, outdir):
+    """Take the results dict, which has 1 strain per read, and output to 3 files"""
+    # Build abundance and output
+    outdir.mkdir(exist_ok=True)
+    final_hits = Counter(results.values())
+    print_relab(
+        final_hits,
+        prefix="Overall hits",
+    )
+    write_abundance_file(
+        strains,
+        final_hits,
+        (outdir / "count_abundance.tsv"),
+    )
+
+    final_relab = normalize_counter(final_hits)
+    print_relab(
+        final_relab,
+        prefix="Overall abundance",
+    )
+    write_abundance_file(
+        strains,
+        final_relab,
+        (outdir / "sample_abundance.tsv"),
+    )
+
+    final_threshab = threshold_by_relab(
+        final_relab,
+        threshold=params["thresh"],
+    )
+    print_relab(
+        final_threshab,
+        prefix="Overall relative abundance",
+    )
+    write_abundance_file(
+        strains,
+        final_threshab,
+        (outdir / "intra_abundance.tsv"),
+    )
+
+    return final_hits, final_relab, final_threshab
+
+def database_full(database_name):
+    df = load_database(database_name)
+    kmerlen = get_kmer_len(df)
+    strains, db = df_to_dict(df)
+    return db, strains, kmerlen
+
 def main():
     """
     Execute main loop
@@ -379,100 +500,32 @@ def main():
     5. Normalize, threshold, re-normalize
     6. Output
     """
-    # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
-    clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
-
-    # Clear and Prior building
+    clear_hits, ambig_hits, na_hits = separate_hits( results_raw)  # parse into 3 dicts
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
-    print_relab(normalize_counter(cprior), prefix="Prior Estimate")
-    prior = counter_to_array(cprior, nstrains)  # counter to vector
-
-    # Assign ambiguous
-    new_clear, new_ambig = parallel_resolve_helper(ambig_hits, prior, mle_mode)
-    total_hits = collect_reads(assigned_clear, new_clear, na_hits)
-
-    # Build abundance and output
-    final_hits = Counter(total_hits.values())
-    print_relab(final_hits, prefix="Overall hits",)
-    output_abundance(strains, final_hits, (outdir / "count_abundance.tsv"))
-
-    final_relab = normalize_counter(final_hits)
-    print_relab(final_relab, prefix="Overall abundance",)
-    output_abundance(strains, final_relab, (outdir / "sample_abundance.tsv"))
-
-    final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
-    print_relab(final_threshab, prefix="Overall relative abundance",)
-    output_abundance(strains, final_threshab, (outdir / "intra_abundance.tsv"))
-    return
-
-
-if __name__ == "__main__":
-    p = pathlib.Path().cwd()
-    rng = np.random.default_rng()
-    params = get_args().parse_args()
-
-    # Parameters
-    params = vars(params)
-    procs = params["procs"]
-    mle_mode = params["mode"]
-    outdir = params["out"]
-    if outdir:
-        try:
-            outdir.mkdir()
-        except FileExistsError:
-            print("Output directory already exists. Remove outdir to continue")
-
-    df = load_database(params["db"])
-    kmerlen = get_kmer_len(df)
-    strains, db = df_to_dict(df)
-    nstrains = len(strains)
-
-    print(params)
-    f1_files = params["input"]
-    for file in f1_files:
-        f1 = file
-        main()
-
-    """
-    1. Make an output directory
-    ~ sample cardinality
-    2. abundance.tsv
-    3. abundance2.tsv
-    ~ tp/tn/stuff
-    4. Save pd-intermediate
-    5. Get strains -> reads mapping
-    6. Write bins
-    
-    """
-    # output = create_newdir(output)  # from str to path
-    # reads_mcs = sample_cardinality(output, reads_mcs)  # hist.txt
-
-    # # p_out = Path(output)
-    # # abundance_file = "abundance.tsv" #+ p_out.stem + ".tsv"
-
-    # abundance_file = output / "abundance.tsv"
-    # output_abundance(strain_list, relab_count, abundance_file)
-
-    # abundance_file2 = output / "abundance2.tsv"
-    # output_abundance(strain_list, intra_relab, abundance_file2)
+    print_relab( normalize_counter(cprior), prefix="Prior Estimate",)
+    prior = counter_to_array(cprior, len(strains))  # counter to vector
+    new_clear, _ = parallel_resolve_helper(ambig_hits, prior, params["mode"])
+    total_hits = collect_reads( assigned_clear, new_clear, na_hits,)
+    output_results(total_hits, strains, outdir)
     # Save intermediate results
     # initial_results = raw_to_dict(results_raw)
     # save_intermediate(initial_results, strains)
 
-# def output_abundance(strain_list, dt_abund, filepath):
-#     """This will print the abundance profile based on all of the strains"""
-#     strain_dict = show_all_strains(dt_abund, strain_list)
-#     # with #open(filepath, "w") as f:
+    return
 
-#     with filepath.open("w") as f:
-#         for k, v in sorted(strain_dict.items(), key=lambda kv: kv[1]):
-#             print(k, "\t", round(v, 4), file=f)
-#     return
-# def show_all_strains(relab, strain_ll):
-#     strain_dict = defaultdict(float)
-#     for i in strain_ll:
-#         strain_dict[i] = relab[i]
-#     return {k: v for k, v in sorted(strain_dict.items())}
-#     # , key=lambda val: val[1], reverse=True) }
+if __name__ == "__main__":
+    p = pathlib.Path().cwd()
+    rng = np.random.default_rng()
+    params: dict = vars(args().parse_args())
+
+    # Parameters
+    outdir = params['out']
+    db, strains, kmerlen = database_full(params['db'])
+    print(params)
+
+    for file in params["input"]:
+        f1 = file
+        main()
+
