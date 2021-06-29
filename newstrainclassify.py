@@ -7,7 +7,9 @@ import pickle
 import random
 import sys
 import time
-from collections import Counter
+from mimetypes import guess_type
+import gzip
+from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
@@ -20,6 +22,7 @@ def get_args():
     parser.add_argument(
         "input",
         help="input file",
+        nargs="+",
         type=str,
     )
     parser.add_argument(
@@ -70,18 +73,6 @@ def get_args():
     return parser
 
 
-def count_kmers(seqrecord):
-    """Main function to assign strain hits to reads"""
-    max_index = len(seqrecord.seq) - kmerlen + 1
-    matched_kmer_strains = []
-    with memoryview(bytes(seqrecord.seq)) as seqview:
-        for i in range(max_index):
-            returned_strains = db.get(seqview[i : i + kmerlen])
-            if returned_strains is not None:
-                matched_kmer_strains.append(returned_strains)
-    return sum(matched_kmer_strains)
-
-
 def load_database(dbfile):
     """Load the database in dataframe format"""
     print("Loading Database...", file=sys.stderr)
@@ -96,6 +87,7 @@ def df_to_dict(df):
     strain_ids = list(df.columns)
     kmers = df.index.to_list()
     db = dict(zip(kmers, hit_arrays))
+    print("Finished building dbmap")
     return strain_ids, db
 
 
@@ -106,23 +98,35 @@ def get_kmer_len(df):
     return kmerlen
 
 
+def get_rc(kmer):
+    rc_kmer = kmer.reverse_complement()
+    return kmer if kmer < rc_kmer else rc_kmer
+
+
+def count_kmers(seqrecord):
+    """Main function to assign strain hits to reads"""
+    max_index = len(seqrecord.seq) - kmerlen + 1
+    matched_kmer_strains = []
+    s = seqrecord.seq
+    with memoryview(bytes(s)) as seqview:
+        for i in range(max_index):
+            returned_strains = db.get(seqview[i : i + kmerlen])
+            if returned_strains is not None:
+                matched_kmer_strains.append(returned_strains)
+    return seqrecord, sum(matched_kmer_strains)
+
+
 def classify():
-    """
-    Call multiprocessing library to lookup k-mers
-    """
-    # Classify reads
-    print("Begining classification")
+    """Call multiprocessing library to lookup k-mers"""
     t0 = time.time()
-    records = list(SeqIO.parse(f1, "fastq"))
+    records = SeqIO.parse(_open(f1), "fastq")
+    print("Beginning classification")
     with mp.Pool(processes=procs) as pool:
         results = list(
-            zip(
+            pool.map(
+                count_kmers,
                 records,
-                pool.map(
-                    count_kmers,
-                    records,
-                ),
-            )
+            ),
         )
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -156,19 +160,21 @@ def separate_hits(hitcounts):
     return clear_hits, ambig_hits, none_hits
 
 
-def print_relab(acounter, nstrains=10, prefix=""):
-    """Pretty print for counter"""
-    print(f"\n{prefix}")
-    for idx, ab in acounter.most_common(n=nstrains):
-        try:
-            print(strains[idx], "\t", round(ab, 5))
-        except:
-            print(idx, "\t", round(ab, 5))
 
 
 def prior_counter(clear_hits):
     """Aggregate values"""
     return Counter(clear_hits.values())
+
+
+def _open(infile):
+    """Handle unknown file for gzip and non-gzip alike"""
+    encoding = guess_type(str(infile))[1]  # uses file extension
+    _open = functools.partial(gzip.open, mode="rt") if encoding == "gzip" else open
+    file_object = _open(
+        infile,
+    )
+    return file_object
 
 
 def counter_to_array(prior_counter, nstrains):
@@ -334,54 +340,139 @@ def save_intermediate(intermediate_results, strains):
     return
 
 
-if __name__ == "__main__":
+def print_relab(acounter, nstrains=10, prefix=""):
+    """Pretty print for counter"""
+    print(f"\n{prefix}")
+    for idx, ab in acounter.most_common(n=nstrains):
+        try:
+            print(strains[idx], "\t", round(ab, 5))
+        except:
+            print(idx, "\t", round(ab, 5))
 
-    # Parameters
-    params = get_args().parse_args()
-    params = vars(params)
-    f1 = params["input"]
-    df = load_database(params["db"])
-    procs = params["procs"]
-    mle_mode = params["mode"]
-    print(params)
 
-    # Initialize
-    rng = np.random.default_rng()
-    p = pathlib.Path().cwd()
-    kmerlen = get_kmer_len(df)
-    strains, db = df_to_dict(df)
-    nstrains = len(strains)
+def output_abundance(strain_names, idx_relab, outfile):
+    """
+    For each strain in the database,
+    grab the relab gathered from classification, else print 0.0
+    """
+    full_relab = defaultdict(float)
+    print(idx_relab)
 
+    for idx, name in enumerate(strain_names):
+        full_relab[name] = idx_relab[idx]
+    if idx_relab["NA"]:
+        full_relab["NA"] = idx_relab["NA"]
+
+    with outfile.open(mode="w") as fh:
+        for strain, ab in sorted(full_relab.items()):
+            fh.write(f"{strain}\t{round(ab, 5)}\n")
+    return
+
+
+def main():
+    """
+    Execute main loop
+    1. Classify
+    2. Generate Initial Abundance estimate
+    3. Reclassify ambiguous
+    4. Collect reads for abundance
+    5. Normalize, threshold, re-normalize
+    6. Output
+    """
     # Classify
     results_raw = classify()  # get list of (SecRecord,nparray)
-    del df
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
     # Clear and Prior building
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
-    print_relab(cprior, prefix="Prior Estimate")
+    print_relab(normalize_counter(cprior), prefix="Prior Estimate")
     prior = counter_to_array(cprior, nstrains)  # counter to vector
 
     # Assign ambiguous
     new_clear, new_ambig = parallel_resolve_helper(ambig_hits, prior, mle_mode)
-    # new_clear, new_ambig = disambiguate(ambig_hits, prior)
-
     total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
-    # Build counter of hits
+    # Build abundance and output
     final_hits = Counter(total_hits.values())
-    print_relab(final_hits, prefix="Overall hits")
+    print_relab(final_hits, prefix="Overall hits",)
+    output_abundance(strains, final_hits, (outdir / "count_abundance.tsv"))
 
     final_relab = normalize_counter(final_hits)
-    print_relab(final_relab, prefix="Overall abundance")
+    print_relab(final_relab, prefix="Overall abundance",)
+    output_abundance(strains, final_relab, (outdir / "sample_abundance.tsv"))
 
     final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
-    print_relab(
-        final_threshab,
-        prefix="Overall relative abundance",
-    )
+    print_relab(final_threshab, prefix="Overall relative abundance",)
+    output_abundance(strains, final_threshab, (outdir / "intra_abundance.tsv"))
+    return
 
+
+if __name__ == "__main__":
+    p = pathlib.Path().cwd()
+    rng = np.random.default_rng()
+    params = get_args().parse_args()
+
+    # Parameters
+    params = vars(params)
+    procs = params["procs"]
+    mle_mode = params["mode"]
+    outdir = params["out"]
+    if outdir:
+        try:
+            outdir.mkdir()
+        except FileExistsError:
+            print("Output directory already exists. Remove outdir to continue")
+
+    df = load_database(params["db"])
+    kmerlen = get_kmer_len(df)
+    strains, db = df_to_dict(df)
+    nstrains = len(strains)
+
+    print(params)
+    f1_files = params["input"]
+    for file in f1_files:
+        f1 = file
+        main()
+
+    """
+    1. Make an output directory
+    ~ sample cardinality
+    2. abundance.tsv
+    3. abundance2.tsv
+    ~ tp/tn/stuff
+    4. Save pd-intermediate
+    5. Get strains -> reads mapping
+    6. Write bins
+    
+    """
+    # output = create_newdir(output)  # from str to path
+    # reads_mcs = sample_cardinality(output, reads_mcs)  # hist.txt
+
+    # # p_out = Path(output)
+    # # abundance_file = "abundance.tsv" #+ p_out.stem + ".tsv"
+
+    # abundance_file = output / "abundance.tsv"
+    # output_abundance(strain_list, relab_count, abundance_file)
+
+    # abundance_file2 = output / "abundance2.tsv"
+    # output_abundance(strain_list, intra_relab, abundance_file2)
     # Save intermediate results
     # initial_results = raw_to_dict(results_raw)
     # save_intermediate(initial_results, strains)
+
+# def output_abundance(strain_list, dt_abund, filepath):
+#     """This will print the abundance profile based on all of the strains"""
+#     strain_dict = show_all_strains(dt_abund, strain_list)
+#     # with #open(filepath, "w") as f:
+
+#     with filepath.open("w") as f:
+#         for k, v in sorted(strain_dict.items(), key=lambda kv: kv[1]):
+#             print(k, "\t", round(v, 4), file=f)
+#     return
+# def show_all_strains(relab, strain_ll):
+#     strain_dict = defaultdict(float)
+#     for i in strain_ll:
+#         strain_dict[i] = relab[i]
+#     return {k: v for k, v in sorted(strain_dict.items())}
+#     # , key=lambda val: val[1], reverse=True) }
