@@ -8,6 +8,7 @@ import random
 import sys
 import time
 import gzip
+from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 import numpy as np
 import pandas as pd
@@ -136,22 +137,53 @@ def count_kmers(seqrecord):
                 matched_kmer_strains.append(returned_strains)
     return seqrecord, sum(matched_kmer_strains)
 
+def fast_count_kmers(rid, seq):
+    """Main function to assign strain hits to reads"""
+    max_index = len(str(seq)) - kmerlen + 1
+    matched_kmer_strains = []
+    with memoryview(seq) as seqview:
+        for i in range(max_index):
+            returned_strains = db.get(seqview[i : i + kmerlen])
+            if returned_strains is not None:
+                matched_kmer_strains.append(returned_strains)
+    return rid, sum(matched_kmer_strains)
+
+def fast_count_kmers_helper(seqtuple):
+    return fast_count_kmers(*seqtuple)
 
 def classify():
     """Call multiprocessing library to lookup k-mers"""
     t0 = time.time()
-    records = SeqIO.parse(_open(f1), "fastq")
     print("Beginning classification")
-    with mp.Pool(processes=params["procs"]) as pool:
-        results = list(
-            pool.map(
-                count_kmers,
-                records,
-            ),
-        )
+    if params['procs'] == 1:
+        print("Single-core indexing")
+        results = single_classify()
+    else:
+        with _open(f1) as fh:
+            records = ((rid, bytes(seq,'utf-8'),) for (rid, seq, q) in FastqGeneralIterator(fh) )
+            with mp.Pool(processes=params["procs"]) as pool:
+                results = list(pool.map(fast_count_kmers_helper, records))
+
     print(f"Ending classification: {time.time() - t0}s")
     return results
 
+def single_classify():
+    record_index = SeqIO.index(f1, "fastq")
+    records = (record_index[id] for id in record_index.keys())
+    full_results = []
+    for seqrecord in records:
+        """Main function to assign strain hits to reads"""
+        max_index = len(seqrecord.seq) - kmerlen + 1
+        matched_kmer_strains = []
+        s = seqrecord.seq
+        with memoryview(bytes(s)) as seqview:
+            for i in range(max_index):
+                returned_strains = db.get(seqview[i : i + kmerlen])
+                if returned_strains is not None:
+                    matched_kmer_strains.append(returned_strains)
+        res = (seqrecord, sum(matched_kmer_strains))
+        full_results.append(res)
+    return full_results
 
 def raw_to_dict(raw_classified):
     """
@@ -170,11 +202,21 @@ def separate_hits(hitcounts):
     for read, hits in hitcounts:
         max_ind = np.argwhere(hits == np.max(hits)).flatten()
         if len(max_ind) == 1:
-            clear_hits[read.id] = hits
+            clear_hits[read] = hits
         elif len(max_ind) > 1 and sum(hits) > 0:
-            ambig_hits[read.id] = hits
+            ambig_hits[read] = hits
         else:
-            none_hits.append(read.id)
+            none_hits.append(read)
+    # clear_hits, ambig_hits = {}, {}
+    # none_hits = []
+    # for read, hits in hitcounts:
+    #     max_ind = np.argwhere(hits == np.max(hits)).flatten()
+    #     if len(max_ind) == 1:
+    #         clear_hits[read.id] = hits
+    #     elif len(max_ind) > 1 and sum(hits) > 0:
+    #         ambig_hits[read.id] = hits
+    #     else:
+    #         none_hits.append(read.id)
     print(
         f"""
         Clear:{len(clear_hits)},
@@ -415,13 +457,9 @@ def print_relab(acounter, nstrains=10, prefix=""):
     print(f"\n{prefix}")
     for idx, ab in acounter.most_common(n=nstrains):
         try:
-            print(
-                strains[idx],
-                "\t",
-                round(ab, 5),
-            )
+            print( round(ab, 5), "\t",strains[idx],)
         except:
-            print(idx, "\t", round(ab, 5))
+            print( round(ab, 5),'\t',idx)
 
 
 def write_abundance_file(strain_names, idx_relab, outfile):
@@ -447,40 +485,16 @@ def output_results(results, strains, outdir):
     # Build abundance and output
     outdir.mkdir(exist_ok=True)
     final_hits = Counter(results.values())
-    print_relab(
-        final_hits,
-        prefix="Overall hits",
-    )
-    write_abundance_file(
-        strains,
-        final_hits,
-        (outdir / "count_abundance.tsv"),
-    )
+    print_relab( final_hits, prefix="Overall hits",)
+    write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
 
     final_relab = normalize_counter(final_hits)
-    print_relab(
-        final_relab,
-        prefix="Overall abundance",
-    )
-    write_abundance_file(
-        strains,
-        final_relab,
-        (outdir / "sample_abundance.tsv"),
-    )
+    print_relab( final_relab, prefix="Overall abundance",)
+    write_abundance_file( strains, final_relab, (outdir / "sample_abundance.tsv"),)
 
-    final_threshab = threshold_by_relab(
-        final_relab,
-        threshold=params["thresh"],
-    )
-    print_relab(
-        final_threshab,
-        prefix="Overall relative abundance",
-    )
-    write_abundance_file(
-        strains,
-        final_threshab,
-        (outdir / "intra_abundance.tsv"),
-    )
+    final_threshab = threshold_by_relab( final_relab, threshold=params["thresh"],)
+    print_relab( final_threshab, prefix="Overall relative abundance",)
+    write_abundance_file( strains, final_threshab, (outdir / "intra_abundance.tsv"),)
 
     return final_hits, final_relab, final_threshab
 
@@ -505,6 +519,7 @@ def main():
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
     print_relab( normalize_counter(cprior), prefix="Prior Estimate",)
+
     prior = counter_to_array(cprior, len(strains))  # counter to vector
     new_clear, _ = parallel_resolve_helper(ambig_hits, prior, params["mode"])
     total_hits = collect_reads( assigned_clear, new_clear, na_hits,)

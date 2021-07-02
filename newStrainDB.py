@@ -152,7 +152,7 @@ def download_strains():
             file_formats="fasta",
             output=(p / "genomes"),
             metadata_table=(p / "ngdmeta.tsv"),
-            assembly_levels=assembly_level,
+            assembly_levels='all',
             section=params["source"],
             parallel=params["procs"],
             assembly_accessions=params["assembly_accessions"],
@@ -180,6 +180,7 @@ def download_strains():
 
 
 def download_and_filter_genomes():
+    """ Grab all, taxid-only, or custom lists"""
     gdir = p / "genomes"
     if not params["custom"]:
         if gdir.is_dir():
@@ -197,7 +198,7 @@ def download_and_filter_genomes():
     return file_list
 
 
-def build_database(genome_files, strain_names):
+def build_database(genome_files, sequence_names):
     """
     Input: List of single-sequence (genome) fasta files
     Full build - functional programming style.
@@ -206,24 +207,26 @@ def build_database(genome_files, strain_names):
     Strain ID is appended upon collision
     Output: Database of kmer: strain_hits
     """
-    logger.info("Building database....")
-    database = defaultdict(partial(np.zeros, len(strain_names), dtype=bool))
+    idx = 0
+    seq_labels = []
     kmerlen = params["kmerlen"]
+    database = defaultdict(partial(np.zeros, len(genome_files), dtype=bool))
+    logger.info("Building database....")
+    # Each genome file as a label
     for genome_file in tqdm(genome_files):
-        encoding = guess_type(genome_file)[1]  # uses file extension
+        encoding = guess_type(str(genome_file))[1]  
         _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
-        # Get record
         with _open(genome_file) as g:
-            for record in SeqIO.parse(g, "fasta"):
-
+            for record in SeqIO.parse(g, "fasta"): # Include all subsequences under one label
+                # seq_labels.append(str(genome_file.stem) + ';' + record.description)
                 max_index = len(record.seq) - kmerlen + 1
-                acc = genome_file.stem[:15]
+                # acc = genome_file.stem[:15]
+                # acc = record.description
                 with memoryview(bytes(record.seq)) as seq_buffer:
                     for i in range(max_index):
                         kmer = seq_buffer[i : i + kmerlen]
-                        # database[bytes(kmer)].append(acc)
-                        database[bytes(kmer)][strain_names.index(acc)] = True
-    print(list(database.items())[:10])
+                        database[bytes(kmer)][idx] = True
+        idx += 1
     return database
 
 
@@ -262,11 +265,10 @@ def unique_taxid_strains():
     Ideally to be used for large genomes such as ecoli with large redundancy
     """
     meta = pd.read_csv("ngdmeta.tsv", sep="\t").set_index("assembly_accession")
-    print(meta)
     mask1 = meta.taxid != meta.species_taxid
     mask2 = meta.taxid.notna()
     filtered = meta[mask1 & mask2]
-    filtered.to_csv("ngdmeta2.tsv", sep="\t")
+    filtered.to_csv("ngdmeta.tsv", sep="\t")
     strain_files = filtered.local_filename.to_list()
     strain_files = [p / i for i in strain_files]
     return strain_files
@@ -275,26 +277,47 @@ def unique_taxid_strains():
 def get_genome_names(genome_files):
     """Function to go from files -> genome names"""
     if not params["custom"]:
-        return [gf.stem[:15] for gf in genome_files]
+        meta = pd.read_csv("ngdmeta.tsv", sep="\t").set_index("assembly_accession")
+        genome_names = []
+        for gf in genome_files:
+            acc = gf.stem[:15]
+            genome_name = meta.loc[acc]['organism_name']
+            genome_names.append(acc + ' ' + genome_name)
+            # encoding = guess_type(str(gf))[1]  # uses file extension
+            # _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
+            # with _open(gf) as gfo:
+            #     for g in SeqIO.parse(gfo,'fasta'):
+            #         sequence_names.append(g.description)
+
+    # if not params["custom"]:
+    #     genome_names = [gf.stem[:15] for gf in genome_files]
     else:
-        return [gf.stem[:15] for gf in genome_files]
+        genome_names = [gf.stem for gf in genome_files]
+    assert len(genome_files) == len(genome_names)
+    return  genome_names
+
+
 
 
 def main():
     # Run - Download
     genome_files = download_and_filter_genomes()
-    genome_ids = get_genome_names(genome_files)
+    sequence_ids = get_genome_names(genome_files)
+    print(sequence_ids)
     logger.info(f"{len(genome_files)} genomes found.")
 
     # Build Database
-    database = build_database(genome_files, genome_ids)
-    df = build_df(database, genome_ids)
+    database = build_database(genome_files, sequence_ids)
+    df = build_df(database, sequence_ids)
+    # database = build_database(genome_files, genome_ids)
+    # df = build_df(database, genome_ids)
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database)//1e6} MB")
     logger.debug("Kmer-building complete, creating db..")
 
     pickle_df(df, params["out"])
+    logger.info(f"Database saved to {params['out']} ")
 
 
 if __name__ == "__main__":
