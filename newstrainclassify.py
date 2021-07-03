@@ -568,7 +568,11 @@ if __name__ == "__main__":
     print(params)
 
     for i, file in enumerate(params["input"]):
+        t0 = time.time()
         f1 = file
         outdir = outdir_main / str(f1)
+        print(f"Input file:{f1}")
         main()
+        print(f"Time for {f1}: {time.time()-t0}")
+
 
