@@ -149,7 +149,7 @@ def fast_count_kmers(rid, seq):
             if returned_strains is not None:
                 matched_kmer_strains.append(returned_strains)
     final_tally = sum(matched_kmer_strains)
-    if isinstance(final_tally,int):
+    if isinstance(final_tally,np.ndarray):
         return rid, final_tally
     else:
         return rid, na_zeros
