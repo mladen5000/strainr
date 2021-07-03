@@ -169,7 +169,7 @@ def classify():
         with _open(f1) as fh:
             records = ((rid, bytes(seq,'utf-8'),) for (rid, seq, q) in FastqGeneralIterator(fh) )
             with mp.Pool(processes=params["procs"]) as pool:
-                results = list(pool.map(fast_count_kmers_helper, records))
+                results = list(pool.imap_unordered(fast_count_kmers_helper, records,chunksize=1000))
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -493,8 +493,10 @@ def write_abundance_file(strain_names, idx_relab, outfile):
 
 def output_results(results, strains, outdir):
     """Take the results dict, which has 1 strain per read, and output to 3 files"""
+
+    outdir.mkdir(parents=True, exist_ok=True)
+
     # Build abundance and output
-    outdir.mkdir(exist_ok=True)
     final_hits = Counter(results.values())
     print_relab( final_hits, prefix="Overall hits",)
     write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
@@ -549,7 +551,8 @@ def main():
     total_hits = collect_reads( assigned_clear, new_clear, na_hits,)
 
     # Output
-    output_results(total_hits, strains, outdir)
+    if outdir:
+        output_results(total_hits, strains, outdir)
     #pickle_results(results_raw,total_hits,strains)
 
     return
@@ -560,11 +563,12 @@ if __name__ == "__main__":
     params: dict = vars(args().parse_args())
 
     # Parameters
-    outdir = params['out']
+    outdir_main = params['out']
     db, strains, kmerlen = database_full(params['db'])
     print(params)
 
-    for file in params["input"]:
+    for i, file in enumerate(params["input"]):
         f1 = file
+        outdir = outdir_main / str(f1)
         main()
 
