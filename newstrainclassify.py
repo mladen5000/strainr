@@ -8,6 +8,7 @@ import random
 import sys
 import time
 import gzip
+import pickle
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 import numpy as np
@@ -139,14 +140,20 @@ def count_kmers(seqrecord):
 
 def fast_count_kmers(rid, seq):
     """Main function to assign strain hits to reads"""
-    max_index = len(str(seq)) - kmerlen + 1
     matched_kmer_strains = []
+    na_zeros = np.full(len(strains),0)
+    max_index = len(str(seq)) - kmerlen + 1
     with memoryview(seq) as seqview:
         for i in range(max_index):
             returned_strains = db.get(seqview[i : i + kmerlen])
             if returned_strains is not None:
                 matched_kmer_strains.append(returned_strains)
-    return rid, sum(matched_kmer_strains)
+    final_tally = sum(matched_kmer_strains)
+    if isinstance(final_tally,int):
+        return rid, final_tally
+    else:
+        return rid, na_zeros
+        
 
 def fast_count_kmers_helper(seqtuple):
     return fast_count_kmers(*seqtuple)
@@ -192,7 +199,6 @@ def raw_to_dict(raw_classified):
     """
     return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
 
-
 def separate_hits(hitcounts):
     """
     Return maps of reads with 1 (clear), multiple (ambiguous), or no signal
@@ -200,13 +206,16 @@ def separate_hits(hitcounts):
     clear_hits, ambig_hits = {}, {}
     none_hits = []
     for read, hits in hitcounts:
-        max_ind = np.argwhere(hits == np.max(hits)).flatten()
-        if len(max_ind) == 1:
-            clear_hits[read] = hits
-        elif len(max_ind) > 1 and sum(hits) > 0:
-            ambig_hits[read] = hits
-        else:
+        if np.all(hits == 0):
             none_hits.append(read)
+        else:
+            max_ind = np.argwhere(hits == np.max(hits)).flatten()
+            if len(max_ind) == 1:
+                clear_hits[read] = hits
+            elif len(max_ind) > 1 and sum(hits) > 0:
+                ambig_hits[read] = hits
+            else:
+                print('error')
     # clear_hits, ambig_hits = {}, {}
     # none_hits = []
     # for read, hits in hitcounts:
@@ -258,7 +267,6 @@ def counter_to_array(prior_counter, nstrains):
 
     prior_array[prior_array == 0] = 1e-20
     return prior_array
-
 
 def parallel_resolve(hits, prior, selection):
     """Main function called by helper for parallel disambiguation"""
@@ -392,6 +400,7 @@ def disambiguate(
 
 def collect_reads(clear_hits, updated_hits, na_hits):
     """Assign the NA string to na and join all 3 dicts"""
+    np.full(len(strains),0.0)
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
     print(
@@ -438,17 +447,19 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     return normalize_counter(thresh_results)
 
 
-def save_intermediate(intermediate_results, strains):
+def save_results(intermediate_scores,results, strains):
     """
     Take a dict of readid:hits and convert to a dataframe
     then save the output
     """
-    df = pd.DataFrame.from_dict(
-        intermediate_results,
-        orient="index",
-        columns=strains,
-    )
-    df.to_csv("intermed.csv")
+    df = pd.DataFrame.from_dict(dict(intermediate_scores),orient='index',columns=strains).astype(int)
+    final_names = {k:strains[int(v)] for k,v in results.items() if v != 'NA'}
+    assigned = pd.Series(final_names).rename('final')
+    df = df.join(assigned)
+    savepath = outdir / "results_table.csv"
+    picklepath = outdir / "results_table.pkl"
+    # df.to_csv(savepath)
+    df.to_pickle(picklepath)
     return
 
 
@@ -504,6 +515,15 @@ def database_full(database_name):
     strains, db = df_to_dict(df)
     return db, strains, kmerlen
 
+def pickle_results(results_raw,total_hits,strains):
+    with open( (outdir /'raw_results.pkl'),'wb') as fh:
+        pickle.dump(results_raw,fh)
+    with open((outdir / 'total_hits.pkl'),'wb') as fh:
+        pickle.dump(total_hits,fh)
+
+    save_results(results_raw,total_hits, strains)
+    return
+
 def main():
     """
     Execute main loop
@@ -514,19 +534,23 @@ def main():
     5. Normalize, threshold, re-normalize
     6. Output
     """
+    # Build
     results_raw = classify()  # get list of (SecRecord,nparray)
     clear_hits, ambig_hits, na_hits = separate_hits( results_raw)  # parse into 3 dicts
+
+    # Disambiguate
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
     cprior = prior_counter(assigned_clear)
     print_relab( normalize_counter(cprior), prefix="Prior Estimate",)
 
+    # Finalize
     prior = counter_to_array(cprior, len(strains))  # counter to vector
     new_clear, _ = parallel_resolve_helper(ambig_hits, prior, params["mode"])
     total_hits = collect_reads( assigned_clear, new_clear, na_hits,)
+
+    # Output
     output_results(total_hits, strains, outdir)
-    # Save intermediate results
-    # initial_results = raw_to_dict(results_raw)
-    # save_intermediate(initial_results, strains)
+    #pickle_results(results_raw,total_hits,strains)
 
     return
 
