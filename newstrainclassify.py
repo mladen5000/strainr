@@ -10,6 +10,7 @@ import time
 import gzip
 import pickle
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
+from Bio.SeqIO.FastaIO import SimpleFastaParser
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,13 @@ def args():
     parser.add_argument(
         "input",
         help="input file",
+        nargs="+",
+        type=str,
+    )
+    parser.add_argument(
+        "-r",
+        "--reverse",
+        help="reverse fastq file, todo",
         nargs="+",
         type=str,
     )
@@ -138,7 +146,7 @@ def count_kmers(seqrecord):
                 matched_kmer_strains.append(returned_strains)
     return seqrecord, sum(matched_kmer_strains)
 
-def fast_count_kmers(rid, seq):
+def fast_count_kmers(rid, seq,):
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
     na_zeros = np.full(len(strains),0)
@@ -156,7 +164,7 @@ def fast_count_kmers(rid, seq):
         
 
 def fast_count_kmers_helper(seqtuple):
-    return fast_count_kmers(*seqtuple)
+    return fast_count_kmers(*seqtuple,)
 
 def classify():
     """Call multiprocessing library to lookup k-mers"""
@@ -552,6 +560,7 @@ def main():
 
     # Output
     if outdir:
+        print(f"Saving results to {outdir}")
         #fhits is hitcount, fthresh is intra-strain
         fhits, frelab, fthreshab = output_results(total_hits, strains, outdir)
     #pickle_results(results_raw,total_hits,strains)
@@ -568,16 +577,33 @@ if __name__ == "__main__":
     db, strains, kmerlen = database_full(params['db'])
     print(params)
 
-    for i, file in enumerate(params["input"]):
-        t0 = time.time()
-        f1 = file
-        outdir = outdir_main / str(f1)
+    if len(params['input']) == 1:
+        f1, outdir = params['input'][0], outdir_main
         print(f"Input file:{f1}")
         main()
-        print(f"Time for {f1}: {time.time()-t0}")
+    else:
+        for i, file in enumerate(params["input"]):
+            t0 = time.time()
+            f1 = file
+            outdir = outdir_main / str(f1)
+            print(f"Input file:{f1}")
+            main()
+            print(f"Time for {f1}: {time.time()-t0}")
 
 
 
+class Binner:
+    def __init__(self, count_table, min_hit_threshold, min_k_threshold, final_hits,f1, f2):
+        self.table = count_table
+        self.min_hit = min_hit_threshold
+        self.min_k = min_k_threshold
+        self.final_hits = final_hits
+        self.f1 = f1
+        self.f2 = f2
+        
+        
+        
+        
 def strain_to_reads_map(intermediate: tuple, min_k: int):
     """ 
     Builds a dictionary that contains a mapping for each strain
@@ -610,129 +636,76 @@ def filter_strains_bin(strain_map:dict, minhits: int,fhits: dict):
 
 def bin_stuff(intermediate, fhits):
     minhits = 1000
+    df = pd.read_results('intermed.csv').set_index('Unnamed: 0')
 
     strain_map = strain_to_reads_map(intermediate, min_k=1)
+    print(strain_map)
     strain_map = filter_strains_bin(strain_map, minhits, fhits)
-
-    # Dump all read-mappings to pickles in output folder
-    savemap_filelist = [ "read2strain.pkl", "strain2reads.pkl" ]
-
-    # minhits is useless here
-    astrain_set, aplist = write_strain_fastas(
-        strain_map, inputfile, output,
-        reverse_file=reverse_file,
-        minreads=minhits,
-        fastadirname="afastas",
-    )
-    # call processes to finish
+    print(strain_map)
+    topstrains = select_top_bins(df,nstrains,min_k)
+    print(topstrains)
+    f2 = params['reverse']
+    print(f2)
+    astrain_set, aplist = write_strain_fastas( strain_map, f1, f2)
+    print(astrain_set)
+    print(aplist)
     [ap.join() for ap in aplist]
     return
 
-def write_strain_fastas(
-    strain_dict: dict,
-    input_file: str,
-    outdir: str,
-    reverse_file: str = None,
-    minreads: int = 500,
-    fastadirname: str = "fastas",
-):
-    """
-    Write fasta files selected classified reads for assembly
-    Uses output_prefix as the directory to hold files
-    Use this for post-processing.
+def select_top_bins(df,nstrains,min_k):
+    min_k= 90
+    nstrains = 5
+    strain_nhits = {}
+    for strain in df.columns:
+        nreads = len(list(df[df[strain] > min_k].index))
+        strain_nhits[strain] = nreads
+    #     print(f"The strain {strain} has {nreads} reads with greater than {min_k} k-mer hits") 
+    topstrains = sorted(strain_nhits.items(),key=lambda kv: kv[1],reverse=True)[:nstrains]
+    return [i[0] for i in topstrains]
 
-    Args:
-        strain_dict ([dict]): [Set of Reads mapped to a strain]
-        input_file ([file]): [Original Fasta/q file]
-        fext ([string]): [fasta or fastq]
-        unique_reads_only (bool, optional): [Whether fastas readsets are mutually exclusive]. Defaults to False.
+def write_strain_fastas( strain_dict, f1, f2,):
+    fastadir = outdir / 'fastas'
+    fastadir.mkdir(exist_ok=True,parents=True)
+    max_n = len(topstrains)
 
-    Returns:
-        [dict]: [original strain_dict]
-    """
-
-    fastadir = os.path.join(outdir, fastadirname)
-
-    if not os.path.exists(fastadir):
-        os.mkdir(fastadir)
-
-    # Sort strains by number of reads and select only the top n
-    max_n = params.max_strain_bins  # if params.max_strain_bins else None
-    print(f"Generating sequence files for the top {max_n} strains.")
-    strain_dict = dict(sorted(strain_dict.items(), key=lambda item: item[1])[:max_n])
+    # print(f"Generating sequence files for the top {max_n} strains.")
+    # strain_dict = dict(sorted(strain_dict.items(), key=lambda item: item[1])[:max_n])
 
     # Loop through each strain to make the file
     procs, saved_strains = [], []
     for strain_id, read_set in strain_dict.items():
-        if strain_id == "X":
-            print("Skip Unclassifieds")
+        if strain_id == "NA":
             continue
 
-        if len(read_set) > minreads:
-            saved_strains.append(strain_id)
-            print(f"Writing {len(read_set)} reads for {strain_id}...")
-            # filetype = (
-            #     input_file.split(".")[-2]
-            #     # if input_file.endswith("z")
-            #     # else input_file.split(".")[1]
-            # )
-            filetype = "fastq"  # TODO mlml need to make this viable lol
-            p = Process(
-                target=mp_write_single_strain,
-                args=(
-                    strain_id,
-                    read_set,
-                    filetype,
-                    input_file,
-                    fastadir,
-                    reverse_file,
-                ),
-            )
-            p.start()
-            procs.append(p)
+        saved_strains.append(strain_id)
+        print(f"Writing {len(read_set)} reads for {strain_id}...")
+        p = Process( target=mp_write_single_strain, args=( strain_id, read_set, f1, f2, fastadir, ),)
+        p.start()
+        procs.append(p)
 
     # [p.join() for p in procs]
     return set(saved_strains), procs
 
     
     
-def mp_write_single_strain(
-    strain_id: str, read_set, fext: str, r1file: str, fastadir: str, r2file: str
-):
+def mp_write_single_strain( strain , read_set, forward_file, reverse_file,  fastadir , ):
 
-    encoding = guess_type(str(r1file))[1]  # uses file extension
-    _open = functools.partial(gzip.open, mode="rt") if encoding == "gzip" else open
-
-    # Loop through R1 and R2
-    for i, readsfile in enumerate([r1file, r2file]):
-
-        if i == 1:
-            # Change read_sets to match /1 /2 in file (reads currently named after R1 file)
-            read_set_i = set(
-                read_id.replace("/1", "/2") for read_id in read_set
-            )  # For 1:N:0:1
-            # read_set_i = set(read_id[:-1] + str(i + 1) for read_id in read_set)
-            # read_set_i = set( read_id.replace("1:N", "2:N") for read_id in read_set)  # For 1:N:0:1
-            # read_set_i = set( (read_id + " /" + str(i+1) ) for read_id in read_set)  # For 1:N:0:1
-            # read_set_i = set(read_id for read_id in read_set)
+    paired_files = [forward_file,reverse_file]
+    fext = "fastq"
+    for fidx, input_file in enumerate(paired_files): # (0,R1), (1,R2)
+        if fidx == 1: #reverse
+            read_names = set( read.replace("/1", "/2") for read in read_set)
         else:
-            read_set_i = set(read_id for read_id in read_set)
+            read_names = set(read for read in read_set)
 
-        # Strain_R1.fastx or Strain_R2.fastx
-        wbase = f"{strain_id}_R{i+1}.{fext}"  # TODO - for fastas and gzip context
-        writefile = os.path.join(fastadir, wbase)
+        writefile_name = f"sbin.{strain}_R{fidx+1}.{fext}"  
+        writefile = fastadir / writefile_name
 
         # Open input, find reads that match dict, write to strain_fasta
-        with _open(readsfile) as rhandle, open(writefile, "w") as whandle:
-
-            if fext.endswith("q"):  # Fastq
-                for (rid, seq, q) in FastqGeneralIterator(rhandle):
-                    if rid in read_set_i:
-                        print(f"@{rid}\n{seq}\n+\n{q}", file=whandle)
-            else:  # Fasta
-                for rid, seq in SimpleFastaParser(rhandle):
-                    if rid in read_set_i:
-                        print(f">{rid}\n{seq}", file=whandle)
+        with _open(input_file) as rhandle, open(writefile, "w") as whandle:
+            records = (r for r in SeqIO.parse(rhandle,'fastq') if r in read_names)
+            count = SeqIO.write(records, whandle, "fastq")
+            print(f"Saved {count} records from {input_file} to {writefile}")
 
     return
 

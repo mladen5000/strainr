@@ -16,6 +16,7 @@ from Bio import SeqIO
 import numpy as np
 import pandas as pd
 import ncbi_genome_download as ngd
+import multiprocessing as mp
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -198,6 +199,20 @@ def download_and_filter_genomes():
     return file_list
 
 
+def count_kmers(genome_file):
+    kmerlen = params["kmerlen"]
+    kmerset = set()
+    encoding = guess_type(genome_file)[1]  # uses file extension
+    _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
+    with _open(genome_file) as g:
+        for record in SeqIO.parse(g, "fasta"):
+            max_index = len(record.seq) - kmerlen + 1
+            with memoryview(bytes(record.seq)) as seq_buffer:
+                kmers = {bytes(seq_buffer[i : i + kmerlen]) for i in range(max_index)}
+            kmerset.update(kmers)
+        logger.info(len(kmerset))
+    return kmerset
+
 def build_database(genome_files, sequence_names):
     """
     Input: List of single-sequence (genome) fasta files
@@ -230,6 +245,29 @@ def build_database(genome_files, sequence_names):
     return database
 
 
+def build_parallel(genome_file,genome_files,full_set):
+    """
+    Input: List of single-sequence (genome) fasta files
+    Full build - functional programming style.
+    Grabs each file and generates kmers which are then placed into the
+    dictionary.
+    Strain ID is appended upon collision
+    Output: Database of kmer: strain_hits
+    """
+    kmerlen = params["kmerlen"]
+    col = genome_files.index(genome_file)
+    rows = []
+    encoding = guess_type(str(genome_file))[1]  
+    _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
+    with _open(genome_file) as g:
+        for record in SeqIO.parse(g, "fasta"): # Include all subsequences under one label
+            max_index = len(record.seq) - kmerlen + 1
+            with memoryview(bytes(record.seq)) as seq_buffer:
+                for i in range(max_index):
+                    kmer = seq_buffer[i : i + kmerlen]
+                    rows.append(full_set.index(kmer))
+    print(col,rows)
+    return rows
 def build_df(db, strain_list):
     """Build the dataframe"""
     values = np.array(list(db.values()))
@@ -239,16 +277,6 @@ def build_df(db, strain_list):
     return df
 
 
-def pickle_df(df, filename, method="pickle"):
-
-    outfile = params["out"] + ".db"
-    if method == "pickle":
-        df.to_pickle(outfile)
-    elif method == "hdf":
-        outfile = params["out"] + ".sdb"
-        df.to_hdf(outfile)
-        pd.DataFrame().to_hdf
-    return
 
 
 def parse_meta():
@@ -297,7 +325,23 @@ def get_genome_names(genome_files):
     return  genome_names
 
 
+def pickle_db(database,fout):
+    outfile = fout + ".pkl"
+    logger.info(f"Saving database as {outfile}")
+    with open(outfile, "wb") as ph:
+        pickle.dump(database, ph, protocol=pickle.HIGHEST_PROTOCOL)
+    return
 
+def pickle_df(df, filename, method="pickle"):
+
+    outfile = params["out"] + ".db"
+    if method == "pickle":
+        df.to_pickle(outfile)
+    elif method == "hdf":
+        outfile = params["out"] + ".sdb"
+        df.to_hdf(outfile)
+        pd.DataFrame().to_hdf
+    return
 
 def main():
     # Run - Download
@@ -309,14 +353,14 @@ def main():
     # Build Database
     database = build_database(genome_files, sequence_ids)
     df = build_df(database, sequence_ids)
-    # database = build_database(genome_files, genome_ids)
-    # df = build_df(database, genome_ids)
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database)//1e6} MB")
-    logger.debug("Kmer-building complete, creating db..")
+    logger.debug(f"Kmer-building complete, saving db as {params['out']+'.db'}.")
 
     pickle_df(df, params["out"])
+    
+    return
     logger.info(f"Database saved to {params['out']} ")
 
 
@@ -334,12 +378,6 @@ if __name__ == "__main__":
 
 
 
-def pickle_db(database):
-    outfile = params["out"] + ".pkl"
-    logger.info(f"Saving database as {outfile}")
-    with open(outfile, "wb") as ph:
-        pickle.dump(database, ph, protocol=pickle.HIGHEST_PROTOCOL)
-    return
 
 def full_sort(db):
     """Sorts each list as well as the dict itself"""
@@ -379,17 +417,6 @@ def analyze_genome(genome_file):
     return metadata_dict
 
 
-def count_kmers(genome_file):
-    encoding = guess_type(genome_file)[1]  # uses file extension
-    _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
-    with _open(genome_file) as g:
-        record = SeqIO.read(g, "fasta")
-    kmerlen = params["kmerlen"]
-    max_index = len(record.seq) - kmerlen + 1
-    with memoryview(bytes(record.seq)) as seq_buffer:
-        kmerset = {bytes(seq_buffer[i : i + kmerlen]) for i in range(max_index)}
-    logger.info(len(kmerset))
-    return kmerset
 
 def pickle_genome(metadata, kmerdir):
     ppath = kmerdir / metadata["accession"] + ".pkl"
