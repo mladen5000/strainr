@@ -312,7 +312,6 @@ def get_genome_names(genome_files):
             genome_name = meta.loc[acc]['organism_name']
             meta['infraspecific_name'] = meta.infraspecific_name.astype(str)
             strain_name = meta.loc[acc]['infraspecific_name']
-            print(strain_name)
             strain_name = strain_name.replace('strain=',' ')
             genome_names.append( genome_name + strain_name + ' ' + acc)
             # encoding = guess_type(str(gf))[1]  # uses file extension

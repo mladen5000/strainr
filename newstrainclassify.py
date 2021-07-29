@@ -23,11 +23,11 @@ from collections import (
 
 
 def args():
-    """ Gets arguments
+    """Gets arguments
 
     Returns:
         parser: Object to be converted to dict for parameters
-    """    
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "input",
@@ -146,10 +146,14 @@ def count_kmers(seqrecord):
                 matched_kmer_strains.append(returned_strains)
     return seqrecord, sum(matched_kmer_strains)
 
-def fast_count_kmers(rid, seq,):
+
+def fast_count_kmers(
+    rid,
+    seq,
+):
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
-    na_zeros = np.full(len(strains),0)
+    na_zeros = np.full(len(strains), 0)
     max_index = len(str(seq)) - kmerlen + 1
     with memoryview(seq) as seqview:
         for i in range(max_index):
@@ -157,30 +161,42 @@ def fast_count_kmers(rid, seq,):
             if returned_strains is not None:
                 matched_kmer_strains.append(returned_strains)
     final_tally = sum(matched_kmer_strains)
-    if isinstance(final_tally,np.ndarray):
+    if isinstance(final_tally, np.ndarray):
         return rid, final_tally
     else:
         return rid, na_zeros
-        
+
 
 def fast_count_kmers_helper(seqtuple):
-    return fast_count_kmers(*seqtuple,)
+    return fast_count_kmers(
+        *seqtuple,
+    )
+
 
 def classify():
     """Call multiprocessing library to lookup k-mers"""
     t0 = time.time()
     print("Beginning classification")
-    if params['procs'] == 1:
+    if params["procs"] == -1:
         print("Single-core indexing")
         results = single_classify()
     else:
         with _open(f1) as fh:
-            records = ((rid, bytes(seq,'utf-8'),) for (rid, seq, q) in FastqGeneralIterator(fh) )
+            records = (
+                (
+                    rid,
+                    bytes(seq, "utf-8"),
+                )
+                for (rid, seq, q) in FastqGeneralIterator(fh)
+            )
             with mp.Pool(processes=params["procs"]) as pool:
-                results = list(pool.imap_unordered(fast_count_kmers_helper, records,chunksize=1000))
+                results = list(
+                    pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000)
+                )
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
+
 
 def single_classify():
     record_index = SeqIO.index(f1, "fastq")
@@ -200,12 +216,14 @@ def single_classify():
         full_results.append(res)
     return full_results
 
+
 def raw_to_dict(raw_classified):
     """
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
     """
     return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
+
 
 def separate_hits(hitcounts):
     """
@@ -223,7 +241,7 @@ def separate_hits(hitcounts):
             elif len(max_ind) > 1 and sum(hits) > 0:
                 ambig_hits[read] = hits
             else:
-                print('error')
+                print("error")
     # clear_hits, ambig_hits = {}, {}
     # none_hits = []
     # for read, hits in hitcounts:
@@ -275,6 +293,7 @@ def counter_to_array(prior_counter, nstrains):
 
     prior_array[prior_array == 0] = 1e-20
     return prior_array
+
 
 def parallel_resolve(hits, prior, selection):
     """Main function called by helper for parallel disambiguation"""
@@ -408,7 +427,7 @@ def disambiguate(
 
 def collect_reads(clear_hits, updated_hits, na_hits):
     """Assign the NA string to na and join all 3 dicts"""
-    np.full(len(strains),0.0)
+    np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
     print(
@@ -455,14 +474,16 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     return normalize_counter(thresh_results)
 
 
-def save_results(intermediate_scores,results, strains):
+def save_results(intermediate_scores, results, strains):
     """
     Take a dict of readid:hits and convert to a dataframe
     then save the output
     """
-    df = pd.DataFrame.from_dict(dict(intermediate_scores),orient='index',columns=strains).astype(int)
-    final_names = {k:strains[int(v)] for k,v in results.items() if v != 'NA'}
-    assigned = pd.Series(final_names).rename('final')
+    df = pd.DataFrame.from_dict(dict(intermediate_scores), orient="index", columns=strains).astype(
+        int
+    )
+    final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
+    assigned = pd.Series(final_names).rename("final")
     df = df.join(assigned)
     savepath = outdir / "results_table.csv"
     picklepath = outdir / "results_table.pkl"
@@ -476,9 +497,13 @@ def print_relab(acounter, nstrains=10, prefix=""):
     print(f"\n{prefix}")
     for idx, ab in acounter.most_common(n=nstrains):
         try:
-            print( round(ab, 5), "\t",strains[idx],)
+            print(
+                round(ab, 5),
+                "\t",
+                strains[idx],
+            )
         except:
-            print( round(ab, 5),'\t',idx)
+            print(round(ab, 5), "\t", idx)
 
 
 def write_abundance_file(strain_names, idx_relab, outfile):
@@ -506,18 +531,43 @@ def output_results(results, strains, outdir):
 
     # Build abundance and output
     final_hits = Counter(results.values())
-    print_relab( final_hits, prefix="Overall hits",)
-    write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
+    print_relab(
+        final_hits,
+        prefix="Overall hits",
+    )
+    write_abundance_file(
+        strains,
+        final_hits,
+        (outdir / "count_abundance.tsv"),
+    )
 
     final_relab = normalize_counter(final_hits)
-    print_relab( final_relab, prefix="Overall abundance",)
-    write_abundance_file( strains, final_relab, (outdir / "sample_abundance.tsv"),)
+    print_relab(
+        final_relab,
+        prefix="Overall abundance",
+    )
+    write_abundance_file(
+        strains,
+        final_relab,
+        (outdir / "sample_abundance.tsv"),
+    )
 
-    final_threshab = threshold_by_relab( final_relab, threshold=params["thresh"],)
-    print_relab( final_threshab, prefix="Overall relative abundance",)
-    write_abundance_file( strains, final_threshab, (outdir / "intra_abundance.tsv"),)
+    final_threshab = threshold_by_relab(
+        final_relab,
+        threshold=params["thresh"],
+    )
+    print_relab(
+        final_threshab,
+        prefix="Overall relative abundance",
+    )
+    write_abundance_file(
+        strains,
+        final_threshab,
+        (outdir / "intra_abundance.tsv"),
+    )
 
     return final_hits, final_relab, final_threshab
+
 
 def database_full(database_name):
     df = load_database(database_name)
@@ -525,14 +575,16 @@ def database_full(database_name):
     strains, db = df_to_dict(df)
     return db, strains, kmerlen
 
-def pickle_results(results_raw,total_hits,strains):
-    with open( (outdir /'raw_results.pkl'),'wb') as fh:
-        pickle.dump(results_raw,fh)
-    with open((outdir / 'total_hits.pkl'),'wb') as fh:
-        pickle.dump(total_hits,fh)
 
-    save_results(results_raw,total_hits, strains)
+def pickle_results(results_raw, total_hits, strains):
+    with open((outdir / "raw_results.pkl"), "wb") as fh:
+        pickle.dump(results_raw, fh)
+    with open((outdir / "total_hits.pkl"), "wb") as fh:
+        pickle.dump(total_hits, fh)
+
+    save_results(results_raw, total_hits, strains)
     return
+
 
 def main():
     """
@@ -546,10 +598,11 @@ def main():
     """
     # Build
     results_raw = classify()  # get list of (SecRecord,nparray)
-    clear_hits, ambig_hits, na_hits = separate_hits( results_raw)  # parse into 3 dicts
+    clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
     # Disambiguate
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
+
     cprior = prior_counter(assigned_clear)
     print_relab( normalize_counter(cprior), prefix="Prior Estimate",)
 
@@ -561,11 +614,25 @@ def main():
     # Output
     if outdir:
         print(f"Saving results to {outdir}")
-        #fhits is hitcount, fthresh is intra-strain
+        # fhits is hitcount, fthresh is intra-strain
         fhits, frelab, fthreshab = output_results(total_hits, strains, outdir)
-    #pickle_results(results_raw,total_hits,strains)
+
+        
+
+        # Temp stuff
+        print(fhits, frelab, fthreshab)
+        i2 = outdir / "i2.pkl"
+        with (outdir / "i1.pkl").open("wb") as ph:
+            pickle.dump(results_raw, ph)
+        with i2.open("wb") as ph:
+            pickle.dump(total_hits, ph)
+        with (outdir / "strain_list.txt").open("w") as sh:
+            for s in strains:
+                sh.write(f"{s}\n")
+    # pickle_results(results_raw,total_hits,strains)
 
     return
+
 
 if __name__ == "__main__":
     p = pathlib.Path().cwd()
@@ -573,12 +640,12 @@ if __name__ == "__main__":
     params: dict = vars(args().parse_args())
 
     # Parameters
-    outdir_main = params['out']
-    db, strains, kmerlen = database_full(params['db'])
+    outdir_main = params["out"]
+    db, strains, kmerlen = database_full(params["db"])
     print(params)
 
-    if len(params['input']) == 1:
-        f1, outdir = params['input'][0], outdir_main
+    if len(params["input"]) == 1:
+        f1, outdir = params["input"][0], outdir_main
         print(f"Input file:{f1}")
         main()
     else:
@@ -589,143 +656,68 @@ if __name__ == "__main__":
             print(f"Input file:{f1}")
             main()
             print(f"Time for {f1}: {time.time()-t0}")
+            
+            
+def generate_table(intermediate_results, strains):
+    """ Use the k-mer hits from classify in order to build a binning frame"""
+    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
+    print(strains)
+    df.columns = strains
+    return df
 
+def top_bins(final_values, strains):
+    """ Use a dict of reads : strain list index and choose the top ones (sorted list) """
+    df2 = pd.Series(dict(final_values))
+    top_strain_indices = list(df2.value_counts().index)
+    top_strain_names = [strains[i] for i in top_strain_indices]
+    return top_strain_names
+            
+def bin_helper(top_strain_names, df, f1, f2, outdir, nbins = 2):
+    """ strain_dict is the strain_id : set of reads"""
 
+    # Make a directory for output
+    bin_dir = outdir / 'bins'
+    bin_dir.mkdir(exist_ok=True,parents=True)
 
-class Binner:
-    def __init__(self, count_table, min_hit_threshold, min_k_threshold, final_hits,f1, f2):
-        self.table = count_table
-        self.min_hit = min_hit_threshold
-        self.min_k = min_k_threshold
-        self.final_hits = final_hits
-        self.f1 = f1
-        self.f2 = f2
-        
-        
-        
-        
-def strain_to_reads_map(intermediate: tuple, min_k: int):
-    """ 
-    Builds a dictionary that contains a mapping for each strain
-    to an associated list of reads that contained at least n
-    k-mers for the given strain. For binning
-    
-    Parameters  
-    ===========
-    _intermediate: post-classification list of tuple
-    that contains (read-id,kmerspectra array)
+    strains_to_bin = top_strain_names[nbins]
+    print(f"Generating sequence files for the top {nbins} strains.")
+    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
 
-    _min_k: int, minimum number of k-mers required 
-    to be included in list
-    """
-    df = pd.DataFrame.from_dict(
-        dict(intermediate), 
-        orient='index', 
-        columns=strains
-        ).astype(int)
-
-    return {
-        strain: list(df[strain > min_k].index) 
-            for strain in df.columns
-            }
-
-def filter_strains_bin(strain_map:dict, minhits: int,fhits: dict):
-    return { k: v for k, v in strain_map.items() 
-            if len(fhits[k]) > minhits 
-            }
-
-def bin_stuff(intermediate, fhits):
-    minhits = 1000
-    df = pd.read_results('intermed.csv').set_index('Unnamed: 0')
-
-    strain_map = strain_to_reads_map(intermediate, min_k=1)
-    print(strain_map)
-    strain_map = filter_strains_bin(strain_map, minhits, fhits)
-    print(strain_map)
-    topstrains = select_top_bins(df,nstrains,min_k)
-    print(topstrains)
-    f2 = params['reverse']
-    print(f2)
-    astrain_set, aplist = write_strain_fastas( strain_map, f1, f2)
-    print(astrain_set)
-    print(aplist)
-    [ap.join() for ap in aplist]
-    return
-
-def select_top_bins(df,nstrains,min_k):
-    min_k= 90
-    nstrains = 5
-    strain_nhits = {}
-    for strain in df.columns:
-        nreads = len(list(df[df[strain] > min_k].index))
-        strain_nhits[strain] = nreads
-    #     print(f"The strain {strain} has {nreads} reads with greater than {min_k} k-mer hits") 
-    topstrains = sorted(strain_nhits.items(),key=lambda kv: kv[1],reverse=True)[:nstrains]
-    return [i[0] for i in topstrains]
-
-def write_strain_fastas( strain_dict, f1, f2,):
-    fastadir = outdir / 'fastas'
-    fastadir.mkdir(exist_ok=True,parents=True)
-    max_n = len(topstrains)
-
-    # print(f"Generating sequence files for the top {max_n} strains.")
-    # strain_dict = dict(sorted(strain_dict.items(), key=lambda item: item[1])[:max_n])
-
-    # Loop through each strain to make the file
     procs, saved_strains = [], []
-    for strain_id, read_set in strain_dict.items():
+    for strain_id in strains_to_bin:
         if strain_id == "NA":
             continue
 
+        # Keep track of binned strains
         saved_strains.append(strain_id)
-        print(f"Writing {len(read_set)} reads for {strain_id}...")
-        p = Process( target=mp_write_single_strain, args=( strain_id, read_set, f1, f2, fastadir, ),)
+        print(f"Binning reads for {strain_id}...")
+        p = mp.Process( target=bin_single, args=( strain_id, df, f1, f2, bin_dir, ),)
         p.start()
         procs.append(p)
 
-    # [p.join() for p in procs]
+    [p.join() for p in procs]
+
+    # Return the set of strains and the list of processes
     return set(saved_strains), procs
 
-    
-    
-def mp_write_single_strain( strain , read_set, forward_file, reverse_file,  fastadir , ):
-
+def bin_single( strain , df, forward_file, reverse_file, bin_dir):
+    """ Given a strain, use hit info to extract reads"""
+    strain_accession = strain.split()[0]
     paired_files = [forward_file,reverse_file]
-    fext = "fastq"
+
     for fidx, input_file in enumerate(paired_files): # (0,R1), (1,R2)
-        if fidx == 1: #reverse
-            read_names = set( read.replace("/1", "/2") for read in read_set)
+        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
+        writefile = bin_dir / writefile_name
+
+        if fidx == 0:
+            reads = set(df[df[strain] > 0].index)
         else:
-            read_names = set(read for read in read_set)
+            reads = set(df[df[strain] > 0].index.str.replace('/1','/2'))
+            
+        with input_file.open('r') as original, writefile.open('w') as newfasta:
+            records = (r for r in SeqIO.parse(original,'fastq') if r.id in reads)
+            count = SeqIO.write(records, newfasta, "fastq")
 
-        writefile_name = f"sbin.{strain}_R{fidx+1}.{fext}"  
-        writefile = fastadir / writefile_name
-
-        # Open input, find reads that match dict, write to strain_fasta
-        with _open(input_file) as rhandle, open(writefile, "w") as whandle:
-            records = (r for r in SeqIO.parse(rhandle,'fastq') if r in read_names)
-            count = SeqIO.write(records, whandle, "fastq")
-            print(f"Saved {count} records from {input_file} to {writefile}")
+        print(f"Saved {count} records from {input_file} to {writefile}")
 
     return
-
-
-"""
-import pandas as pd
-df = pd.read_csv('intermed.csv').set_index('Unnamed: 0')
-
-        
-def select_top_bins(df,nstrains,min_k):
-    min_k= 90
-    nstrains = 5
-    strain_nhits = {}
-    for strain in df.columns:
-        nreads = len(list(df[df[strain] > min_k].index))
-        strain_nhits[strain] = nreads
-    #     print(f"The strain {strain} has {nreads} reads with greater than {min_k} k-mer hits") 
-    topstrains = sorted(strain_nhits.items(),key=lambda kv: kv[1],reverse=True)
-    topstrains = topstrains[:nstrains]
-    return [i[0] for i in topstrains]
-
-        
-"""
