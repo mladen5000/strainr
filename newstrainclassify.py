@@ -585,6 +585,79 @@ def pickle_results(results_raw, total_hits, strains):
     save_results(results_raw, total_hits, strains)
     return
 
+def generate_table(intermediate_results, strains):
+    """ Use the k-mer hits from classify in order to build a binning frame"""
+    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
+    print(strains)
+    df.columns = strains
+    return df
+
+def top_bins(final_values, strains):
+    """ Use a dict of reads : strain list index and choose the top ones (sorted list) """
+    df2 = pd.Series(dict(final_values))
+    top_strain_indices = list(df2.value_counts().index)
+    top_strain_names = [strains[i] for i in top_strain_indices if i != 'NA']
+    return top_strain_names
+            
+def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2):
+    """ strain_dict is the strain_id : set of reads"""
+
+    # Make a directory for output
+    bin_dir = outdir / 'bins'
+    bin_dir.mkdir(exist_ok=True,parents=True)
+
+    strains_to_bin = top_strain_names[:nbins]
+    print(f"Generating sequence files for the top {nbins} strains.")
+    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
+
+    procs, saved_strains = [], []
+    for strain_id in strains_to_bin:
+        if strain_id == "NA":
+            continue
+
+        # Keep track of binned strains
+        saved_strains.append(strain_id)
+        print(f"Binning reads for {strain_id}...")
+        p = mp.Process( target=bin_single, args=( strain_id, bin_table, f1, f2, bin_dir, ),)
+        p.start()
+        procs.append(p)
+
+    [p.join() for p in procs]
+
+    # Return the set of strains and the list of processes
+    return set(saved_strains), procs
+
+def bin_single( strain , bin_table, forward_file, reverse_file, bin_dir):
+    """ Given a strain, use hit info to extract reads"""
+    strain_accession = strain.split()[0]
+    paired_files = [forward_file,reverse_file]
+    print(paired_files)
+
+    for fidx, input_file in enumerate(paired_files): # (0,R1), (1,R2)
+        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
+        writefile = bin_dir / writefile_name
+
+        if fidx == 0:
+            reads = set(bin_table[bin_table[strain] > 0].index)
+        else:
+            reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
+            
+        with input_file.open('r') as original, writefile.open('w') as newfasta:
+            records = (r for r in SeqIO.parse(original,'fastq') if r.id in reads)
+            count = SeqIO.write(records, newfasta, "fastq")
+
+        print(f"Saved {count} records from {input_file} to {writefile}")
+
+    return
+
+def main_bin(intermediate_results, strains, final_values, f1,outdir):
+    bin_table = generate_table(intermediate_results, strains)
+    top_strain_names = top_bins(final_values, strains)
+    f1 = pathlib.Path(f1)
+    f2 = pathlib.Path(str(f1).replace('R1','R2'))
+    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2)
+    return 
+
 
 def main():
     """
@@ -616,22 +689,24 @@ def main():
         print(f"Saving results to {outdir}")
         # fhits is hitcount, fthresh is intra-strain
         fhits, frelab, fthreshab = output_results(total_hits, strains, outdir)
+        main_bin(results_raw,strains,total_hits, f1, outdir)
 
         
 
         # Temp stuff
-        print(fhits, frelab, fthreshab)
-        i2 = outdir / "i2.pkl"
-        with (outdir / "i1.pkl").open("wb") as ph:
-            pickle.dump(results_raw, ph)
-        with i2.open("wb") as ph:
-            pickle.dump(total_hits, ph)
-        with (outdir / "strain_list.txt").open("w") as sh:
-            for s in strains:
-                sh.write(f"{s}\n")
+        # print(fhits, frelab, fthreshab)
+        # i2 = outdir / "i2.pkl"
+        # with (outdir / "i1.pkl").open("wb") as ph:
+        #     pickle.dump(results_raw, ph)
+        # with i2.open("wb") as ph:
+        #     pickle.dump(total_hits, ph)
+        # with (outdir / "strain_list.txt").open("w") as sh:
+        #     for s in strains:
+        #         sh.write(f"{s}\n")
     # pickle_results(results_raw,total_hits,strains)
 
     return
+
 
 
 if __name__ == "__main__":
@@ -657,67 +732,3 @@ if __name__ == "__main__":
             main()
             print(f"Time for {f1}: {time.time()-t0}")
             
-            
-def generate_table(intermediate_results, strains):
-    """ Use the k-mer hits from classify in order to build a binning frame"""
-    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
-    print(strains)
-    df.columns = strains
-    return df
-
-def top_bins(final_values, strains):
-    """ Use a dict of reads : strain list index and choose the top ones (sorted list) """
-    df2 = pd.Series(dict(final_values))
-    top_strain_indices = list(df2.value_counts().index)
-    top_strain_names = [strains[i] for i in top_strain_indices]
-    return top_strain_names
-            
-def bin_helper(top_strain_names, df, f1, f2, outdir, nbins = 2):
-    """ strain_dict is the strain_id : set of reads"""
-
-    # Make a directory for output
-    bin_dir = outdir / 'bins'
-    bin_dir.mkdir(exist_ok=True,parents=True)
-
-    strains_to_bin = top_strain_names[nbins]
-    print(f"Generating sequence files for the top {nbins} strains.")
-    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
-
-    procs, saved_strains = [], []
-    for strain_id in strains_to_bin:
-        if strain_id == "NA":
-            continue
-
-        # Keep track of binned strains
-        saved_strains.append(strain_id)
-        print(f"Binning reads for {strain_id}...")
-        p = mp.Process( target=bin_single, args=( strain_id, df, f1, f2, bin_dir, ),)
-        p.start()
-        procs.append(p)
-
-    [p.join() for p in procs]
-
-    # Return the set of strains and the list of processes
-    return set(saved_strains), procs
-
-def bin_single( strain , df, forward_file, reverse_file, bin_dir):
-    """ Given a strain, use hit info to extract reads"""
-    strain_accession = strain.split()[0]
-    paired_files = [forward_file,reverse_file]
-
-    for fidx, input_file in enumerate(paired_files): # (0,R1), (1,R2)
-        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
-        writefile = bin_dir / writefile_name
-
-        if fidx == 0:
-            reads = set(df[df[strain] > 0].index)
-        else:
-            reads = set(df[df[strain] > 0].index.str.replace('/1','/2'))
-            
-        with input_file.open('r') as original, writefile.open('w') as newfasta:
-            records = (r for r in SeqIO.parse(original,'fastq') if r.id in reads)
-            count = SeqIO.write(records, newfasta, "fastq")
-
-        print(f"Saved {count} records from {input_file} to {writefile}")
-
-    return
