@@ -850,6 +850,7 @@ if __name__ == "__main__":
                 "Parameter Dependence error: Binned file generation requires paired files."
             )
         writefiles = params.writefiles
+        SeqIO.wr
 
         # Input and Output
         f1 = Path(params.input_file[0])
