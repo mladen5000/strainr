@@ -13,15 +13,13 @@ from typing import Any, List, Literal, Sequence, Tuple
 import typing
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 from Bio.SeqIO.FastaIO import SimpleFastaParser
+from matplotlib import pyplot as plt
 
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from mimetypes import guess_type
-from collections import (
-    Counter,
-    defaultdict,
-)
+from collections import ( Counter, defaultdict)
 
 
 def args():
@@ -156,10 +154,7 @@ def count_kmers(seqrecord):
     return seqrecord, sum(matched_kmer_strains)
 
 
-def fast_count_kmers(
-    rid,
-    seq,
-):
+def fast_count_kmers( rid, seq):
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
     na_zeros = np.full(len(strains), 0)
@@ -275,9 +270,7 @@ def _open(infile):
     """Handle unknown file for gzip and non-gzip alike"""
     encoding = guess_type(str(infile))[1]  # uses file extension
     _open = functools.partial(gzip.open, mode="rt") if encoding == "gzip" else open
-    file_object = _open(
-        infile,
-    )
+    file_object = _open( infile)
     return file_object
 
 
@@ -303,11 +296,7 @@ def parallel_resolve(hits, prior, selection):
     mlehits = hits * prior  # Apply prior
 
     if selection == "random":  # Weighted assignment
-        return random.choices(
-            range(len(hits)),
-            weights=mlehits,
-            k=1,
-        ).pop()
+        return random.choices( range(len(hits)), weights=mlehits, k=1,).pop()
 
     elif selection == "max":  # Maximum Likelihood assignment
         return np.argmax(mlehits)
@@ -319,21 +308,13 @@ def parallel_resolve(hits, prior, selection):
     elif selection == "multinomial":  # Multinomial
         mlehits[mlehits == 0] = 1e-10
         return np.argmax(
-            rng.multinomial(
-                1,
-                mlehits / sum(mlehits),
-            )
-        )
+            rng.multinomial( 1, mlehits / sum(mlehits)))
 
     else:
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(
-    ambig_hits,
-    prior,
-    selection="multinomial",
-):
+def parallel_resolve_helper( ambig_hits, prior, selection="multinomial"):
     """
     Assign a strain to reads with ambiguous k-mer signals
     by maximum likelihood.  Currently 3 options: random, max,
@@ -342,32 +323,18 @@ def parallel_resolve_helper(
     maxima, multiply w/ prior.
     """
     new_clear, new_ambig = {}, {}
-    mapfunc = functools.partial(
-        parallel_resolve,
-        prior=prior,
-        selection=selection,
-    )
+    mapfunc = functools.partial( parallel_resolve, prior=prior, selection=selection)
 
     resolve_cores = min(1, params["procs"] // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(
-            ambig_hits.keys(),
-            pool.map(
-                mapfunc,
-                ambig_hits.values(),
-            ),
-        ):
+        for read, outhits in zip( ambig_hits.keys(), pool.map( mapfunc, ambig_hits.values())):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
 
 
-def disambiguate(
-    ambig_hits,
-    prior,
-    selection="multinomial",
-):
+def disambiguate( ambig_hits, prior, selection="multinomial"):
     """
     Assign a strain to reads with ambiguous k-mer signals
     by maximum likelihood.
@@ -380,11 +347,7 @@ def disambiguate(
     rng = np.random.default_rng()
     new_clear, new_ambig = {}, {}
 
-    for (
-        read,
-        hits,
-    ) in ambig_hits.items():
-        # Treshold at max
+    for (read, hits) in ambig_hits.items():  # Treshold at max
         belowmax = hits < np.max(hits)
         hits[belowmax] = 0
 
@@ -393,11 +356,7 @@ def disambiguate(
 
         # Weighted assignment
         if selection == "random":
-            select_random = random.choices(
-                range(len(hits)),
-                weights=mlehits,
-                k=1,
-            ).pop()
+            select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
             new_clear[read] = select_random
 
         # Maximum Likelihood assignment
@@ -414,10 +373,7 @@ def disambiguate(
 
         elif selection == "multinomial":
             mlehits[mlehits == 0] = 1e-10
-            select_multi = rng.multinomial(
-                1,
-                mlehits / sum(mlehits),
-            )
+            select_multi = rng.multinomial( 1, mlehits / sum(mlehits))
             new_clear[read] = np.argmax(select_multi)
 
         else:
@@ -432,12 +388,7 @@ def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_h
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
-    print(
-        len(all_dict),
-        len(clear_hits),
-        len(updated_hits),
-        len(na_hits),
-    )
+    print( len(all_dict), len(clear_hits), len(updated_hits), len(na_hits))
     # assert len(all_dict) == len(clear_hits) +
     # len(updated_hits) + len(na_hits)
     return all_dict
@@ -462,8 +413,26 @@ def build_na_dict(na_hits):
 
 def normalize_counter(acounter: Counter) -> Counter:
     """Regardless of key type, return values that sum to 1."""
-    total = sum(acounter.values())
-    return Counter({k: v / total for k, v in acounter.items()})
+    # with NA
+    total_counts = sum(acounter.values())
+    sample_normalized = Counter({k: v / total_counts for k, v in acounter.items()})
+
+    # sans NA
+    na_hits = acounter.pop("NA", None)
+    total_minus_na = sum(acounter.values())
+    species_normalized = Counter({k: v / total for k, v in acounter.items()})
+
+    details = {
+        "total_counts": total_counts,
+        "sample_normalized": sample_normalized,
+        "na_hits": na_hits,
+        "total_minus_na": total_minus_na,
+        "species_normalized": species_normalized,
+    }
+    return details
+
+    na_hits = acounter.pop("NA", None)
+    return ( normalized_counter, na_hits, total)
 
 
 def threshold_by_relab(norm_counter_all, threshold=0.02):
@@ -499,7 +468,7 @@ def save_results(intermediate_scores, results, strains):
     return
 
 
-def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = ""):
+def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True):
     """
     Pretty print for counters:
     Can work with either indices or names
@@ -511,15 +480,13 @@ def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = 
             s_index = strain  # for clarity
             if abund > 0.0:
                 print(f"{abund}\t{strains[s_index]}")
-
         elif isinstance(strain, str) and strain != "NA":
             if abund > 0.0:
                 print(f"{abund}\t{strain}")
-        # can put a display_na=True/False later
-        # else:
-        #     raise TypeError
-        # if strain == "NA" and abund > 0.0:
-        #     print(f"{abund}\t{strain}\n")
+
+    if display_na and acounter["NA"] > 0.0:
+        print(f"{acounter['NA']}\tNA\n")
+
     return
 
 
@@ -564,7 +531,7 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
     full_strain_relab: defaultdict = defaultdict(float)
     for strain in strain_names:
         full_strain_relab[strain] = final_hits[strain]
-    # full_strain_relab["NA"] = final_hits["NA"]
+    full_strain_relab["NA"] = final_hits["NA"]
     return Counter(full_strain_relab)
 
 
@@ -575,6 +542,7 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     """
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # Tranlate to names, include all genomes, display to hits
     index_hits = Counter(results.values())
     name_hits: Counter[str] = translate_strain_indices_to_names(index_hits, strains)
     full_name_hits: Counter[str] = add_missing_strains(strains, name_hits)
@@ -582,24 +550,22 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
 
     final_relab: Counter[str] = normalize_counter(full_name_hits)
     display_relab(final_relab, template_string="Initial relative abundance ")
-    
+
     final_threshab: Counter[str] = threshold_by_relab(final_relab, threshold=params["thresh"])
     display_relab(final_threshab, template_string="Post-thresholding relative abundance")
-
 
     # write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
     # write_abundance_file( strains, final_relab, (outdir / "sample_abundance.tsv"),)
     # write_abundance_file( strains, final_threshab, (outdir / "intra_abundance.tsv"),)
 
-
     # Function to make each counter into a pd.DataFrame
-    make_df = lambda x,colname: pd.DataFrame.from_records(
+    make_df = lambda x, colname: pd.DataFrame.from_records(
         list(dict(x).items()), columns=["strain", colname]
-    ).set_index("strain") 
+    ).set_index("strain")
 
     dflist = [
         make_df(full_name_hits, "sample_hits"),
-        make_df(final_relab, "sample_relab"),
+        make_df(final_relab, "sample_relab"),  # this should include NA
         make_df(final_threshab, "intra_relab"),
     ]
     results_table = pd.concat(dflist, axis=1)
