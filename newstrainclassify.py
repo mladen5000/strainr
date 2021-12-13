@@ -9,7 +9,7 @@ import sys
 import time
 import gzip
 import pickle
-from typing import List, Literal, Sequence, Tuple
+from typing import Any, List, Literal, Sequence, Tuple
 import typing
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 from Bio.SeqIO.FastaIO import SimpleFastaParser
@@ -230,7 +230,8 @@ def raw_to_dict(raw_classified):
     return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
 
 
-def separate_hits( hitcounts: list[tuple[str, np.ndarray]]
+def separate_hits(
+    hitcounts: list[tuple[str, np.ndarray]]
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     """
     Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
@@ -265,8 +266,8 @@ def separate_hits( hitcounts: list[tuple[str, np.ndarray]]
     return clear_hits, ambig_hits, none_hits
 
 
-def prior_counter(clear_hits):
-    """Aggregate values"""
+def prior_counter(clear_hits: dict[str, int]) -> Counter[int]:
+    """Aggregate the values which are indices corresponding to strain names"""
     return Counter(clear_hits.values())
 
 
@@ -280,7 +281,7 @@ def _open(infile):
     return file_object
 
 
-def counter_to_array(prior_counter, nstrains):
+def counter_to_array(prior_counter: Counter[int], nstrains: int):
     """
     Aggregate signals from reads with singular
     maximums and return a vector of probabilities for each strain
@@ -426,7 +427,7 @@ def disambiguate(
     return new_clear, new_ambig
 
 
-def collect_reads(clear_hits, updated_hits, na_hits):
+def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts"""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
@@ -442,7 +443,7 @@ def collect_reads(clear_hits, updated_hits, na_hits):
     return all_dict
 
 
-def resolve_clear_hits(clear_hits):
+def resolve_clear_hits(clear_hits) -> dict[str, int]:
     """
     INPUT: Reads whose arrays contain singular maxima - clear hits
     OUTPUT: The index/strain corresponding to the maximum value
@@ -459,7 +460,8 @@ def build_na_dict(na_hits):
     return {k: None for k in na_hits}
 
 
-def normalize_counter(acounter):
+def normalize_counter(acounter: Counter) -> Counter:
+    """Regardless of key type, return values that sum to 1."""
     total = sum(acounter.values())
     return Counter({k: v / total for k, v in acounter.items()})
 
@@ -502,8 +504,7 @@ def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = 
     Pretty print for counters:
     Can work with either indices or names
     """
-
-    print(f"{template_string}")
+    print(f"\n\n{template_string}\n")
 
     for strain, abund in acounter.most_common(n=nstrains):
         if isinstance(strain, int):
@@ -511,12 +512,14 @@ def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = 
             if abund > 0.0:
                 print(f"{abund}\t{strains[s_index]}")
 
-        elif isinstance(strain, str):
+        elif isinstance(strain, str) and strain != "NA":
             if abund > 0.0:
                 print(f"{abund}\t{strain}")
-
-        else:
-            raise TypeError
+        # can put a display_na=True/False later
+        # else:
+        #     raise TypeError
+        # if strain == "NA" and abund > 0.0:
+        #     print(f"{abund}\t{strain}\n")
     return
 
 
@@ -538,43 +541,61 @@ def write_abundance_file(strain_names, idx_relab, outfile):
     return
 
 
-def translate_strain_indices_to_names(counter_indices, strains):
+def translate_strain_indices_to_names(counter_indices, strain_names):
     """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
-    return Counter({strains[k]: v for k, v in counter_indices.items()})
+    name_to_hits = {}
+    for k_idx, v_hits in counter_indices.items():
+        if k_idx != "NA" and isinstance(k_idx, int):
+            name_to_hits[strain_names[k_idx]] = v_hits
+        elif k_idx == "NA":
+            continue
+            # name_to_hits['NA'] = v_hits
+        else:
+            try:
+                name_to_hits[strain_names[k_idx]] = v_hits
+            except TypeError:
+                print(f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type.")
+                print(f"The type is {type(k_idx)}")
+    return Counter(name_to_hits)
 
 
-def add_missing_strains(strain_names: List[str], final_hits: Counter[str]):
+def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
+    """Provides a counter that has all the strains with 0 hits for completeness"""
     full_strain_relab: defaultdict = defaultdict(float)
     for strain in strain_names:
         full_strain_relab[strain] = final_hits[strain]
+    # full_strain_relab["NA"] = final_hits["NA"]
     return Counter(full_strain_relab)
 
 
-def output_results(results, strains, outdir):
+def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
     """
     outdir.mkdir(parents=True, exist_ok=True)
+
     index_hits = Counter(results.values())
-    name_hits = translate_strain_indices_to_names(index_hits, strains)
-    full_name_hits = add_missing_strains(strains, name_hits)
+    name_hits: Counter[str] = translate_strain_indices_to_names(index_hits, strains)
+    full_name_hits: Counter[str] = add_missing_strains(strains, name_hits)
     display_relab(full_name_hits, template_string="Overall hits")
 
+    final_relab: Counter[str] = normalize_counter(full_name_hits)
+    display_relab(final_relab, template_string="Initial relative abundance ")
+    
+    final_threshab: Counter[str] = threshold_by_relab(final_relab, threshold=params["thresh"])
+    display_relab(final_threshab, template_string="Post-thresholding relative abundance")
+
+
     # write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
-
-    final_relab = normalize_counter(full_name_hits)
-    display_relab(final_relab, template_string="Relative abundance (1)")
     # write_abundance_file( strains, final_relab, (outdir / "sample_abundance.tsv"),)
-
-    final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
-    display_relab(final_threshab, template_string="Relative abundance (2)")
     # write_abundance_file( strains, final_threshab, (outdir / "intra_abundance.tsv"),)
 
+
     # Function to make each counter into a pd.DataFrame
-    make_df = lambda x, colname: pd.DataFrame.from_records(
+    make_df = lambda x,colname: pd.DataFrame.from_records(
         list(dict(x).items()), columns=["strain", colname]
-    ).set_index("strain")
+    ).set_index("strain") 
 
     dflist = [
         make_df(full_name_hits, "sample_hits"),
@@ -582,6 +603,7 @@ def output_results(results, strains, outdir):
         make_df(final_threshab, "intra_relab"),
     ]
     results_table = pd.concat(dflist, axis=1)
+    results_table = results_table.sort_values(by="sample_hits", ascending=False)
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table
 
@@ -639,13 +661,7 @@ def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
         print(f"Binning reads for {strain_id}...")
         p = mp.Process(
             target=bin_single,
-            args=(
-                strain_id,
-                bin_table,
-                f1,
-                f2,
-                bin_dir,
-            ),
+            args=(strain_id, bin_table, f1, f2, bin_dir),
         )
         p.start()
         procs.append(p)
