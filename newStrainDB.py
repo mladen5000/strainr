@@ -229,6 +229,7 @@ def build_database(genome_files, sequence_names):
     logger.info("Building database....")
     # Each genome file as a label
     for genome_file in tqdm(genome_files):
+        print(f"Genome file: {genome_file}")
         encoding = guess_type(str(genome_file))[1]  
         _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
         with _open(genome_file) as g:

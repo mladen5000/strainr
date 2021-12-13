@@ -9,6 +9,8 @@ import sys
 import time
 import gzip
 import pickle
+from typing import List, Literal, Sequence, Tuple
+import typing
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 from Bio.SeqIO.FastaIO import SimpleFastaParser
 
@@ -87,11 +89,18 @@ def args():
         default=0.001,
     )
     parser.add_argument(
+        "--bin",
+        action="store_true",
+        required=False,
+        help=""" 
+        Perform binning.
+        """,
+    )
+    parser.add_argument(
         "--save-raw-hits",
         action="store_true",
         required=False,
-        help=""" Save the intermediate results as a csv file
-        containing each read's strain information.
+        help=""" Save the intermediate results as a csv file containing each read's strain information.
         """,
     )
     # Examples
@@ -167,10 +176,8 @@ def fast_count_kmers(
         return rid, na_zeros
 
 
-def fast_count_kmers_helper(seqtuple):
-    return fast_count_kmers(
-        *seqtuple,
-    )
+def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
+    return fast_count_kmers(*seqtuple)
 
 
 def classify():
@@ -179,20 +186,18 @@ def classify():
     print("Beginning classification")
     if params["procs"] == -1:
         print("Single-core indexing")
-        results = single_classify()
+        results = single_classify()  # TODO
     else:
         with _open(f1) as fh:
             records = (
                 (
-                    rid,
-                    bytes(seq, "utf-8"),
+                    record_id,
+                    bytes(record_seq, "utf-8"),
                 )
-                for (rid, seq, q) in FastqGeneralIterator(fh)
+                for (record_id, record_seq, _) in FastqGeneralIterator(fh)
             )
             with mp.Pool(processes=params["procs"]) as pool:
-                results = list(
-                    pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000)
-                )
+                results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000))
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -225,45 +230,39 @@ def raw_to_dict(raw_classified):
     return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
 
 
-def separate_hits(hitcounts):
+def separate_hits( hitcounts: list[tuple[str, np.ndarray]]
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     """
-    Return maps of reads with 1 (clear), multiple (ambiguous), or no signal
+    Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
+
+    "Positions in the array correspond to bins for each strain, so we search
+    for maxima along the vector, single max providing single strain evidence,
+    multiple maxima as ambiguous, NA as NA, etc.
     """
-    clear_hits, ambig_hits = {}, {}
-    none_hits = []
-    for read, hits in hitcounts:
-        if np.all(hits == 0):
+    clear_hits: dict[str, np.ndarray] = {}
+    ambig_hits: dict[str, np.ndarray] = {}
+    none_hits: list[str] = []
+    for read, hit_array in hitcounts:
+
+        if np.all(hit_array == 0):
             none_hits.append(read)
-        else:
-            max_ind = np.argwhere(hits == np.max(hits)).flatten()
-            if len(max_ind) == 1:
-                clear_hits[read] = hits
-            elif len(max_ind) > 1 and sum(hits) > 0:
-                ambig_hits[read] = hits
+
+        else:  # Find all max values and check for mulitiple maxima within the same array
+            max_indices = np.argwhere(hit_array == np.max(hit_array)).flatten()
+
+            if len(max_indices) == 1:  # Single max
+                clear_hits[read] = hit_array
+
+            elif len(max_indices) > 1 and sum(hit_array) > 0:
+                ambig_hits[read] = hit_array
+
             else:
-                print("error")
-    # clear_hits, ambig_hits = {}, {}
-    # none_hits = []
-    # for read, hits in hitcounts:
-    #     max_ind = np.argwhere(hits == np.max(hits)).flatten()
-    #     if len(max_ind) == 1:
-    #         clear_hits[read.id] = hits
-    #     elif len(max_ind) > 1 and sum(hits) > 0:
-    #         ambig_hits[read.id] = hits
-    #     else:
-    #         none_hits.append(read.id)
-    print(
-        f"""
-        Clear:{len(clear_hits)},
-        Ambiguous: {len(ambig_hits)},
-        None:{len(none_hits)}
-        """
-    )
-    return (
-        clear_hits,
-        ambig_hits,
-        none_hits,
-    )
+                raise Exception("This shouldnt occcur")
+
+    print(f"Reads with likely assignment to a single strain: {len(clear_hits)}")
+    print(f"Reads with multiple likely candidates: {len(ambig_hits)}")
+    print(f"Reads with no hits to any reference genomes: {len(none_hits)}")
+    return clear_hits, ambig_hits, none_hits
 
 
 def prior_counter(clear_hits):
@@ -348,7 +347,9 @@ def parallel_resolve_helper(
         selection=selection,
     )
 
-    with mp.Pool(processes=params["procs"]) as pool:
+    resolve_cores = min(1, params["procs"] // 4)
+
+    with mp.Pool(processes=resolve_cores) as pool:
         for read, outhits in zip(
             ambig_hits.keys(),
             pool.map(
@@ -468,10 +469,16 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     Given a percentage cutoff [threshold], remove strains
     which do not meet the criteria and recalculate relab
     """
-    thresh_results = Counter({k: v for k, v in norm_counter_all.items() if v > threshold})
-    if thresh_results["NA"]:
-        thresh_results.pop("NA")
-    return normalize_counter(thresh_results)
+    thresh_counter = {}
+    for k, v in norm_counter_all.items():
+        if v > threshold:
+            thresh_counter[k] = v
+        else:
+            thresh_counter[k] = 0.0
+    # thresh_results = Counter({k: v for k, v in norm_counter_all.items() if v > threshold})
+    # if thresh_results["NA"]:
+    #     thresh_results.pop("NA")
+    return normalize_counter(Counter(thresh_counter))
 
 
 def save_results(intermediate_scores, results, strains):
@@ -479,9 +486,7 @@ def save_results(intermediate_scores, results, strains):
     Take a dict of readid:hits and convert to a dataframe
     then save the output
     """
-    df = pd.DataFrame.from_dict(dict(intermediate_scores), orient="index", columns=strains).astype(
-        int
-    )
+    df = pd.DataFrame.from_dict(dict(intermediate_scores), orient="index", columns=strains).astype(int)
     final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
     assigned = pd.Series(final_names).rename("final")
     df = df.join(assigned)
@@ -492,18 +497,27 @@ def save_results(intermediate_scores, results, strains):
     return
 
 
-def print_relab(acounter, nstrains=10, prefix=""):
-    """Pretty print for counter"""
-    print(f"\n{prefix}")
-    for idx, ab in acounter.most_common(n=nstrains):
-        try:
-            print(
-                round(ab, 5),
-                "\t",
-                strains[idx],
-            )
-        except:
-            print(round(ab, 5), "\t", idx)
+def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = ""):
+    """
+    Pretty print for counters:
+    Can work with either indices or names
+    """
+
+    print(f"{template_string}")
+
+    for strain, abund in acounter.most_common(n=nstrains):
+        if isinstance(strain, int):
+            s_index = strain  # for clarity
+            if abund > 0.0:
+                print(f"{abund}\t{strains[s_index]}")
+
+        elif isinstance(strain, str):
+            if abund > 0.0:
+                print(f"{abund}\t{strain}")
+
+        else:
+            raise TypeError
+    return
 
 
 def write_abundance_file(strain_names, idx_relab, outfile):
@@ -519,54 +533,57 @@ def write_abundance_file(strain_names, idx_relab, outfile):
         full_relab["NA"] = idx_relab["NA"]
 
     with outfile.open(mode="w") as fh:
-        for strain, ab in sorted(full_relab.items()):
-            fh.write(f"{strain}\t{round(ab, 5)}\n")
+        for strain, relab in sorted(full_relab.items()):
+            fh.write(f"{strain}\t{relab:.9f}\n")
     return
 
 
+def translate_strain_indices_to_names(counter_indices, strains):
+    """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
+    return Counter({strains[k]: v for k, v in counter_indices.items()})
+
+
+def add_missing_strains(strain_names: List[str], final_hits: Counter[str]):
+    full_strain_relab: defaultdict = defaultdict(float)
+    for strain in strain_names:
+        full_strain_relab[strain] = final_hits[strain]
+    return Counter(full_strain_relab)
+
+
 def output_results(results, strains, outdir):
-    """Take the results dict, which has 1 strain per read, and output to 3 files"""
-
+    """
+    From {reads->strain_index} to {strain_name->rel. abundance}
+    and returns a dataFrame.
+    """
     outdir.mkdir(parents=True, exist_ok=True)
+    index_hits = Counter(results.values())
+    name_hits = translate_strain_indices_to_names(index_hits, strains)
+    full_name_hits = add_missing_strains(strains, name_hits)
+    display_relab(full_name_hits, template_string="Overall hits")
 
-    # Build abundance and output
-    final_hits = Counter(results.values())
-    print_relab(
-        final_hits,
-        prefix="Overall hits",
-    )
-    write_abundance_file(
-        strains,
-        final_hits,
-        (outdir / "count_abundance.tsv"),
-    )
+    # write_abundance_file( strains, final_hits, (outdir / "count_abundance.tsv"),)
 
-    final_relab = normalize_counter(final_hits)
-    print_relab(
-        final_relab,
-        prefix="Overall abundance",
-    )
-    write_abundance_file(
-        strains,
-        final_relab,
-        (outdir / "sample_abundance.tsv"),
-    )
+    final_relab = normalize_counter(full_name_hits)
+    display_relab(final_relab, template_string="Relative abundance (1)")
+    # write_abundance_file( strains, final_relab, (outdir / "sample_abundance.tsv"),)
 
-    final_threshab = threshold_by_relab(
-        final_relab,
-        threshold=params["thresh"],
-    )
-    print_relab(
-        final_threshab,
-        prefix="Overall relative abundance",
-    )
-    write_abundance_file(
-        strains,
-        final_threshab,
-        (outdir / "intra_abundance.tsv"),
-    )
+    final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
+    display_relab(final_threshab, template_string="Relative abundance (2)")
+    # write_abundance_file( strains, final_threshab, (outdir / "intra_abundance.tsv"),)
 
-    return final_hits, final_relab, final_threshab
+    # Function to make each counter into a pd.DataFrame
+    make_df = lambda x, colname: pd.DataFrame.from_records(
+        list(dict(x).items()), columns=["strain", colname]
+    ).set_index("strain")
+
+    dflist = [
+        make_df(full_name_hits, "sample_hits"),
+        make_df(final_relab, "sample_relab"),
+        make_df(final_threshab, "intra_relab"),
+    ]
+    results_table = pd.concat(dflist, axis=1)
+    results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
+    return results_table
 
 
 def database_full(database_name):
@@ -585,26 +602,28 @@ def pickle_results(results_raw, total_hits, strains):
     save_results(results_raw, total_hits, strains)
     return
 
+
 def generate_table(intermediate_results, strains):
-    """ Use the k-mer hits from classify in order to build a binning frame"""
+    """Use the k-mer hits from classify in order to build a binning frame"""
     df = pd.DataFrame.from_dict(dict(intermediate_results)).T
-    print(strains)
     df.columns = strains
     return df
 
+
 def top_bins(final_values, strains):
-    """ Use a dict of reads : strain list index and choose the top ones (sorted list) """
-    df2 = pd.Series(dict(final_values))
-    top_strain_indices = list(df2.value_counts().index)
-    top_strain_names = [strains[i] for i in top_strain_indices if i != 'NA']
+    """Use a dict of reads : strain list index and choose the top ones (sorted list)"""
+    out_series = pd.Series(dict(final_values))
+    top_strain_indices = list(out_series.value_counts().index)
+    top_strain_names = [strains[i] for i in top_strain_indices if i != "NA"]
     return top_strain_names
-            
-def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2):
-    """ strain_dict is the strain_id : set of reads"""
+
+
+def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
+    """strain_dict is the strain_id : set of reads"""
 
     # Make a directory for output
-    bin_dir = outdir / 'bins'
-    bin_dir.mkdir(exist_ok=True,parents=True)
+    bin_dir = outdir / "bins"
+    bin_dir.mkdir(exist_ok=True, parents=True)
 
     strains_to_bin = top_strain_names[:nbins]
     print(f"Generating sequence files for the top {nbins} strains.")
@@ -618,7 +637,16 @@ def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2):
         # Keep track of binned strains
         saved_strains.append(strain_id)
         print(f"Binning reads for {strain_id}...")
-        p = mp.Process( target=bin_single, args=( strain_id, bin_table, f1, f2, bin_dir, ),)
+        p = mp.Process(
+            target=bin_single,
+            args=(
+                strain_id,
+                bin_table,
+                f1,
+                f2,
+                bin_dir,
+            ),
+        )
         p.start()
         procs.append(p)
 
@@ -627,36 +655,40 @@ def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2):
     # Return the set of strains and the list of processes
     return set(saved_strains), procs
 
-def bin_single( strain , bin_table, forward_file, reverse_file, bin_dir):
-    """ Given a strain, use hit info to extract reads"""
-    strain_accession = strain.split()[0]
-    paired_files = [forward_file,reverse_file]
-    print(paired_files)
 
-    for fidx, input_file in enumerate(paired_files): # (0,R1), (1,R2)
+def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
+    """Given a strain, use hit info to extract reads"""
+    strain_accession = strain.split()[-1]  # Get GCF from name
+    paired_files = [forward_file, reverse_file]
+
+    for fidx, input_file in enumerate(paired_files):  # (0,R1), (1,R2)
         writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
         writefile = bin_dir / writefile_name
 
         if fidx == 0:
             reads = set(bin_table[bin_table[strain] > 0].index)
         else:
-            reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
-            
-        with input_file.open('r') as original, writefile.open('w') as newfasta:
-            records = (r for r in SeqIO.parse(original,'fastq') if r.id in reads)
+            # reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
+            reads = set(bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N"))  # Illumina extension
+
+        with _open(input_file) as original, writefile.open("w") as newfasta:
+            records = (
+                r for r in SeqIO.parse(original, "fastq") if r.description in reads
+            )  # TODO: r.description vs r.id vs fastqiterator
             count = SeqIO.write(records, newfasta, "fastq")
 
         print(f"Saved {count} records from {input_file} to {writefile}")
 
     return
 
-def main_bin(intermediate_results, strains, final_values, f1,outdir):
+
+def main_bin(intermediate_results, strains, final_values, f1, outdir):
     bin_table = generate_table(intermediate_results, strains)
     top_strain_names = top_bins(final_values, strains)
     f1 = pathlib.Path(f1)
-    f2 = pathlib.Path(str(f1).replace('R1','R2'))
-    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins = 2)
-    return 
+    f2 = pathlib.Path(str(f1).replace("_R1", "_R2"))  # TODO
+    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2)
+    return
 
 
 def main():
@@ -670,43 +702,33 @@ def main():
     6. Output
     """
     # Build
-    results_raw = classify()  # get list of (SecRecord,nparray)
+
+    results_raw: List[Tuple[str, np.ndarray]] = classify()  # get list of (SecRecord,nparray)
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
     # Disambiguate
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
-
     cprior = prior_counter(assigned_clear)
-    print_relab( normalize_counter(cprior), prefix="Prior Estimate",)
+    display_relab(normalize_counter(cprior), template_string="Prior Estimate")
 
     # Finalize
     prior = counter_to_array(cprior, len(strains))  # counter to vector
     new_clear, _ = parallel_resolve_helper(ambig_hits, prior, params["mode"])
-    total_hits = collect_reads( assigned_clear, new_clear, na_hits,)
+    total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
     # Output
     if outdir:
         print(f"Saving results to {outdir}")
-        # fhits is hitcount, fthresh is intra-strain
-        fhits, frelab, fthreshab = output_results(total_hits, strains, outdir)
-        main_bin(results_raw,strains,total_hits, f1, outdir)
+        df_relabund = output_results(total_hits, strains, outdir)
+        print(df_relabund.sort_values(by="sample_hits", ascending=True))
 
-        
+    binflag = False
+    if binflag:
+        main_bin(results_raw, strains, total_hits, f1, outdir)
 
-        # Temp stuff
-        # print(fhits, frelab, fthreshab)
-        # i2 = outdir / "i2.pkl"
-        # with (outdir / "i1.pkl").open("wb") as ph:
-        #     pickle.dump(results_raw, ph)
-        # with i2.open("wb") as ph:
-        #     pickle.dump(total_hits, ph)
-        # with (outdir / "strain_list.txt").open("w") as sh:
-        #     for s in strains:
-        #         sh.write(f"{s}\n")
     # pickle_results(results_raw,total_hits,strains)
 
     return
-
 
 
 if __name__ == "__main__":
@@ -724,11 +746,12 @@ if __name__ == "__main__":
         print(f"Input file:{f1}")
         main()
     else:
+        params["input"].reverse()
         for i, file in enumerate(params["input"]):
             t0 = time.time()
-            f1 = file
-            outdir = outdir_main / str(f1)
-            print(f"Input file:{f1}")
-            main()
-            print(f"Time for {f1}: {time.time()-t0}")
-            
+            f1 = pathlib.Path(file)
+            outdir = outdir_main / str(f1.stem)
+            if not outdir.exists():
+                print(f"Input file:{f1}")
+                main()
+                print(f"Time for {f1}: {time.time()-t0}")
