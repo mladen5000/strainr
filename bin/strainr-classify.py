@@ -464,7 +464,7 @@ def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = 
     """
     print(f"\n\n{template_string}\n")
 
-    choice_list=[]
+    choice_list = []
     for strain, abund in acounter.most_common(n=nstrains):
         if isinstance(strain, int):
             s_index = strain  # for clarity
@@ -498,7 +498,6 @@ def write_abundance_file(strain_names, idx_relab, outfile):
         for strain, relab in sorted(full_relab.items()):
             fh.write(f"{strain}\t{relab:.9f}\n")
     return
-
 
 def translate_strain_indices_to_names(counter_indices, strain_names):
     """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
@@ -540,7 +539,7 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     full_name_hits: Counter[str] = add_missing_strains(strains, name_hits)
     display_relab(full_name_hits, template_string="Overall hits")
 
-    final_relab: Counter[str] = normalize_counter(full_name_hits,remove_na=False)
+    final_relab: Counter[str] = normalize_counter(full_name_hits, remove_na=False)
     display_relab(final_relab, template_string="Initial relative abundance ")
 
     final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
@@ -690,7 +689,7 @@ def main():
     # Output
     if outdir:
         df_relabund = output_results(total_hits, strains, outdir)
-        print(df_relabund[df_relabund['sample_hits'] > 0])
+        print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {outdir}")
 
     # TODO
@@ -699,7 +698,7 @@ def main():
         main_bin(results_raw, strains, total_hits, f1, outdir)
 
     # TODO
-    #pickle_results(results_raw,total_hits,strains)
+    # pickle_results(results_raw,total_hits,strains)
     return
 
 
