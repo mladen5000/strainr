@@ -16,6 +16,7 @@ from Bio import SeqIO
 from mimetypes import guess_type
 from collections import Counter, defaultdict
 
+SETCHUNKSIZE = 10000
 
 def args():
     """Parses the available arguments.
@@ -183,12 +184,13 @@ def classify():
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
 
-    if params["procs"] == 1:
+    #TODO: not currently working with 1 cpu so just go to pool instead
+    if params["procs"] == -1:
         return single_classify()
 
     records = (rec for rec in FastqEncodedGenerator(f1))
     with mp.Pool(processes=params["procs"]) as pool:
-        results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000))
+        results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=SETCHUNKSIZE))
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
