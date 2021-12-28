@@ -2,19 +2,14 @@
 import argparse
 import multiprocessing as mp
 import functools
-from os import path
 import pathlib
 import random
 import sys
 import time
 import gzip
 import pickle
-from typing import Any, List, Literal, Sequence, Tuple
-import typing
+from typing import Any, Generator, List, Tuple
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
-from Bio.SeqIO.FastaIO import SimpleFastaParser
-from matplotlib import pyplot as plt
-
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
@@ -173,24 +168,27 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
     return fast_count_kmers(*seqtuple)
 
 
+def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
+    """Generate an updated generator expression, but without quality scores, and encodes sequences."""
+    with _open(inputfile) as fin:
+        for (recid, rseq, _) in FastqGeneralIterator(fin):
+            encoded_record = (
+                recid,
+                bytes(rseq, "utf-8"),
+            )
+            yield encoded_record
+
+
 def classify():
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
-    print("Beginning classification")
-    if params["procs"] == -1:
-        print("Single-core indexing")
-        results = single_classify()  # TODO
-    else:
-        with _open(f1) as fh:
-            records = (
-                (
-                    record_id,
-                    bytes(record_seq, "utf-8"),
-                )
-                for (record_id, record_seq, _) in FastqGeneralIterator(fh)
-            )
-            with mp.Pool(processes=params["procs"]) as pool:
-                results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000))
+
+    if params["procs"] == 1:
+        return single_classify()
+
+    records = (rec for rec in FastqEncodedGenerator(f1))
+    with mp.Pool(processes=params["procs"]) as pool:
+        results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=1000))
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -287,8 +285,8 @@ def counter_to_array(prior_counter: Counter[int], nstrains: int):
 
 
 def parallel_resolve(hits, prior, selection):
-    """ Call the resolution for parallel option selection.
-    
+    """Call the resolution for parallel option selection.
+
     Main function called by helper for parallel disambiguation"""
     # Treshold at max
     belowmax = hits < np.max(hits)
@@ -320,7 +318,7 @@ def parallel_resolve(hits, prior, selection):
 def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     """
     Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-    
+
     Currently 3 options: random, max,
     and dirichlet. (dirichlet is slow and performs similar to random)
     For all 3, threshold spectra to only include
@@ -527,14 +525,22 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
     return Counter(full_strain_relab)
 
 
+# Function to make each counter into a pd.DataFrame
+def counter_to_pandas(relab_counter, column_name):
+    relab_df = pd.DataFrame.from_records(list(dict(relab_counter).items()), columns=["strain", column_name]).set_index(
+        "strain"
+    )
+    return relab_df
+
+
 def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
     """
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)  # todo
 
-    # Tranlate to names, include all genomes, display to hits
+    # Transform hit counts to rel. abundance through counters, and fetch name mappings.
     index_hits = Counter(results.values())
     name_hits: Counter[str] = translate_strain_indices_to_names(index_hits, strains)
     full_name_hits: Counter[str] = add_missing_strains(strains, name_hits)
@@ -547,18 +553,16 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     final_threshab = normalize_counter(final_threshab, remove_na=True)
     choice_strains = display_relab(final_threshab, template_string="Post-thresholding relative abundance")
 
-    # Function to make each counter into a pd.DataFrame
-    make_df = lambda x, colname: pd.DataFrame.from_records(
-        list(dict(x).items()), columns=["strain", colname]
-    ).set_index("strain")
-
-    dflist = [
-        make_df(full_name_hits, "sample_hits"),
-        make_df(final_relab, "sample_relab"),  # this should include NA
-        make_df(final_threshab, "intra_relab"),
+    # Each abundance slice gets put into a df/series
+    relab_columns = [
+        counter_to_pandas(full_name_hits, "sample_hits"),
+        counter_to_pandas(final_relab, "sample_relab"),  # this should include NA
+        counter_to_pandas(final_threshab, "intra_relab"),
     ]
-    results_table = pd.concat(dflist, axis=1)
-    results_table = results_table.sort_values(by="sample_hits", ascending=False)
+
+    # Concatenate and sort
+    results_table = pd.concat(relab_columns, axis=1).sort_values(by="sample_hits", ascending=False)
+
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table.loc[choice_strains]
 
@@ -698,7 +702,10 @@ def main():
         main_bin(results_raw, strains, total_hits, f1, outdir)
 
     # TODO
-    # pickle_results(results_raw,total_hits,strains)
+    pickleflag = False
+    if pickleflag:
+        pickle_results(results_raw, total_hits, strains)
+
     return
 
 
@@ -713,8 +720,10 @@ if __name__ == "__main__":
     print(params)
 
     if len(params["input"]) == 1:
-        f1, outdir = params["input"][0], outdir_main
-        print(f"Input file:{f1}")
+        f1 = pathlib.Path(params["input"][0])
+        outdir = outdir_main
+        print(f"Input file:{f1}\n Output directory: {outdir}")
+
         main()
     else:
         params["input"].reverse()

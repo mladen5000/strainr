@@ -11,14 +11,12 @@
       "request": "launch",
       "program": "${file}",
       "args": [
-        "-d",
-        "hflu2/727genbank.db",
-        "-p8",
-        "-o",
-        "hi22",
-        "-a",
-        "0.00",
-        "short_R1.fastq"
+        "-d", "databases/hflu_genbank.db",
+        "--procs", "16",
+        "-o", "hi22",
+        "-a", "0.01",
+        "--mode","max",
+        "debug_files/test_R1.fastq"
       ],
       "console": "integratedTerminal"
     }
