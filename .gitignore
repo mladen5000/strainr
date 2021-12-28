@@ -160,3 +160,4 @@ debug_files/test_abundance.txt
 .git-rewrite/t/genomes/GCA_900638105.1_56433_A01_genomic.fna
 .git-rewrite/t/genomes/GCA_901472485.1_35860_G01_genomic.fna
 .git-rewrite/t/hflu2/727genbank.db
+bfg-1.14.0.jar
