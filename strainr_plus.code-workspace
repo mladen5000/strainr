@@ -21,6 +21,18 @@
 		// 	".mypy_cache": true,
 		// 	".pytest_cache": true
 		// },
-		"explorerExclude.backup": null
+		"explorerExclude.backup": null,
+		"files.exclude": {
+			"**/.git": true,
+			"**/.svn": true,
+			"**/.hg": true,
+			"**/CVS": true,
+			"**/.DS_Store": true,
+			"**/Thumbs.db": true,
+			"**/.vscode": true,
+			".vscode": true,
+			"**/.mypy_cache": true,
+			".pytest_cache": true
+		}
 	}
 }

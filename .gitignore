@@ -1,9 +1,9 @@
-workspace.code-workspace
 **/*gz
 *tsv
 **swp
 *fastq
 .vscode/**
+*.code-workspace
 .pytest_cache/**
 .mypy_cache/**
 *pkl
