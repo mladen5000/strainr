@@ -161,3 +161,6 @@ debug_files/test_abundance.txt
 .git-rewrite/t/genomes/GCA_901472485.1_35860_G01_genomic.fna
 .git-rewrite/t/hflu2/727genbank.db
 bfg-1.14.0.jar
+..bfg-report/2021-12-27/21-26-46/cache-stats.txt
+..bfg-report/2021-12-27/21-26-46/deleted-files.txt
+..bfg-report/2021-12-27/21-26-46/object-id-map.old-new.txt
