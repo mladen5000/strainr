@@ -7,7 +7,7 @@ workspace.code-workspace
 *png
 *pdf
 *svg
-
+*.code-workspace
 strainr.code-workspace
 databases/hflu_refseq*
 notebooks/bayesian.ipynb
