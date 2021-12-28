@@ -23,7 +23,7 @@ from collections import Counter, defaultdict
 
 
 def args():
-    """Gets arguments
+    """Parses the available arguments.
 
     Returns:
         parser: Object to be converted to dict for parameters
@@ -110,9 +110,7 @@ def args():
 
 
 def load_database(dbfile):
-    """
-    Load the database in dataframe format
-    """
+    """Load the database in dataframe format"""
     print("Loading Database...", file=sys.stderr)
     df = pd.read_pickle(dbfile)
     print(f"Database of {len(df.columns)} strains loaded")
@@ -176,7 +174,7 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
 
 
 def classify():
-    """Call multiprocessing library to lookup k-mers"""
+    """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
     print("Beginning classification")
     if params["procs"] == -1:
@@ -289,7 +287,9 @@ def counter_to_array(prior_counter: Counter[int], nstrains: int):
 
 
 def parallel_resolve(hits, prior, selection):
-    """Main function called by helper for parallel disambiguation"""
+    """ Call the resolution for parallel option selection.
+    
+    Main function called by helper for parallel disambiguation"""
     # Treshold at max
     belowmax = hits < np.max(hits)
     hits[belowmax] = 0
@@ -319,8 +319,9 @@ def parallel_resolve(hits, prior, selection):
 
 def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     """
-    Assign a strain to reads with ambiguous k-mer signals
-    by maximum likelihood.  Currently 3 options: random, max,
+    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
+    
+    Currently 3 options: random, max,
     and dirichlet. (dirichlet is slow and performs similar to random)
     For all 3, threshold spectra to only include
     maxima, multiply w/ prior.
@@ -343,8 +344,7 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
     by maximum likelihood.
     Currently 3 options: random, max, and dirichlet.
     (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only
-    include maxima, multiply w/ prior.
+    For all 3, threshold spectra to only include maxima, multiply w/ prior.
     """
 
     rng = np.random.default_rng()
@@ -387,7 +387,7 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
 
 
 def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
-    """Assign the NA string to na and join all 3 dicts"""
+    """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
     all_dict = clear_hits | updated_hits | na
@@ -426,7 +426,7 @@ def normalize_counter(acounter: Counter, remove_na=False) -> Counter[Any]:
 def threshold_by_relab(norm_counter_all, threshold=0.02):
     """
     Given a percentage cutoff [threshold], remove strains
-    which do not meet the criteria and recalculate relab
+    which do not meet the criteria and recalculate relab.
     """
     thresh_counter = {}
     for k, v in norm_counter_all.items():
@@ -498,6 +498,7 @@ def write_abundance_file(strain_names, idx_relab, outfile):
         for strain, relab in sorted(full_relab.items()):
             fh.write(f"{strain}\t{relab:.9f}\n")
     return
+
 
 def translate_strain_indices_to_names(counter_indices, strain_names):
     """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
@@ -580,7 +581,7 @@ def pickle_results(results_raw, total_hits, strains):
 
 
 def generate_table(intermediate_results, strains):
-    """Use the k-mer hits from classify in order to build a binning frame"""
+    """Use the k-mer hits from classify in order to build a binning frame."""
     df = pd.DataFrame.from_dict(dict(intermediate_results)).T
     df.columns = strains
     return df
@@ -596,7 +597,6 @@ def top_bins(final_values, strains):
 
 def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
     """strain_dict is the strain_id : set of reads"""
-
     # Make a directory for output
     bin_dir = outdir / "bins"
     bin_dir.mkdir(exist_ok=True, parents=True)
@@ -627,7 +627,7 @@ def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
 
 
 def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
-    """Given a strain, use hit info to extract reads"""
+    """Given a strain, use hit info to extract reads."""
     strain_accession = strain.split()[-1]  # Get GCF from name
     paired_files = [forward_file, reverse_file]
 
@@ -663,7 +663,7 @@ def main_bin(intermediate_results, strains, final_values, f1, outdir):
 
 def main():
     """
-    Execute main loop
+    Execute main loop.
     1. Classify
     2. Generate Initial Abundance estimate
     3. Reclassify ambiguous
