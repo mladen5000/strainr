@@ -139,7 +139,7 @@ def download_strains():
             flat_output=True,
             groups="bacteria",
             file_formats="fasta",
-            output=(p / "genomes"),
+            output=(p / 'genomes'),
             metadata_table=(p / "ngdmeta.tsv"),
             assembly_levels=assembly_level,
             species_taxids=params["taxid"],
