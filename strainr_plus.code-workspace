@@ -1,14 +1,26 @@
 {
 	"folders": [
 		{
-			"path": "../paper_strainr"
+			"path": "."
 		},
 		{
-			"path": "."
+			"path": "../paper_strainr/snakebench"
+		},
+		{
+			"path": "../../../hdd/backups"
+		},
+		{
+			"path": "../paper_strainr/snakebench/results"
+		},
+		{
+			"path": "../paper_strainr/snakebench/workflow"
+		},
+		{
+			"path": "../../../hdd/diabbimmune_t2d"
 		}
 	],
 	"settings": {
-		"liveServer.settings.multiRootWorkspaceName": "paper_strainr",
+		"liveServer.settings.multiRootWorkspaceName": "backups",
 		// "files.exclude": {
 		// 	"**/.git": true,
 		// 	"**/.svn": true,
@@ -32,7 +44,21 @@
 			"**/.vscode": true,
 			".vscode": true,
 			"**/.mypy_cache": true,
-			".pytest_cache": true
-		}
+			".pytest_cache": true,
+			".bash_history": true,
+			"snakebench/workflow/.cache/*.*": true,
+			"snakebench/workflow/.cache": true,
+			"**/.cache": true,
+			"snakebench/workflow/*.*": true,
+			".cache": true,
+			"backups": false,
+			".snakemake": true,
+			"**/.ipynb_checkpoints": true
+		},
+		"vim.vimrc.enable": true,
+		"vim.vimrc.path": "$HOME/.vimrc",
+		"oneDarkPro.bold": true,
+		"oneDarkPro.vivid": true,
+		"workbench.iconTheme": "material-icon-theme"
 	}
 }

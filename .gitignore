@@ -14,3 +14,8 @@ databases/**
 **swp
 **/*gz
 .vscode/launch.json
+strainr_plus.code-workspace
+notebooks/classifier.py
+notebooks/fcluster.ipynb
+notebooks/test_clustering.ipynb
+notebooks/test_mpqueue.py

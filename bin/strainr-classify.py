@@ -18,6 +18,7 @@ from collections import Counter, defaultdict
 
 SETCHUNKSIZE = 10000
 
+
 def args():
     """Parses the available arguments.
 
@@ -184,7 +185,7 @@ def classify():
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
 
-    #TODO: not currently working with 1 cpu so just go to pool instead
+    # TODO: not currently working with 1 cpu so just go to pool instead
     if params["procs"] == -1:
         return single_classify()
 

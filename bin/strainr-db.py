@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import argparse
-import shutil
 import gzip
 import pathlib
 import pickle
@@ -16,7 +15,6 @@ from Bio import SeqIO
 import numpy as np
 import pandas as pd
 import ncbi_genome_download as ngd
-import multiprocessing as mp
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -24,6 +22,11 @@ logging.basicConfig(
     format="%(asctime)s %(message)s",
     datefmt="%m/%d/%Y %I:%M:%S %p",
 )
+
+
+class ArgumentError(Exception):
+    pass
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -111,142 +114,132 @@ def get_args():
     return parser
 
 
-def parse_assembly_level():
+def parse_assembly_level(level: str) -> str:
     """
-    Return ncbi-genome-download parameters based on input
+    Takes the assembly_level option and selects the all-inclusive optarg for which ncbi-genome-download will use.
     """
-    c = params["assembly_levels"]
-    if c == "complete":
-        return "complete"
-    elif c == "chromosome":
-        return "complete,chromosome"
-    elif c == "scaffold":
-        return "complete,chromosome,scaffold"
-    elif c == "contig":
-        return "complete,chromosome,scaffold,contig"
-    else:
-        raise ValueError("Incorrect assembly level selected.")
+    # Implies custom so genomes are already defined
+    if args["assembly_accessions"]:
+        return "all"
+
+    level_options = {
+        "complete": "complete",
+        "chromosome": "complete,chromosome",
+        "scaffold": "complete,chromosome,scaffold",
+        "contig": "complete,chromosome,scaffold,contig",
+    }
+
+    if level not in level_options:
+        # However argparse should handle prior to this point
+        raise ArgumentError("Incorrect assembly level selected.")
+
+    return level_options[level]
 
 
 def download_strains():
-    """ """
-
-    assembly_level = parse_assembly_level()
-    if params["taxid"] and params["assembly_accessions"]:
-        raise ValueError("Cannot select both taxid and accession")
-    elif params["taxid"]:
-        exitcode = ngd.download(
-            flat_output=True,
-            groups="bacteria",
-            file_formats="fasta",
-            output=(p / 'genomes'),
-            metadata_table=(p / "ngdmeta.tsv"),
-            assembly_levels=assembly_level,
-            species_taxids=params["taxid"],
-            section=params["source"],
-            parallel=params["procs"],
-        )
-    elif params["assembly_accessions"]:
-        exitcode = ngd.download(
-            flat_output=True,
-            groups="bacteria",
-            file_formats="fasta",
-            output=(p / "genomes"),
-            metadata_table=(p / "ngdmeta.tsv"),
-            assembly_levels='all',
-            section=params["source"],
-            parallel=params["procs"],
-            assembly_accessions=params["assembly_accessions"],
-        )
-    elif params["genus"]:
-        exitcode = ngd.download(
-            flat_output=True,
-            groups="bacteria",
-            file_formats="fasta",
-            output=(p / "genomes"),
-            metadata_table=(p / "ngdmeta.tsv"),
-            assembly_levels=assembly_level,
-            section=params["source"],
-            parallel=params["procs"],
-            genera=params["genus"],
-        )
-    else:
-        raise ValueError(
-            "Need to choose either taxid or provide an accession list from a file."
-        )
-    # if exitcode != 0:
-    #     raise ValueError(f"Downloading strains returned with exit code {exitcode}")
-
-    return exitcode
-
-
-def download_and_filter_genomes():
-    """ Grab all, taxid-only, or custom lists"""
-    gdir = p / "genomes"
-    if not params["custom"]:
-        if gdir.is_dir():
-            shutil.rmtree(gdir)
-        download_strains()
-
-        if params["unique_taxid"]:
-            file_list = unique_taxid_strains()
-        else:
-            file_list = list(gdir.glob("*fna.gz"))
-
-    else:  # custom
-        file_list = list((p / params["custom"]).glob("*"))
-
-    return file_list
-
-
-def count_kmers(genome_file):
-    kmerlen = params["kmerlen"]
-    kmerset = set()
-    encoding = guess_type(genome_file)[1]  # uses file extension
-    _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
-    with _open(genome_file) as g:
-        for record in SeqIO.parse(g, "fasta"):
-            max_index = len(record.seq) - kmerlen + 1
-            with memoryview(bytes(record.seq)) as seq_buffer:
-                kmers = {bytes(seq_buffer[i : i + kmerlen]) for i in range(max_index)}
-            kmerset.update(kmers)
-        logger.info(len(kmerset))
-    return kmerset
-
-def build_database(genome_files, sequence_names):
+    """Calls ncbi-genome-download with some preset arguments:
+    Returns:
+        genome_directory named based on input information
+        exit_code: for ncbi-genome-download checking
     """
-    Input: List of single-sequence (genome) fasta files
-    Full build - functional programming style.
-    Grabs each file and generates kmers which are then placed into the
-    dictionary.
-    Strain ID is appended upon collision
-    Output: Database of kmer: strain_hits
+
+    # Get inclusive assembly level
+    assembly_level: str = parse_assembly_level(args["assembly_levels"])
+
+    # Build command dict
+    ncbi_kwargs = {
+        "flat_output": True,
+        "groups": "bacteria",
+        "file_formats": "fasta",
+        "section": args["source"],
+        "parallel": args["procs"],
+        "assembly_levels": assembly_level,
+    }
+
+    if args["taxid"] and args["assembly_accessions"]:
+        raise ValueError("Cannot select both taxid and accession")
+
+    elif args["taxid"]:
+        ncbi_kwargs["species_taxids"] = args["taxid"]
+        output_dir = "genomes_s" + str(args["taxid"])
+        accession_summary = "summary_" + str(args["taxid"]) + ".tsv"
+
+    elif args["assembly_accessions"]:
+        ncbi_kwargs["assembly_accessions"] = args["assembly_accessions"]
+        output_dir = "genomes_f" + args["assembly_accessions"]
+        accession_summary = "summary.tsv"
+
+    elif args["genus"]:
+        ncbi_kwargs["genera"] = args["genus"]
+        output_dir = "genomes_g" + args["genus"]
+        accession_summary = "summary_" + args["genus"] + ".tsv"
+
+    else:
+        raise ValueError("Need to choose either taxid or provide an accession list from a file.")
+
+    d_out = {
+        "output": p / output_dir,
+        "metadata_table": p / output_dir / accession_summary,
+    }
+    ncbi_kwargs.update(d_out)
+
+    # Call ncbi-genome-download
+    exitcode: int = ngd.download(**ncbi_kwargs)
+    if exitcode != 0:
+        raise ConnectionError("ncbi-genome-download did not successfully download the genomes")
+
+    return d_out["output"], d_out["metadata_table"]
+
+
+# def download_and_filter_genomes():
+#     """Grab all, taxid-only, or custom lists"""
+
+#     # Call ncbi-genome-download
+#     genomedir, accfile = download_strains()
+
+#     # Filter genome list if only unique taxids desired
+#     if params["unique_taxid"]:
+#         return unique_taxid_strains(accfile), accfile
+
+#     return list(genomedir.glob("*fna.gz")), accfile
+
+
+def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
+    """
+    Input:
+        List of reference genome files
+    Output:
+        database:
+            format: dict[bytes(kmer), np.ndarray(dtype=bool)]
+            Each element in np.array represents reference
+            bool determines presence/absence of k-mer key
+    Note: No labels at this point, so order of genome list must be preserved.
     """
     idx = 0
-    seq_labels = []
-    kmerlen = params["kmerlen"]
-    database = defaultdict(partial(np.zeros, len(genome_files), dtype=bool))
+    database = defaultdict(partial(np.zeros, len(genomes), dtype=bool))
     logger.info("Building database....")
-    # Each genome file as a label
-    for genome_file in tqdm(genome_files):
-        print(f"Genome file: {genome_file}")
-        encoding = guess_type(str(genome_file))[1]  
-        _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
-        with _open(genome_file) as g:
-            for record in SeqIO.parse(g, "fasta"): # Include all subsequences under one label
-                # seq_labels.append(str(genome_file.stem) + ';' + record.description)
-                max_index = len(record.seq) - kmerlen + 1
-                # acc = genome_file.stem[:15]
-                # acc = record.description
-                with memoryview(bytes(record.seq)) as seq_buffer:
-                    for i in range(max_index):
-                        kmer = seq_buffer[i : i + kmerlen]
+
+    for genome_file in tqdm(genomes):
+        with gzopen(genome_file) as gf:
+            print(f"Genome file: {genome_file}")
+
+            # Parse every sequence, but all kmer hits fall under genome_file
+            for record in SeqIO.parse(gf, "fasta"):
+                with memoryview(bytes(record.seq)) as memseq:
+                    for ki in range(memseq.nbytes - kmerlen + 1):
+                        kmer = memseq[ki : ki + kmerlen]
                         database[bytes(kmer)][idx] = True
         idx += 1
     return database
 
 
-def build_parallel(genome_file,genome_files,full_set):
+def gzopen(file):
+    encoding = guess_type(str(file))[1]
+    _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
+    return _open(file)
+
+
+def build_parallel(genome_file, genome_files, full_set):
     """
     Input: List of single-sequence (genome) fasta files
     Full build - functional programming style.
@@ -255,20 +248,22 @@ def build_parallel(genome_file,genome_files,full_set):
     Strain ID is appended upon collision
     Output: Database of kmer: strain_hits
     """
-    kmerlen = params["kmerlen"]
+    kmerlen = args["kmerlen"]
     col = genome_files.index(genome_file)
     rows = []
-    encoding = guess_type(str(genome_file))[1]  
+    encoding = guess_type(str(genome_file))[1]
     _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
     with _open(genome_file) as g:
-        for record in SeqIO.parse(g, "fasta"): # Include all subsequences under one label
+        for record in SeqIO.parse(g, "fasta"):  # Include all subsequences under one label
             max_index = len(record.seq) - kmerlen + 1
             with memoryview(bytes(record.seq)) as seq_buffer:
                 for i in range(max_index):
                     kmer = seq_buffer[i : i + kmerlen]
                     rows.append(full_set.index(kmer))
-    print(col,rows)
+    print(col, rows)
     return rows
+
+
 def build_df(db, strain_list):
     """Build the dataframe"""
     values = np.array(list(db.values()))
@@ -278,8 +273,6 @@ def build_df(db, strain_list):
     return df
 
 
-
-
 def parse_meta():
     """Parse assembly data"""
     meta = pd.read_csv("ngd_meta.tsv", sep="\t").set_index("assembly_accession")
@@ -287,143 +280,107 @@ def parse_meta():
     return meta
 
 
-def unique_taxid_strains():
+def unique_taxid_strains(accession_file):
     """
     To be used with complete 1 and filter out for genomes without
-    strain taxonomic IDs and those without unique strain taxonomic IDs
-    Ideally to be used for large genomes such as ecoli with large redundancy
+        strain taxonomic IDs and those without unique strain taxonomic IDs
+        Ideally to be used for large genomes such as ecoli with large redundancy
     """
-    meta = pd.read_csv("ngdmeta.tsv", sep="\t").set_index("assembly_accession")
-    mask1 = meta.taxid != meta.species_taxid
-    mask2 = meta.taxid.notna()
-    filtered = meta[mask1 & mask2]
-    filtered.to_csv("ngdmeta.tsv", sep="\t")
-    strain_files = filtered.local_filename.to_list()
-    strain_files = [p / i for i in strain_files]
-    return strain_files
+    accession_df = pd.read_csv(accession_file, sep="\t").set_index("assembly_accession")
+
+    # Filter out non-uniques
+    unique = accession_df.taxid != accession_df.species_taxid
+    exists = accession_df.taxid.notna()
+    accession_df = accession_df[unique & exists]
+
+    # Write new accession details
+    accession_df.to_csv(accession_file, sep="\t")
+
+    return [(p / i) for i in accession_df["local_filename"].to_list()]
 
 
-def get_genome_names(genome_files):
+def get_genome_names(genome_files: list[pathlib.Path], accfile: pathlib.Path) -> list[str]:
     """Function to go from files -> genome names"""
-    if not params["custom"]:
-        meta = pd.read_csv("ngdmeta.tsv", sep="\t").set_index("assembly_accession")
-        genome_names = []
-        for gf in genome_files:
-            acc = gf.stem[:15]
-            genome_name = meta.loc[acc]['organism_name']
-            meta['infraspecific_name'] = meta.infraspecific_name.astype(str)
-            strain_name = meta.loc[acc]['infraspecific_name']
-            strain_name = strain_name.replace('strain=',' ')
-            genome_names.append( genome_name + strain_name + ' ' + acc)
-            # encoding = guess_type(str(gf))[1]  # uses file extension
-            # _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
-            # with _open(gf) as gfo:
-            #     for g in SeqIO.parse(gfo,'fasta'):
-            #         sequence_names.append(g.description)
 
-    # if not params["custom"]:
-    #     genome_names = [gf.stem[:15] for gf in genome_files]
-    else:
-        genome_names = [gf.stem for gf in genome_files]
+    accession_df = pd.read_csv(accfile, sep="\t").set_index("assembly_accession")
+    genome_names = []
+
+    for gf in genome_files:
+        acc = gf.stem[:15]
+        genome_name = accession_df.loc[acc]["organism_name"]
+        accession_df["infraspecific_name"] = accession_df["infraspecific_name"].astype(str)
+        strain_name = accession_df.loc[acc]["infraspecific_name"]
+        strain_name = strain_name.replace("strain=", " ")
+        genome_names.append(genome_name + strain_name + " " + acc)
+
     assert len(genome_files) == len(genome_names)
-    return  genome_names
+    return genome_names
 
 
-def pickle_db(database,fout):
+def pickle_db(database, fout):
     outfile = fout + ".pkl"
     logger.info(f"Saving database as {outfile}")
     with open(outfile, "wb") as ph:
         pickle.dump(database, ph, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
+
 def pickle_df(df, filename, method="pickle"):
 
-    outfile = params["out"] + ".db"
+    outfile = args["out"] + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
     elif method == "hdf":
-        outfile = params["out"] + ".sdb"
+        outfile = args["out"] + ".sdb"
         df.to_hdf(outfile)
         pd.DataFrame().to_hdf
     return
 
+
+def custom_stuff():
+    # TODO: Custom stuff should be done entirely in here
+    genome_files = list((p / args["custom"]).glob("*"))
+    genome_names = [gf.stem for gf in genome_files]
+    return genome_names, genome_files
+
+
 def main():
-    # Run - Download
-    genome_files = download_and_filter_genomes()
-    sequence_ids = get_genome_names(genome_files)
-    print(sequence_ids)
+
+    ### 1. Get the genomes files and names for the database
+
+    # 1a. Custom route
+    if args["custom"]:  # Do custom build
+        sequence_ids, genome_files = custom_stuff()
+
+    # 1b. NCBI - download route
+    else:
+        genomedir, accfile = download_strains()
+        genome_files = list(genomedir.glob("*fna.gz"))
+
+        if args["unique_taxid"]:  # Filter genome list if only unique taxids desired
+            genome_files = unique_taxid_strains(accfile)
+
+        # Run - Download
+        sequence_ids = get_genome_names(genome_files, accfile)
+
+    logger.info(sequence_ids)
     logger.info(f"{len(genome_files)} genomes found.")
 
-    # Build Database
-    database = build_database(genome_files, sequence_ids)
+    ## 2. Build Database
+    database = build_database(genome_files)
     df = build_df(database, sequence_ids)
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database)//1e6} MB")
-    logger.debug(f"Kmer-building complete, saving db as {params['out']+'.db'}.")
+    logger.debug(f"Kmer-building complete, saving db as {args['out']+'.db'}.")
 
-    pickle_df(df, params["out"])
-    
+    ## 3. Save the results
+    pickle_df(df, args["out"])
+
     return
-    logger.info(f"Database saved to {params['out']} ")
 
 
 if __name__ == "__main__":
     p = pathlib.Path().cwd()
-    params = vars(get_args().parse_args())
+    args = vars(get_args().parse_args())
     main()
-
-
-
-
-
-
-
-
-
-
-
-def full_sort(db):
-    """Sorts each list as well as the dict itself"""
-    logger.info("Optimizing The Dictionary")
-    return {key: sorted(db[key]) for key in sorted(db)}
-
-
-def convert_to_presence_absence(db):
-    """
-    Convert database so each entry only has a strain appearing up to 1 time
-    """
-    return {k: set(v) for k, v in db.items()}
-
-
-def filter_most(db, num_strains):
-    """Remove kmers that have hits for most strains"""
-    return {k: v for k, v in db.items() if len(v) > num_strains // 2}
-
-
-def filter_by_length(db, max_len):
-    """
-    Remove kmers that have more than n hits
-    eg) max_len = 1 for unique kmers only
-    """
-    return {k: v for k, v in db.items() if len(v) > max_len}
-
-
-def extract_acc(filepath):
-    fname = filepath.stem
-    return fname[:15]
-
-
-def analyze_genome(genome_file):
-    kmers = count_kmers(genome_file)
-    acc = extract_acc(genome_file)
-    metadata_dict = dict(filepath=genome_file, kmer_set=kmers, accession=acc)
-    return metadata_dict
-
-
-
-def pickle_genome(metadata, kmerdir):
-    ppath = kmerdir / metadata["accession"] + ".pkl"
-    with ppath.open("wb") as ph:
-        pickle.dump(metadata, ph)
-    return
