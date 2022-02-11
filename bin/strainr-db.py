@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+
 import gzip
 import pathlib
 import pickle
