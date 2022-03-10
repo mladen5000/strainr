@@ -4,7 +4,6 @@ import multiprocessing as mp
 import functools
 import pathlib
 import random
-import sys
 import time
 import gzip
 import pickle
@@ -19,7 +18,7 @@ from collections import Counter, defaultdict
 SETCHUNKSIZE = 10000
 
 
-def args():
+def parse_args():
     """Parses the available arguments.
 
     Returns:
@@ -51,7 +50,7 @@ def args():
         "--procs",
         type=int,
         default=4,
-        help="Number of cores to use (default: 1)",
+        help="Number of cores to use (default: 4)",
     )
     parser.add_argument(
         "-o",
@@ -74,7 +73,7 @@ def args():
             "dirichlet",
         ],
         type=str,
-        default="random",
+        default="max",
     )
     parser.add_argument(
         "-a",
@@ -87,7 +86,7 @@ def args():
         "--bin",
         action="store_true",
         required=False,
-        help=""" 
+        help="""
         Perform binning.
         """,
     )
@@ -95,7 +94,9 @@ def args():
         "--save-raw-hits",
         action="store_true",
         required=False,
-        help=""" Save the intermediate results as a csv file containing each read's strain information.
+        help="""
+        Save the intermediate results as a csv file containing
+        each read's strain information.
         """,
     )
     # Examples
@@ -104,31 +105,6 @@ def args():
     # type=argparse.FileType('w', encoding='latin-1'))
     # parser.add_argument('--datapath', type=pathlib.Path)
     return parser
-
-
-def load_database(dbfile):
-    """Load the database in dataframe format"""
-    print("Loading Database...", file=sys.stderr)
-    df = pd.read_pickle(dbfile)
-    print(f"Database of {len(df.columns)} strains loaded")
-    return df
-
-
-def df_to_dict(df):
-    """Convert database to dict for lookup"""
-    hit_arrays = list(df.to_numpy())
-    strain_ids = list(df.columns)
-    kmers = df.index.to_list()
-    db = dict(zip(kmers, hit_arrays))
-    print("Finished building dbmap")
-    return strain_ids, db
-
-
-def get_kmer_len(df):
-    """Obtain k-mer length of the database"""
-    kmerlen = len(df.index[0])
-    assert all(df.index.str.len() == kmerlen)
-    return kmerlen
 
 
 def get_rc(kmer):
@@ -186,12 +162,16 @@ def classify():
     t0 = time.time()
 
     # TODO: not currently working with 1 cpu so just go to pool instead
-    if params["procs"] == -1:
+    if args.procs == -1:
         return single_classify()
 
     records = (rec for rec in FastqEncodedGenerator(f1))
-    with mp.Pool(processes=params["procs"]) as pool:
-        results = list(pool.imap_unordered(fast_count_kmers_helper, records, chunksize=SETCHUNKSIZE))
+    with mp.Pool(processes=args.procs) as pool:
+        results = list(
+            pool.imap_unordered(
+                fast_count_kmers_helper, records, chunksize=SETCHUNKSIZE
+            )
+        )
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -221,7 +201,9 @@ def raw_to_dict(raw_classified):
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
     """
-    return {read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)}
+    return {
+        read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)
+    }
 
 
 def separate_hits(
@@ -330,10 +312,12 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     new_clear, new_ambig = {}, {}
     mapfunc = functools.partial(parallel_resolve, prior=prior, selection=selection)
 
-    resolve_cores = min(1, params["procs"] // 4)
+    resolve_cores = min(1, args.procs // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())):
+        for read, outhits in zip(
+            ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())
+        ):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
@@ -387,7 +371,9 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):
     return new_clear, new_ambig
 
 
-def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
+def collect_reads(
+    clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
+) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
@@ -447,18 +433,22 @@ def save_results(intermediate_scores, results, strains):
     Take a dict of readid:hits and convert to a dataframe
     then save the output
     """
-    df = pd.DataFrame.from_dict(dict(intermediate_scores), orient="index", columns=strains).astype(int)
+    df = pd.DataFrame.from_dict(
+        dict(intermediate_scores), orient="index", columns=strains
+    ).astype(int)
     final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
     assigned = pd.Series(final_names).rename("final")
     df = df.join(assigned)
-    savepath = outdir / "results_table.csv"
-    picklepath = outdir / "results_table.pkl"
+    # savepath = outdir / "results_table.csv"
     # df.to_csv(savepath)
+    picklepath = outdir / "results_table.pkl"
     df.to_pickle(picklepath)
     return
 
 
-def display_relab(acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True):
+def display_relab(
+    acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True
+):
     """
     Pretty print for counters:
     Can work with either indices or names
@@ -514,7 +504,9 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
             try:
                 name_to_hits[strain_names[k_idx]] = v_hits
             except TypeError:
-                print(f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type.")
+                print(
+                    f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type."
+                )
                 print(f"The type is {type(k_idx)}")
     return Counter(name_to_hits)
 
@@ -530,13 +522,15 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
 
 # Function to make each counter into a pd.DataFrame
 def counter_to_pandas(relab_counter, column_name):
-    relab_df = pd.DataFrame.from_records(list(dict(relab_counter).items()), columns=["strain", column_name]).set_index(
-        "strain"
-    )
+    relab_df = pd.DataFrame.from_records(
+        list(dict(relab_counter).items()), columns=["strain", column_name]
+    ).set_index("strain")
     return relab_df
 
 
-def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
+def output_results(
+    results: dict[str, int], strains: list[str], outdir: pathlib.Path
+) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
@@ -552,9 +546,11 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     final_relab: Counter[str] = normalize_counter(full_name_hits, remove_na=False)
     display_relab(final_relab, template_string="Initial relative abundance ")
 
-    final_threshab = threshold_by_relab(final_relab, threshold=params["thresh"])
+    final_threshab = threshold_by_relab(final_relab, threshold=args.thresh)
     final_threshab = normalize_counter(final_threshab, remove_na=True)
-    choice_strains = display_relab(final_threshab, template_string="Post-thresholding relative abundance")
+    choice_strains = display_relab(
+        final_threshab, template_string="Post-thresholding relative abundance"
+    )
 
     # Each abundance slice gets put into a df/series
     relab_columns = [
@@ -564,16 +560,23 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     ]
 
     # Concatenate and sort
-    results_table = pd.concat(relab_columns, axis=1).sort_values(by="sample_hits", ascending=False)
+    results_table = pd.concat(relab_columns, axis=1).sort_values(
+        by="sample_hits", ascending=False
+    )
 
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table.loc[choice_strains]
 
 
-def database_full(database_name):
-    df = load_database(database_name)
-    kmerlen = get_kmer_len(df)
-    strains, db = df_to_dict(df)
+def build_database(dbpath):
+    """Load compressed dataframe, extract parameters, build kmer dictionary"""
+    print("Loading Database.")
+    df = pd.read_pickle(dbpath)
+    kmerlen = len(df.index[0])
+    strains = list(df.columns)
+    db = dict(zip(df.index, df.to_numpy()))
+    assert all(df.index.str.len() == kmerlen)  # Check all kmers
+    print(f"Database of {len(strains)} strains loaded")
     return db, strains, kmerlen
 
 
@@ -646,7 +649,9 @@ def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
             reads = set(bin_table[bin_table[strain] > 0].index)
         else:
             # reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
-            reads = set(bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N"))  # Illumina extension
+            reads = set(
+                bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N")
+            )  # Illumina extension
 
         with _open(input_file) as original, writefile.open("w") as newfasta:
             records = (
@@ -680,7 +685,9 @@ def main():
     """
     # Build
 
-    results_raw: List[Tuple[str, np.ndarray]] = classify()  # get list of (SecRecord,nparray)
+    results_raw: List[
+        Tuple[str, np.ndarray]
+    ] = classify()  # get list of (SecRecord,nparray)
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
 
     # Disambiguate
@@ -690,7 +697,7 @@ def main():
 
     # Finalize
     prior = counter_to_array(cprior, len(strains))  # counter to vector
-    new_clear, _ = parallel_resolve_helper(ambig_hits, prior, params["mode"])
+    new_clear, _ = parallel_resolve_helper(ambig_hits, prior, args.mode)
     total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
     # Output
@@ -715,25 +722,22 @@ def main():
 if __name__ == "__main__":
     p = pathlib.Path().cwd()
     rng = np.random.default_rng()
-    params: dict = vars(args().parse_args())
+    args = parse_args().parse_args()
+    db, strains, kmerlen = build_database(args.db)
 
-    # Parameters
-    outdir_main = params["out"]
-    db, strains, kmerlen = database_full(params["db"])
-    print(params)
+    print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
 
-    if len(params["input"]) == 1:
-        f1 = pathlib.Path(params["input"][0])
-        outdir = outdir_main
+    if len(args.input) == 1:
+        f1 = pathlib.Path(args.input[0])
+        outdir = args.out
         print(f"Input file:{f1}\n Output directory: {outdir}")
-
         main()
-    else:
-        params["input"].reverse()
-        for i, file in enumerate(params["input"]):
+    else: # Multiple input files
+        args.input.reverse()
+        for i, file in enumerate(args.input):
             t0 = time.time()
             f1 = pathlib.Path(file)
-            outdir = outdir_main / str(f1.stem)
+            outdir = args.out / str(f1.stem)
             if not outdir.exists():
                 print(f"Input file:{f1}")
                 main()
