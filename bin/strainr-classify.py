@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 SETCHUNKSIZE = 10000
 
 
-def parse_args():
+def get_args():
     """Parses the available arguments.
 
     Returns:
@@ -177,7 +177,7 @@ def classify():
     return results
 
 
-def single_classify():
+def single_classify(): #TODO - not currently working
     record_index = SeqIO.index(f1, "fastq")
     records = (record_index[id] for id in record_index.keys())
     full_results = []
@@ -196,7 +196,7 @@ def single_classify():
     return full_results
 
 
-def raw_to_dict(raw_classified):
+def raw_to_dict(raw_classified): # TODO: Not currently implemented
     """
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
@@ -323,7 +323,7 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     return new_clear, new_ambig
 
 
-def disambiguate(ambig_hits, prior, selection="multinomial"):
+def disambiguate(ambig_hits, prior, selection="multinomial"): #TODO: not implemented
     """
     Assign a strain to reads with ambiguous k-mer signals
     by maximum likelihood.
@@ -392,12 +392,12 @@ def resolve_clear_hits(clear_hits) -> dict[str, int]:
     return {k: int(np.argmax(v)) for k, v in clear_hits.items()}
 
 
-def resolve_ambig_hits(ambig_hits):
+def resolve_ambig_hits(ambig_hits): #TODO - not implemented
     """Replace numpy array with index"""
     return {k: int(v[0]) for k, v in ambig_hits.items()}
 
 
-def build_na_dict(na_hits):
+def build_na_dict(na_hits): # TODO - not implemented
     return {k: None for k in na_hits}
 
 
@@ -441,7 +441,7 @@ def save_results(intermediate_scores, results, strains):
     df = df.join(assigned)
     # savepath = outdir / "results_table.csv"
     # df.to_csv(savepath)
-    picklepath = outdir / "results_table.pkl"
+    picklepath = out / "results_table.pkl"
     df.to_pickle(picklepath)
     return
 
@@ -473,7 +473,7 @@ def display_relab(
     return choice_list
 
 
-def write_abundance_file(strain_names, idx_relab, outfile):
+def write_abundance_file(strain_names, idx_relab, outfile): #TODO - not implemented
     """
     For each strain in the database,
     grab the relab gathered from classification, else print 0.0
@@ -581,9 +581,9 @@ def build_database(dbpath):
 
 
 def pickle_results(results_raw, total_hits, strains):
-    with open((outdir / "raw_results.pkl"), "wb") as fh:
+    with open((out / "raw_results.pkl"), "wb") as fh:
         pickle.dump(results_raw, fh)
-    with open((outdir / "total_hits.pkl"), "wb") as fh:
+    with open((out / "total_hits.pkl"), "wb") as fh:
         pickle.dump(total_hits, fh)
 
     save_results(results_raw, total_hits, strains)
@@ -701,15 +701,15 @@ def main():
     total_hits = collect_reads(assigned_clear, new_clear, na_hits)
 
     # Output
-    if outdir:
-        df_relabund = output_results(total_hits, strains, outdir)
+    if out:
+        df_relabund = output_results(total_hits, strains, out)
         print(df_relabund[df_relabund["sample_hits"] > 0])
-        print(f"Saving results to {outdir}")
+        print(f"Saving results to {out}")
 
     # TODO
     binflag = False
     if binflag:
-        main_bin(results_raw, strains, total_hits, f1, outdir)
+        main_bin(results_raw, strains, total_hits, f1, out)
 
     # TODO
     pickleflag = False
@@ -722,23 +722,16 @@ def main():
 if __name__ == "__main__":
     p = pathlib.Path().cwd()
     rng = np.random.default_rng()
-    args = parse_args().parse_args()
-    db, strains, kmerlen = build_database(args.db)
 
+    args = get_args().parse_args()
+    db, strains, kmerlen = build_database(args.db)
     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
 
-    if len(args.input) == 1:
-        f1 = pathlib.Path(args.input[0])
-        outdir = args.out
-        print(f"Input file:{f1}\n Output directory: {outdir}")
-        main()
-    else: # Multiple input files
-        args.input.reverse()
-        for i, file in enumerate(args.input):
-            t0 = time.time()
-            f1 = pathlib.Path(file)
-            outdir = args.out / str(f1.stem)
-            if not outdir.exists():
-                print(f"Input file:{f1}")
-                main()
-                print(f"Time for {f1}: {time.time()-t0}")
+    for in_fasta in args.input:
+        t0 = time.time()
+        f1 = pathlib.Path(in_fasta)
+        out = args.out / str(f1.stem)
+        if not out.exists():
+            print(f"Input file:{f1}")
+            main()
+            print(f"Time for {f1}: {time.time()-t0}")
