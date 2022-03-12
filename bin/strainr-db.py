@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+from asyncio import subprocess
 
 import gzip
 import pathlib
@@ -10,6 +11,7 @@ import logging
 from collections import defaultdict
 from mimetypes import guess_type
 from functools import partial
+import subprocess
 
 from tqdm import tqdm
 from Bio import SeqIO
@@ -212,9 +214,9 @@ def download_strains():
 #     return list(genomedir.glob("*fna.gz")), accfile
 
 
-def strain_clustering(
+def cluster_strains(
     mash_distance_table, ani_threshold=0.01, out1_path=None, out2_path=None
-):
+) -> tuple[dict[str, list], dict[str, str], int]:
     """
     Input:
         dists: Mash distance table, all v all genomes (mash sketch * -o blah, mash dist blah.msh blah.msh -t > idklol)
@@ -233,41 +235,95 @@ def strain_clustering(
     # Load mash distance table TODO: call mash
     df = pd.read_csv(mash_distance_table, sep="\t", index_col=0)
 
+    # Hierarchical clustering and cutoff
     Z = sch.linkage(squareform(df.values))
     clust_ids = sch.fcluster(Z, t=ani_threshold, criterion="distance")
+    num_clusters = len(np.unique(clust_ids))
 
     print(
-        f" The {len(clust_ids)} genomes are now grouped into {len(np.unique(clust_ids))} clusters using a {(1 - ani_threshold) * 100}% similarity criteria.  "
+        f""" 
+            Reducing {len(clust_ids)} genome sequences into {num_clusters} clusters 
+            using a {(1 - ani_threshold) * 100}% similarity criteria.
+        """
     )
 
-    clust = {}
+    # Tally the genome members in each cluster
+    parent_to_child = {}
     for ci in np.unique(clust_ids):
         idx = np.where(ci == clust_ids)[0]
 
         if idx.shape[0] == 1:  # Single genome in cluster
             r = df.index[idx[0]]
-            clust[r] = [r]
+            parent_to_child[r] = [r]
 
         else:  # Multiple genomes in cluster
             # Put these idx into df for distance table and sum to see total distance
             dist_sum = df.iloc[idx, idx].sum(axis=0)
             rep = dist_sum.idxmin()  # Choose the genome with minimum distance
-            clust[rep] = df.index[idx].tolist()  # Put into dictionary
+            parent_to_child[rep] = df.index[idx].tolist()  # Put into dictionary
 
     # Reverse dict
     child_to_parent = {
-        gi: rep_gi for rep_gi, genome_list in clust.items() for gi in genome_list
+        gi: rep_gi
+        for rep_gi, genome_list in parent_to_child.items()
+        for gi in genome_list
     }
 
     # TODO - optional output
-    if out1_path:
-        log_clusters1(out1_path, df, clust, child_to_parent)
-
     # TODO - optional output 2
+    if out1_path:
+        log_clusters1(out1_path, df, parent_to_child, child_to_parent)
     if out2_path:
-        log_clusters2(out2_path, clust)
+        log_clusters2(out2_path, parent_to_child)
 
-    return clust, child_to_parent
+    return parent_to_child, child_to_parent, num_clusters
+
+
+def build_database2(
+    p2c: dict[str, list], c2p: dict[str, str], kmerlen: int = 31
+) -> dict[bytes, np.ndarray]:
+    # TODO: Temporary function to incorporate clusters
+    """
+    Input:
+        List of reference genome files
+        p2c - parent genome to list of cluster members d[str,list]
+        c2p - child genome matched to str parent d[str,str]
+        clusters =unique values in c2p
+        genomes = unique keys in c2p
+    Output:
+        database:
+            format: dict[bytes(kmer), np.ndarray(dtype=bool)]
+            Each element in np.array represents reference
+            bool determines presence/absence of k-mer key
+    Note: No labels at this point, so order of genome list must be preserved.
+    """
+    idx = 0
+    cluster_set = list({parent for parent in c2p.values()})
+    cluster_set.sort()
+    genomes = {fasta for fasta in c2p.keys()}
+    database = defaultdict(partial(np.zeros, len(cluster_set), dtype=bool))
+
+    logger.debug(f"There are {len(cluster_set)} clusters and {len(genomes)} genomes")
+    logger.info("Building database....")
+
+    """
+        For each cluster, 
+            For each genome within cluster
+                For each record in a genome
+                    For each kmer in the record
+                        DB[kmer]@[cluster_index] = True
+            
+    """
+    for cluster in cluster_set:  # For each cluster
+        for genome_file in p2c[cluster]:  # Retrieve genome list associated with cluster
+            with gzopen(genome_file) as gf:
+                for record in SeqIO.parse(gf, "fasta"):
+                    with memoryview(bytes(record.seq)) as memseq:
+                        for ki in range(memseq.nbytes - kmerlen + 1):
+                            kmer = memseq[ki : ki + kmerlen]
+                            database[bytes(kmer)][idx] = True
+        idx += 1
+    return database
 
 
 def log_clusters2(out2_path, clust):
@@ -307,6 +363,7 @@ def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
     logger.info("Building database....")
 
     for genome_file in tqdm(genomes):
+        # Open fasta
         with gzopen(genome_file) as gf:
             print(f"Genome file: {genome_file}")
 
@@ -437,6 +494,16 @@ def custom_stuff():
     return genome_names, genome_files
 
 
+def get_mash_dist(genome_files: list[pathlib.Path], outputfile: pathlib.Path) -> pd.DataFrame:
+    # TODO - need to subproc call this lol
+    genome_files = pathlib.Path("/hdd/blah/lol/goodluck").glob("*")
+    call_list = ["mash", "sketch", "blah"].extend(genome_files)
+    subprocess.run(call_list)
+    # sysout2, sysexit2 = subprocess.run(['mash','dist','the sketch to itself',-o, outputfile])
+    mash_df = pd.read_csv(outputfile)
+    return mash_df
+
+
 def main():
 
     ### 1. Get the genomes files and names for the database
@@ -459,8 +526,21 @@ def main():
     logger.info(sequence_ids)
     logger.info(f"{len(genome_files)} genomes found.")
 
+    # TODO - Implement clustering
+    outputfile_for_mash = pathlib.Path("/hdd/hi/lol")
+
     ## 2. Build Database
-    database = build_database(genome_files)
+    clustering = False
+    if clustering:
+        mash_distance_table = get_mash_dist(genome_files, outputfile_for_mash)
+        p2c, c2p, numclusties = cluster_strains(
+            mash_distance_table, ani_threshold=0.01, out1_path=None, out2_path=None
+        )
+        database = build_database2(p2c, c2p, numclusties)
+
+    else:
+        database = build_database(genome_files)
+
     df = build_df(database, sequence_ids)
 
     logger.debug(f"{len(database)} kmers in database")
