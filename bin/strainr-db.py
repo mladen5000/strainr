@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import argparse
-from asyncio import subprocess
 
 import gzip
 import pathlib
@@ -11,7 +10,7 @@ import logging
 from collections import defaultdict
 from mimetypes import guess_type
 from functools import partial
-import subprocess
+import subprocess 
 
 from tqdm import tqdm
 from Bio import SeqIO
@@ -198,7 +197,8 @@ def download_strains():
             "ncbi-genome-download did not successfully download the genomes"
         )
 
-    return d_out["output"], d_out["metadata_table"]
+    # return d_out["output"], d_out["metadata_table"]
+    return ncbi_kwargs
 
 
 # def download_and_filter_genomes():
@@ -495,6 +495,28 @@ def custom_stuff():
 
 
 def get_mash_dist(genome_files: list[pathlib.Path], outputfile: pathlib.Path) -> pd.DataFrame:
+    # Generate a mash command for each row in the dataframe
+    # mash_cmd = ("mash sketch " + true_col + " " + pred_col).str.split()
+    # mash_cmd = ["mash sketch " + str(gfile) for gfile in genome_files]
+    msh_file = ''
+    mash_cmd = "mash sketch " + ' '.join([i.name for i in p.glob('*')]) +  "-o mash_all_genomes"
+    # mash sketch *fna.gz -p 24 -o mash_all_genomes
+
+    # Popen will spawn all mash commands at once rather than wait for them to finish
+    distances, proc_list = [], []
+    for cmd in mash_cmd:
+        proc_list.append(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+
+    # Collect results, grab 3rd to last column which is mash distance
+    for proc in proc_list:
+        stdout = proc.communicate()[0]
+        try:
+            distances.append(stdout.split()[-3])
+        except:
+            # Many panphlan_results results returned 0.000 abundance so append NaN and fill later
+            distances.append(np.nan)
+    return distances
+
     # TODO - need to subproc call this lol
     genome_files = pathlib.Path("/hdd/blah/lol/goodluck").glob("*")
     call_list = ["mash", "sketch", "blah"].extend(genome_files)
@@ -514,14 +536,15 @@ def main():
 
     # 1b. NCBI - download route
     else:
-        genomedir, accfile = download_strains()
-        genome_files = list(genomedir.glob("*fna.gz"))
+        ngd_kwargs = download_strains()
+        genomes_dir, accession_summary_file = ngd_kwargs["output"], ngd_kwargs["metadata_table"]
+        genome_files = list(genomes_dir.glob("*fna.gz"))
 
         if args["unique_taxid"]:  # Filter genome list if only unique taxids desired
-            genome_files = unique_taxid_strains(accfile)
+            genome_files = unique_taxid_strains(accession_summary_file)
 
         # Run - Download
-        sequence_ids = get_genome_names(genome_files, accfile)
+        sequence_ids = get_genome_names(genome_files, accession_summary_file)
 
     logger.info(sequence_ids)
     logger.info(f"{len(genome_files)} genomes found.")
