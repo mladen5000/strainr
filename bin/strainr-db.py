@@ -16,6 +16,8 @@ from Bio import SeqIO
 import numpy as np
 import pandas as pd
 import ncbi_genome_download as ngd
+from scipy.cluster import hierarchy as sch
+from scipy.spatial.distance import squareform
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -176,18 +178,23 @@ def download_strains():
         accession_summary = "summary_" + args["genus"] + ".tsv"
 
     else:
-        raise ValueError("Need to choose either taxid or provide an accession list from a file.")
+        raise ValueError(
+            "Need to choose either taxid or provide an accession list from a file."
+        )
 
     d_out = {
         "output": p / output_dir,
         "metadata_table": p / output_dir / accession_summary,
     }
     ncbi_kwargs.update(d_out)
+    print(ncbi_kwargs)
 
     # Call ncbi-genome-download
     exitcode: int = ngd.download(**ncbi_kwargs)
     if exitcode != 0:
-        raise ConnectionError("ncbi-genome-download did not successfully download the genomes")
+        raise ConnectionError(
+            "ncbi-genome-download did not successfully download the genomes"
+        )
 
     return d_out["output"], d_out["metadata_table"]
 
@@ -203,6 +210,85 @@ def download_strains():
 #         return unique_taxid_strains(accfile), accfile
 
 #     return list(genomedir.glob("*fna.gz")), accfile
+
+
+def strain_clustering(
+    mash_distance_table, ani_threshold=0.01, out1_path=None, out2_path=None
+):
+    """
+    Input:
+        dists: Mash distance table, all v all genomes (mash sketch * -o blah, mash dist blah.msh blah.msh -t > idklol)
+        outfile: File that contains each genome, its' cluster, and dist between genome and cluster rep, (tsv)
+        out_clust_table: Column of clustered rep_genomes, followed by members to the right, (tsv)
+        thr: threshold, default set to 0.01, smaller means size of clusters smallers, so n_clusters approaches n_genomes.
+
+    Function does the following:
+        1. Cluster the genomes
+        2. Get representative genome for each cluster
+
+    Returns:
+        2 saved files and a clust dict object
+    """
+
+    # Load mash distance table TODO: call mash
+    df = pd.read_csv(mash_distance_table, sep="\t", index_col=0)
+
+    Z = sch.linkage(squareform(df.values))
+    clust_ids = sch.fcluster(Z, t=ani_threshold, criterion="distance")
+
+    print(
+        f" The {len(clust_ids)} genomes are now grouped into {len(np.unique(clust_ids))} clusters using a {(1 - ani_threshold) * 100}% similarity criteria.  "
+    )
+
+    clust = {}
+    for ci in np.unique(clust_ids):
+        idx = np.where(ci == clust_ids)[0]
+
+        if idx.shape[0] == 1:  # Single genome in cluster
+            r = df.index[idx[0]]
+            clust[r] = [r]
+
+        else:  # Multiple genomes in cluster
+            # Put these idx into df for distance table and sum to see total distance
+            dist_sum = df.iloc[idx, idx].sum(axis=0)
+            rep = dist_sum.idxmin()  # Choose the genome with minimum distance
+            clust[rep] = df.index[idx].tolist()  # Put into dictionary
+
+    # Reverse dict
+    child_to_parent = {
+        gi: rep_gi for rep_gi, genome_list in clust.items() for gi in genome_list
+    }
+
+    # TODO - optional output
+    if out1_path:
+        log_clusters1(out1_path, df, clust, child_to_parent)
+
+    # TODO - optional output 2
+    if out2_path:
+        log_clusters2(out2_path, clust)
+
+    return clust, child_to_parent
+
+
+def log_clusters2(out2_path, clust):
+    """Write tsv where each row starts with cluster genome, followed by each member genome within cluster"""
+    with open(out2_path, "w") as of:
+        df_clusters = pd.DataFrame.from_dict(clust, orient="index")
+        df_clusters.index.name = "genome_rep"
+        most_members = lambda gi: df_clusters.count(axis=1)[gi]
+        df_clusters = df_clusters.sort_index(key=most_members, ascending=False)
+        df_clusters.to_csv(out2_path, sep="\t")
+
+
+def log_clusters1(out1_path, df, clust, child_to_parent):
+    """Writes tsv where each row is original genome, parent cluster genome and d(genome,cluster_amb)"""
+    with open(out1_path, "w") as of:
+        writer = csv.writer(of, delimiter="\t", lineterminator="\n")
+        writer.writerow(["genome", "rep_genome", "distance"])
+        for rep_gi, genome_list in clust.items():
+            for gi in genome_list:
+                child_to_parent[gi] = rep_gi
+                writer.writerow([gi, rep_gi, f"{df.loc[gi, rep_gi]:.6f}"])
 
 
 def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
@@ -255,7 +341,9 @@ def build_parallel(genome_file, genome_files, full_set):
     encoding = guess_type(str(genome_file))[1]
     _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
     with _open(genome_file) as g:
-        for record in SeqIO.parse(g, "fasta"):  # Include all subsequences under one label
+        for record in SeqIO.parse(
+            g, "fasta"
+        ):  # Include all subsequences under one label
             max_index = len(record.seq) - kmerlen + 1
             with memoryview(bytes(record.seq)) as seq_buffer:
                 for i in range(max_index):
@@ -300,7 +388,9 @@ def unique_taxid_strains(accession_file):
     return [(p / i) for i in accession_df["local_filename"].to_list()]
 
 
-def get_genome_names(genome_files: list[pathlib.Path], accfile: pathlib.Path) -> list[str]:
+def get_genome_names(
+    genome_files: list[pathlib.Path], accfile: pathlib.Path
+) -> list[str]:
     """Function to go from files -> genome names"""
 
     accession_df = pd.read_csv(accfile, sep="\t").set_index("assembly_accession")
@@ -309,7 +399,9 @@ def get_genome_names(genome_files: list[pathlib.Path], accfile: pathlib.Path) ->
     for gf in genome_files:
         acc = gf.stem[:15]
         genome_name = accession_df.loc[acc]["organism_name"]
-        accession_df["infraspecific_name"] = accession_df["infraspecific_name"].astype(str)
+        accession_df["infraspecific_name"] = accession_df["infraspecific_name"].astype(
+            str
+        )
         strain_name = accession_df.loc[acc]["infraspecific_name"]
         strain_name = strain_name.replace("strain=", " ")
         genome_names.append(genome_name + strain_name + " " + acc)
