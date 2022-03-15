@@ -7,7 +7,7 @@ import random
 import time
 import gzip
 import pickle
-from typing import Any, Generator, List, Tuple
+from typing import Any, Generator
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 import numpy as np
 import pandas as pd
@@ -125,7 +125,7 @@ def count_kmers(seqrecord):
     return seqrecord, sum(matched_kmer_strains)
 
 
-def fast_count_kmers(rid, seq):
+def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
     na_zeros = np.full(len(strains), 0)
@@ -137,9 +137,9 @@ def fast_count_kmers(rid, seq):
                 matched_kmer_strains.append(returned_strains)
     final_tally = sum(matched_kmer_strains)
     if isinstance(final_tally, np.ndarray):
-        return rid, final_tally
+        return seq_id, final_tally
     else:
-        return rid, na_zeros
+        return seq_id, na_zeros
 
 
 def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
@@ -148,28 +148,23 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
 
 def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
     """Generate an updated generator expression, but without quality scores, and encodes sequences."""
-    with _open(inputfile) as fin:
-        for (recid, rseq, _) in FastqGeneralIterator(fin):
-            encoded_record = (
-                recid,
-                bytes(rseq, "utf-8"),
-            )
-            yield encoded_record
+    with _open(inputfile) as f:
+        for (seq_id, seq, _) in FastqGeneralIterator(f):
+            yield seq_id, bytes(seq, "utf-8")
 
 
-def classify():
+def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
 
-    # TODO: not currently working with 1 cpu so just go to pool instead
-    if args.procs == -1:
-        return single_classify()
+    # From 3-item generator to 2-item generator
+    record_iter = (r for r in FastqEncodedGenerator(input_file))
 
-    records = (rec for rec in FastqEncodedGenerator(f1))
+    # Generate k-mers, lookup strain spectra in db, return sequence scores
     with mp.Pool(processes=args.procs) as pool:
         results = list(
             pool.imap_unordered(
-                fast_count_kmers_helper, records, chunksize=SETCHUNKSIZE
+                fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
             )
         )
 
@@ -177,8 +172,8 @@ def classify():
     return results
 
 
-def single_classify(): #TODO - not currently working
-    record_index = SeqIO.index(f1, "fastq")
+def single_classify():  # TODO - not currently working
+    record_index = SeqIO.index(fasta, "fastq")
     records = (record_index[id] for id in record_index.keys())
     full_results = []
     for seqrecord in records:
@@ -196,7 +191,7 @@ def single_classify(): #TODO - not currently working
     return full_results
 
 
-def raw_to_dict(raw_classified): # TODO: Not currently implemented
+def raw_to_dict(raw_classified):  # TODO: Not currently implemented
     """
     Go from list of tuples (SeqRecord,hits)
     to dict {ReadID:hits}
@@ -255,7 +250,7 @@ def _open(infile):
     return file_object
 
 
-def counter_to_array(prior_counter: Counter[int], nstrains: int):
+def counter_to_array(prior_counter: Counter[int], nstrains: int) -> np.ndarray:
     """
     Aggregate signals from reads with singular
     maximums and return a vector of probabilities for each strain
@@ -300,7 +295,9 @@ def parallel_resolve(hits, prior, selection):
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
+def parallel_resolve_helper(
+    ambig_hits, prior, selection="multinomial"
+) -> tuple[dict, dict]:
     """
     Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
 
@@ -312,7 +309,7 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     new_clear, new_ambig = {}, {}
     mapfunc = functools.partial(parallel_resolve, prior=prior, selection=selection)
 
-    resolve_cores = min(1, args.procs // 4)
+    resolve_cores = max(1, args.procs // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
         for read, outhits in zip(
@@ -323,7 +320,7 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial"):
     return new_clear, new_ambig
 
 
-def disambiguate(ambig_hits, prior, selection="multinomial"): #TODO: not implemented
+def disambiguate(ambig_hits, prior, selection="multinomial"):  # TODO: not implemented
     """
     Assign a strain to reads with ambiguous k-mer signals
     by maximum likelihood.
@@ -392,12 +389,12 @@ def resolve_clear_hits(clear_hits) -> dict[str, int]:
     return {k: int(np.argmax(v)) for k, v in clear_hits.items()}
 
 
-def resolve_ambig_hits(ambig_hits): #TODO - not implemented
+def resolve_ambig_hits(ambig_hits):  # TODO - not implemented
     """Replace numpy array with index"""
     return {k: int(v[0]) for k, v in ambig_hits.items()}
 
 
-def build_na_dict(na_hits): # TODO - not implemented
+def build_na_dict(na_hits):  # TODO - not implemented
     return {k: None for k in na_hits}
 
 
@@ -473,7 +470,7 @@ def display_relab(
     return choice_list
 
 
-def write_abundance_file(strain_names, idx_relab, outfile): #TODO - not implemented
+def write_abundance_file(strain_names, idx_relab, outfile):  # TODO - not implemented
     """
     For each strain in the database,
     grab the relab gathered from classification, else print 0.0
@@ -665,9 +662,10 @@ def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
 
 
 def main_bin(intermediate_results, strains, final_values, f1, outdir):
+    """Will become to main binning code"""
     bin_table = generate_table(intermediate_results, strains)
     top_strain_names = top_bins(final_values, strains)
-    f1 = pathlib.Path(f1)
+    f1 = pathlib.Path(f1)  # TODO
     f2 = pathlib.Path(str(f1).replace("_R1", "_R2"))  # TODO
     bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2)
     return
@@ -685,10 +683,8 @@ def main():
     """
     # Build
 
-    results_raw: List[
-        Tuple[str, np.ndarray]
-    ] = classify()  # get list of (SecRecord,nparray)
-    clear_hits, ambig_hits, na_hits = separate_hits(results_raw)  # parse into 3 dicts
+    results_raw = classify(fasta)
+    clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
     # Disambiguate
     assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
@@ -698,7 +694,7 @@ def main():
     # Finalize
     prior = counter_to_array(cprior, len(strains))  # counter to vector
     new_clear, _ = parallel_resolve_helper(ambig_hits, prior, args.mode)
-    total_hits = collect_reads(assigned_clear, new_clear, na_hits)
+    total_hits: dict = collect_reads(assigned_clear, new_clear, na_hits)
 
     # Output
     if out:
@@ -706,16 +702,14 @@ def main():
         print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {out}")
 
+    """
     # TODO
     binflag = False
-    if binflag:
-        main_bin(results_raw, strains, total_hits, f1, out)
-
+    if binflag: main_bin(results_raw, strains, total_hits, fasta, out)
     # TODO
     pickleflag = False
-    if pickleflag:
-        pickle_results(results_raw, total_hits, strains)
-
+    if pickleflag: pickle_results(results_raw, total_hits, strains)
+    """
     return
 
 
@@ -729,9 +723,9 @@ if __name__ == "__main__":
 
     for in_fasta in args.input:
         t0 = time.time()
-        f1 = pathlib.Path(in_fasta)
-        out = args.out / str(f1.stem)
+        fasta = pathlib.Path(in_fasta)
+        out = args.out / str(fasta.stem)
         if not out.exists():
-            print(f"Input file:{f1}")
+            print(f"Input file:{fasta}")
             main()
-            print(f"Time for {f1}: {time.time()-t0}")
+            print(f"Time for {fasta}: {time.time()-t0}")

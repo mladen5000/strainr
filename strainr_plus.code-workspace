@@ -59,6 +59,7 @@
 		"vim.vimrc.path": "$HOME/.vimrc",
 		"oneDarkPro.bold": true,
 		"oneDarkPro.vivid": true,
-		"workbench.iconTheme": "material-icon-theme"
+		"workbench.iconTheme": "material-icon-theme",
+		"esbonio.server.enabled": true
 	}
 }
