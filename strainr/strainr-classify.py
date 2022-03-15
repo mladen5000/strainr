@@ -1,19 +1,22 @@
 #!/usr/bin/env python
 import argparse
-import multiprocessing as mp
+from copyreg import pickle
 import functools
+import multiprocessing as mp
+import pickle
+import os
 import pathlib
 import random
 import time
-import gzip
-import pickle
+from collections import Counter, defaultdict
 from typing import Any, Generator
-from Bio.SeqIO.QualityIO import FastqGeneralIterator
+from unittest import result
+
 import numpy as np
 import pandas as pd
-from Bio import SeqIO
-from mimetypes import guess_type
-from collections import Counter, defaultdict
+from Bio.SeqIO.QualityIO import FastqGeneralIterator
+
+from utils import _open
 
 SETCHUNKSIZE = 10000
 
@@ -107,11 +110,6 @@ def get_args():
     return parser
 
 
-def get_rc(kmer):
-    rc_kmer = kmer.reverse_complement()
-    return kmer if kmer < rc_kmer else rc_kmer
-
-
 def count_kmers(seqrecord):
     """Main function to assign strain hits to reads"""
     max_index = len(seqrecord.seq) - kmerlen + 1
@@ -172,35 +170,6 @@ def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     return results
 
 
-def single_classify():  # TODO - not currently working
-    record_index = SeqIO.index(fasta, "fastq")
-    records = (record_index[id] for id in record_index.keys())
-    full_results = []
-    for seqrecord in records:
-        """Main function to assign strain hits to reads"""
-        max_index = len(seqrecord.seq) - kmerlen + 1
-        matched_kmer_strains = []
-        s = seqrecord.seq
-        with memoryview(bytes(s)) as seqview:
-            for i in range(max_index):
-                returned_strains = db.get(seqview[i : i + kmerlen])
-                if returned_strains is not None:
-                    matched_kmer_strains.append(returned_strains)
-        res = (seqrecord, sum(matched_kmer_strains))
-        full_results.append(res)
-    return full_results
-
-
-def raw_to_dict(raw_classified):  # TODO: Not currently implemented
-    """
-    Go from list of tuples (SeqRecord,hits)
-    to dict {ReadID:hits}
-    """
-    return {
-        read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)
-    }
-
-
 def separate_hits(
     hitcounts: list[tuple[str, np.ndarray]]
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
@@ -240,14 +209,6 @@ def separate_hits(
 def prior_counter(clear_hits: dict[str, int]) -> Counter[int]:
     """Aggregate the values which are indices corresponding to strain names"""
     return Counter(clear_hits.values())
-
-
-def _open(infile):
-    """Handle unknown file for gzip and non-gzip alike"""
-    encoding = guess_type(str(infile))[1]  # uses file extension
-    _open = functools.partial(gzip.open, mode="rt") if encoding == "gzip" else open
-    file_object = _open(infile)
-    return file_object
 
 
 def counter_to_array(prior_counter: Counter[int], nstrains: int) -> np.ndarray:
@@ -320,54 +281,6 @@ def parallel_resolve_helper(
     return new_clear, new_ambig
 
 
-def disambiguate(ambig_hits, prior, selection="multinomial"):  # TODO: not implemented
-    """
-    Assign a strain to reads with ambiguous k-mer signals
-    by maximum likelihood.
-    Currently 3 options: random, max, and dirichlet.
-    (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include maxima, multiply w/ prior.
-    """
-
-    rng = np.random.default_rng()
-    new_clear, new_ambig = {}, {}
-
-    for (read, hits) in ambig_hits.items():  # Treshold at max
-        belowmax = hits < np.max(hits)
-        hits[belowmax] = 0
-
-        # Apply prior
-        mlehits = hits * prior
-
-        # Weighted assignment
-        if selection == "random":
-            select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
-            new_clear[read] = select_random
-
-        # Maximum Likelihood assignment
-        elif selection == "max":
-            select_max = np.argwhere(mlehits == np.max(mlehits)).flatten()
-            if len(select_max) == 1:
-                new_clear[read] = int(select_max)
-
-        # Dirichlet assignment
-        elif selection == "dirichlet":
-            mlehits[mlehits == 0] = 1e-10
-            select_dirichlet = rng.dirichlet(mlehits, 1)
-            new_clear[read] = np.argmax(select_dirichlet)
-
-        elif selection == "multinomial":
-            mlehits[mlehits == 0] = 1e-10
-            select_multi = rng.multinomial(1, mlehits / sum(mlehits))
-            new_clear[read] = np.argmax(select_multi)
-
-        else:
-            raise ValueError("Must select a selection mode")
-
-    assert len(ambig_hits) == len(new_clear) + len(new_ambig)
-    return new_clear, new_ambig
-
-
 def collect_reads(
     clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
 ) -> dict[str, Any]:
@@ -387,15 +300,6 @@ def resolve_clear_hits(clear_hits) -> dict[str, int]:
     OUTPUT: The index/strain corresponding to the maximum value
     Replace numpy array with index"""
     return {k: int(np.argmax(v)) for k, v in clear_hits.items()}
-
-
-def resolve_ambig_hits(ambig_hits):  # TODO - not implemented
-    """Replace numpy array with index"""
-    return {k: int(v[0]) for k, v in ambig_hits.items()}
-
-
-def build_na_dict(na_hits):  # TODO - not implemented
-    return {k: None for k in na_hits}
 
 
 def normalize_counter(acounter: Counter, remove_na=False) -> Counter[Any]:
@@ -425,24 +329,6 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     # return normalize_counter(Counter(thresh_counter),remove_na=True)
 
 
-def save_results(intermediate_scores, results, strains):
-    """
-    Take a dict of readid:hits and convert to a dataframe
-    then save the output
-    """
-    df = pd.DataFrame.from_dict(
-        dict(intermediate_scores), orient="index", columns=strains
-    ).astype(int)
-    final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
-    assigned = pd.Series(final_names).rename("final")
-    df = df.join(assigned)
-    # savepath = outdir / "results_table.csv"
-    # df.to_csv(savepath)
-    picklepath = out / "results_table.pkl"
-    df.to_pickle(picklepath)
-    return
-
-
 def display_relab(
     acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True
 ):
@@ -468,24 +354,6 @@ def display_relab(
         print(f"{acounter['NA']}\tNA\n")
 
     return choice_list
-
-
-def write_abundance_file(strain_names, idx_relab, outfile):  # TODO - not implemented
-    """
-    For each strain in the database,
-    grab the relab gathered from classification, else print 0.0
-    """
-    full_relab = defaultdict(float)
-
-    for idx, name in enumerate(strain_names):
-        full_relab[name] = idx_relab[idx]
-    if idx_relab["NA"]:
-        full_relab["NA"] = idx_relab["NA"]
-
-    with outfile.open(mode="w") as fh:
-        for strain, relab in sorted(full_relab.items()):
-            fh.write(f"{strain}\t{relab:.9f}\n")
-    return
 
 
 def translate_strain_indices_to_names(counter_indices, strain_names):
@@ -568,6 +436,7 @@ def output_results(
 def build_database(dbpath):
     """Load compressed dataframe, extract parameters, build kmer dictionary"""
     print("Loading Database.")
+    global kmerlen, strains, db
     df = pd.read_pickle(dbpath)
     kmerlen = len(df.index[0])
     strains = list(df.columns)
@@ -575,100 +444,6 @@ def build_database(dbpath):
     assert all(df.index.str.len() == kmerlen)  # Check all kmers
     print(f"Database of {len(strains)} strains loaded")
     return db, strains, kmerlen
-
-
-def pickle_results(results_raw, total_hits, strains):
-    with open((out / "raw_results.pkl"), "wb") as fh:
-        pickle.dump(results_raw, fh)
-    with open((out / "total_hits.pkl"), "wb") as fh:
-        pickle.dump(total_hits, fh)
-
-    save_results(results_raw, total_hits, strains)
-    return
-
-
-def generate_table(intermediate_results, strains):
-    """Use the k-mer hits from classify in order to build a binning frame."""
-    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
-    df.columns = strains
-    return df
-
-
-def top_bins(final_values, strains):
-    """Use a dict of reads : strain list index and choose the top ones (sorted list)"""
-    out_series = pd.Series(dict(final_values))
-    top_strain_indices = list(out_series.value_counts().index)
-    top_strain_names = [strains[i] for i in top_strain_indices if i != "NA"]
-    return top_strain_names
-
-
-def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
-    """strain_dict is the strain_id : set of reads"""
-    # Make a directory for output
-    bin_dir = outdir / "bins"
-    bin_dir.mkdir(exist_ok=True, parents=True)
-
-    strains_to_bin = top_strain_names[:nbins]
-    print(f"Generating sequence files for the top {nbins} strains.")
-    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
-
-    procs, saved_strains = [], []
-    for strain_id in strains_to_bin:
-        if strain_id == "NA":
-            continue
-
-        # Keep track of binned strains
-        saved_strains.append(strain_id)
-        print(f"Binning reads for {strain_id}...")
-        p = mp.Process(
-            target=bin_single,
-            args=(strain_id, bin_table, f1, f2, bin_dir),
-        )
-        p.start()
-        procs.append(p)
-
-    [p.join() for p in procs]
-
-    # Return the set of strains and the list of processes
-    return set(saved_strains), procs
-
-
-def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
-    """Given a strain, use hit info to extract reads."""
-    strain_accession = strain.split()[-1]  # Get GCF from name
-    paired_files = [forward_file, reverse_file]
-
-    for fidx, input_file in enumerate(paired_files):  # (0,R1), (1,R2)
-        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
-        writefile = bin_dir / writefile_name
-
-        if fidx == 0:
-            reads = set(bin_table[bin_table[strain] > 0].index)
-        else:
-            # reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
-            reads = set(
-                bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N")
-            )  # Illumina extension
-
-        with _open(input_file) as original, writefile.open("w") as newfasta:
-            records = (
-                r for r in SeqIO.parse(original, "fastq") if r.description in reads
-            )  # TODO: r.description vs r.id vs fastqiterator
-            count = SeqIO.write(records, newfasta, "fastq")
-
-        print(f"Saved {count} records from {input_file} to {writefile}")
-
-    return
-
-
-def main_bin(intermediate_results, strains, final_values, f1, outdir):
-    """Will become to main binning code"""
-    bin_table = generate_table(intermediate_results, strains)
-    top_strain_names = top_bins(final_values, strains)
-    f1 = pathlib.Path(f1)  # TODO
-    f2 = pathlib.Path(str(f1).replace("_R1", "_R2"))  # TODO
-    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2)
-    return
 
 
 def main():
@@ -682,8 +457,13 @@ def main():
     6. Output
     """
     # Build
+    results_raw: list[tuple[str, np.ndarray]] = classify(fasta)
 
-    results_raw = classify(fasta)
+    # TODO
+    save_raw = True
+    if save_raw:
+        save_read_spectra(strains, results_raw)
+
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
     # Disambiguate
@@ -702,30 +482,48 @@ def main():
         print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {out}")
 
-    """
-    # TODO
-    binflag = False
-    if binflag: main_bin(results_raw, strains, total_hits, fasta, out)
-    # TODO
-    pickleflag = False
-    if pickleflag: pickle_results(results_raw, total_hits, strains)
-    """
+
+def save_read_spectra(strains: list[str], results_raw):
+    """Pickles the raw results from the k-mer db lookup"""
+
+    # TODO - useful elsewhere
+    # df = pd.DataFrame.from_dict(dict(results_raw),orient=index,columns=strains)
+    out.mkdir(parents=True, exist_ok=True)  # todo
+    output_file = pathlib.Path(out.parent / "raw_scores.pkl")
+    with output_file.open("wb") as pf:
+        pickle.dump(results_raw, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
 
 if __name__ == "__main__":
-    p = pathlib.Path().cwd()
-    rng = np.random.default_rng()
-
     args = get_args().parse_args()
     db, strains, kmerlen = build_database(args.db)
+    p = pathlib.Path().cwd()
+    rng = np.random.default_rng()
     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
-
     for in_fasta in args.input:
         t0 = time.time()
         fasta = pathlib.Path(in_fasta)
-        out = args.out / str(fasta.stem)
+        out: pathlib.Path = args.out / str(fasta.stem)
         if not out.exists():
             print(f"Input file:{fasta}")
             main()
             print(f"Time for {fasta}: {time.time()-t0}")
+
+# if __name__ == "__main__":
+#     p = pathlib.Path().cwd()
+#     rng = np.random.default_rng()
+
+#     args = get_args().parse_args()
+#     db, strains, kmerlen = build_database(args.db)
+#     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
+
+#     for in_fasta in args.input:
+#         t0 = time.time()
+#         fasta = pathlib.Path(in_fasta)
+#         out = args.out / str(fasta.stem)
+#         if not out.exists():
+#             print(f"Input file:{fasta}")
+#             main()
+#             print(f"Time for {fasta}: {time.time()-t0}")

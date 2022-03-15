@@ -60,6 +60,6 @@
 		"oneDarkPro.bold": true,
 		"oneDarkPro.vivid": true,
 		"workbench.iconTheme": "material-icon-theme",
-		"esbonio.server.enabled": true
+		"esbonio.server.enabled": false
 	}
 }
