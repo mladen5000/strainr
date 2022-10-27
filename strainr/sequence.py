@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import mmh3
 
-
 @dataclass(order=True, slots=True)
 class SimpleSeq:
     """
@@ -25,7 +24,6 @@ class SimpleSeq:
         # Check for minimum length
         if len(self.seq) == 0:
             raise ValueError("self.seq must be non-empty")
-
         # type check
         if not isinstance(self.seq, bytes):
             try:

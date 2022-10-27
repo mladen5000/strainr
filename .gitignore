@@ -1,6 +1,8 @@
 */__pycache__**
 *.code-workspace
+strainr_plus.code-workspace
 strainr/analyze_raw.ipynb
 .vscode/launch.json
 strainr_out/raw_scores.pkl
 debug.db
+strainr_out

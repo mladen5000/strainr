@@ -83,4 +83,5 @@ def process_arguments() -> argparse.ArgumentParser:
         required=False,
         help=" Save the intermediate results as a csv file containing each read's strain information.",
     )
-    return args
+    config_space = args.parse_args()
+    return config_space

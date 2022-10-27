@@ -1,47 +1,47 @@
-from configparser import ConfigParser
-import configparser
-from dataclasses import dataclass
-
-
 import dataclasses
-from types import NoneType
-import biom
-
-from matplotlib.path import Path
-import argparse
-from pysam import FastaFile
-
-from sklearn.feature_selection import SequentialFeatureSelector
-from sympy import GeneratorsError
-
+import pathlib
 from strainr.kmer_database import StrainDatabase
+from . import parameter_config as params
+
+
+class SequenceFile(pathlib.Path):
+    """Class to hold the input sequence file"""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path)
+        self.path = path
+
+    def __post_init__(self) -> None:
+        """Check that the input file exists"""
+        if not self.exists():
+            raise FileNotFoundError(f"File {self} does not exist")
 
 
 def main():
+    """_summary_"""
 
-    DATA_DIR = (Path(__file__).parent / "data").resolve()
-    config_args= argparse.process_arguments()
+    args = params.process_arguments()
+    DATA_DIR = (pathlib.Path(__file__).parent / "data").resolve()
 
-    # Generate a StrainDatabase object
-    database = StrainDatabase()
+    # From the command line
+    input_sequences: SequenceFile = args.input
+    results_dir: pathlib.Path = args.outdir
+    db_path: pathlib.Path = args.db
+    k = args.k
 
+    # Generate the database
+    database = StrainDatabase(args.k)
+    strain_run = Runner(input_sequences, database)
 
-    strain_run = Runner(config_args, database)
-
-from typing import Generator, Type
-import Bio.SeqIO.FastaIO as b
-biom.# from Bio import SeqIO
 
 @dataclasses.dataclass
 class Runner:
+    """Container class for run parameters"""
 
-    FastaFile = Type[Bio.SeqIO.FastaIO.FastaIterator]
-    fasta= SeqIO.parse(ConfigParser.input, "fastq")
-    k: int = 31
+    fasta = pathlib.Path
     kmer_database: StrainDatabase = StrainDatabase()
+    k: int = 31
 
-
-    # args = process_arguments.parse_args()
     # db, strains, kmerlen = build_database(args.db)
     # p = pathlib.Path().cwd()
     # rng = np.random.default_rng()
