@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import mmh3
 
+
 @dataclass(order=True, slots=True)
 class SimpleSeq:
     """
@@ -14,6 +15,7 @@ class SimpleSeq:
         x = SimpleSeq(name='sequence_1',seq=b'ACTTTAAGGGGTTAAACCCCCG'*100)
         # x.get_kmers(StrainDatabase)
         [bytes(i) for i in x.kmers]
+
     """
 
     name: str = field(compare=False)
