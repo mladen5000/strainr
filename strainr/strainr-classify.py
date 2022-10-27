@@ -1,113 +1,25 @@
 #!/usr/bin/env python
-import argparse
-from copyreg import pickle
 import functools
 import multiprocessing as mp
-import pickle
-import os
+import mpire
 import pathlib
+import pickle
 import random
+
 import time
+
 from collections import Counter, defaultdict
 from typing import Any, Generator
-from unittest import result
+
 
 import numpy as np
 import pandas as pd
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 from utils import _open
+from strainr.parameter_config import process_arguments
 
 SETCHUNKSIZE = 10000
-
-
-def get_args():
-    """Parses the available arguments.
-
-    Returns:
-        parser: Object to be converted to dict for parameters
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "input",
-        help="input file",
-        nargs="+",
-        type=str,
-    )
-    parser.add_argument(
-        "-r",
-        "--reverse",
-        help="reverse fastq file, todo",
-        nargs="+",
-        type=str,
-    )
-    parser.add_argument(
-        "-d",
-        "--db",
-        # required=True,
-        help="Database file",
-        type=str,
-    )
-    parser.add_argument(
-        "-p",
-        "--procs",
-        type=int,
-        default=4,
-        help="Number of cores to use (default: 4)",
-    )
-    parser.add_argument(
-        "-o",
-        "--out",
-        type=pathlib.Path,
-        required=False,
-        help="Output folder",
-        default="strainr_out",
-    )
-    parser.add_argument(
-        "-m",
-        "--mode",
-        help="""
-        Selection mode for diambiguation
-        """,
-        choices=[
-            "random",
-            "max",
-            "multinomial",
-            "dirichlet",
-        ],
-        type=str,
-        default="max",
-    )
-    parser.add_argument(
-        "-a",
-        "--thresh",
-        help="",
-        type=float,
-        default=0.001,
-    )
-    parser.add_argument(
-        "--bin",
-        action="store_true",
-        required=False,
-        help="""
-        Perform binning.
-        """,
-    )
-    parser.add_argument(
-        "--save-raw-hits",
-        action="store_true",
-        required=False,
-        help="""
-        Save the intermediate results as a csv file containing
-        each read's strain information.
-        """,
-    )
-    # Examples
-    # parser.add_argument('--source_file', type=open)
-    # parser.add_argument('--dest_file',
-    # type=argparse.FileType('w', encoding='latin-1'))
-    # parser.add_argument('--datapath', type=pathlib.Path)
-    return parser
 
 
 def count_kmers(seqrecord):
@@ -126,11 +38,30 @@ def count_kmers(seqrecord):
 def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
+    na_zeros = np.zeros(len(strains), dtype=np.uint8)
+    max_index = len(seq) - kmerlen + 1
+    with memoryview(seq) as seqview:
+        for i in range(max_index):
+            returned_strains = db.get(seqview[i : i + kmerlen])
+            if returned_strains is not None:
+                matched_kmer_strains.append(returned_strains)
+    final_tally = sum(matched_kmer_strains)
+    if isinstance(final_tally, np.ndarray):
+        return seq_id, final_tally
+    else:
+        return seq_id, na_zeros
+
+
+def fast_count_kmers_mpire(db: dict, seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
+    """Main function to assign strain hits to reads"""
+    # import mmh3
+    matched_kmer_strains = []
     na_zeros = np.full(len(strains), 0)
     max_index = len(str(seq)) - kmerlen + 1
     with memoryview(seq) as seqview:
         for i in range(max_index):
             returned_strains = db.get(seqview[i : i + kmerlen])
+            # returned_strains = db.get(mmh3.hash(bytes(seqview[i : i + kmerlen]), signed=False, seed=SEED))
             if returned_strains is not None:
                 matched_kmer_strains.append(returned_strains)
     final_tally = sum(matched_kmer_strains)
@@ -154,17 +85,29 @@ def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
 def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
+    nreads = int(sum(1 for i in open(input_file, "rb")) / 4)
+    print(f"Reads: {nreads}")
 
     # From 3-item generator to 2-item generator
     record_iter = (r for r in FastqEncodedGenerator(input_file))
 
     # Generate k-mers, lookup strain spectra in db, return sequence scores
-    with mp.Pool(processes=args.procs) as pool:
+    with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
         results = list(
             pool.imap_unordered(
-                fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
+                fast_count_kmers_mpire,
+                record_iter,
+                iterable_len=nreads,
+                progress_bar=True,
             )
         )
+
+    # with mp.Pool(processes=args.procs) as pool:
+    #     results = list(
+    #         pool.imap_unordered(
+    #             fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
+    #         )
+    #     )
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -182,6 +125,7 @@ def separate_hits(
     """
     clear_hits: dict[str, np.ndarray] = {}
     ambig_hits: dict[str, np.ndarray] = {}
+    core_reads: dict[str, np.ndarray] = {}
     none_hits: list[str] = []
     for read, hit_array in hitcounts:
 
@@ -194,6 +138,11 @@ def separate_hits(
             if len(max_indices) == 1:  # Single max
                 clear_hits[read] = hit_array
 
+            elif len(max_indices) == len(hit_array):
+                # print("Mladen is testing at 3am")
+                # print(hit_array)
+                core_reads[read] = hit_array
+
             elif len(max_indices) > 1 and sum(hit_array) > 0:
                 ambig_hits[read] = hit_array
 
@@ -203,6 +152,7 @@ def separate_hits(
     print(f"Reads with likely assignment to a single strain: {len(clear_hits)}")
     print(f"Reads with multiple likely candidates: {len(ambig_hits)}")
     print(f"Reads with no hits to any reference genomes: {len(none_hits)}")
+    print(f"Core reads: {len(core_reads)}")
     return clear_hits, ambig_hits, none_hits
 
 
@@ -330,7 +280,10 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
 
 
 def display_relab(
-    acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True
+    acounter: Counter,
+    nstrains: int = 10,
+    template_string: str = "",
+    display_na=True,
 ):
     """
     Pretty print for counters:
@@ -436,12 +389,14 @@ def output_results(
 def build_database(dbpath):
     """Load compressed dataframe, extract parameters, build kmer dictionary"""
     print("Loading Database.")
+
     global kmerlen, strains, db
     df = pd.read_pickle(dbpath)
-    kmerlen = len(df.index[0])
+    # kmerlen = len(df.index[0])
+    kmerlen = 31
     strains = list(df.columns)
     db = dict(zip(df.index, df.to_numpy()))
-    assert all(df.index.str.len() == kmerlen)  # Check all kmers
+    # assert all(df.index.str.len() == kmerlen)  # Check all kmers
     print(f"Database of {len(strains)} strains loaded")
     return db, strains, kmerlen
 
@@ -488,16 +443,18 @@ def save_read_spectra(strains: list[str], results_raw):
 
     # TODO - useful elsewhere
     # df = pd.DataFrame.from_dict(dict(results_raw),orient=index,columns=strains)
+    df = pd.DataFrame(results_raw)
+    print(df.head())
     out.mkdir(parents=True, exist_ok=True)  # todo
     output_file = pathlib.Path(out.parent / "raw_scores.pkl")
     with output_file.open("wb") as pf:
-        pickle.dump(results_raw, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
-        pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(results_raw, pf)  # , file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+        # pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
 
 if __name__ == "__main__":
-    args = get_args().parse_args()
+    args = process_arguments.parse_args()
     db, strains, kmerlen = build_database(args.db)
     p = pathlib.Path().cwd()
     rng = np.random.default_rng()

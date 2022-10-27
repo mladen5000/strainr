@@ -9,10 +9,11 @@ import numpy as np
 import pandas as pd
 
 
+# Dummy class for args
 class args():
     procs: int
     mode: str
-    input: pathlib.Path
+    input: list[pathlib.Path]
     out: pathlib.Path 
 
 
