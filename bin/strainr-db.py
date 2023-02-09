@@ -1,23 +1,20 @@
 #!/usr/bin/env python
 
 import argparse
-from os import access
-import shutil
 import gzip
+import logging
 import pathlib
 import pickle
 import sys
-import logging
 from collections import defaultdict
-from mimetypes import guess_type
 from functools import partial
+from mimetypes import guess_type
 
-from tqdm import tqdm
-from Bio import SeqIO
+import ncbi_genome_download as ngd
 import numpy as np
 import pandas as pd
-import ncbi_genome_download as ngd
-import multiprocessing as mp
+from Bio import SeqIO
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -208,6 +205,7 @@ def download_and_filter_genomes():
 
     return list(genomedir.glob("*fna.gz")), accfile
 
+
 def count_kmers(genome_file):
     klen = params["kmerlen"]
     kmerset = set()
@@ -240,7 +238,6 @@ def build_database(genome_files, sequence_names):
     idx = 0
     kmerlen = params["kmerlen"]
     database = defaultdict(partial(np.zeros, len(genome_files), dtype=bool))
-    
 
     # logger.info("Building database....")
 
@@ -276,21 +273,26 @@ def build_parallel(genome_file, genome_files, full_set):
     rows = []
     encoding = guess_type(str(genome_file))[1]
     _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
+
     with _open(genome_file) as g:
         for record in SeqIO.parse(g, "fasta"):  # Include all subsequences under one label
             max_index = len(record.seq) - kmerlen + 1
+
             with memoryview(bytes(record.seq)) as seq_buffer:
                 for i in range(max_index):
                     kmer = seq_buffer[i : i + kmerlen]
                     rows.append(full_set.index(kmer))
+
     print(col, rows)
     return rows
 
 
 def build_df(db, strain_list):
     """Build the dataframe"""
+
     values = np.array(list(db.values()))
     df = pd.DataFrame(values, index=db.keys(), columns=strain_list, dtype=bool)
+
     # df = pd.DataFrame.from_dict(db, orient="index", columns=strain_list, dtype=bool)
     logger.debug(df)
     return df
@@ -298,8 +300,10 @@ def build_df(db, strain_list):
 
 def parse_meta():
     """Parse assembly data"""
+
     meta = pd.read_csv("ngd_meta.tsv", sep="\t").set_index("assembly_accession")
     # meta_vars = list(meta.T.index)
+
     return meta
 
 
@@ -309,31 +313,35 @@ def unique_taxid_strains(accession_file):
         strain taxonomic IDs and those without unique strain taxonomic IDs
         Ideally to be used for large genomes such as ecoli with large redundancy
     """
-    accession_df = pd.read_csv(accession_file, sep="\t").set_index("assembly_accession")
+
+    accessions = pd.read_csv(accession_file, sep="\t").set_index("assembly_accession")
 
     # Filter out non-uniques
-    unique = accession_df.taxid != accession_df.species_taxid
-    exists = accession_df.taxid.notna()
-    accession_df = accession_df[unique & exists]
+    unique = accessions.taxid != accessions.species_taxid
+    exists = accessions.taxid.notna()
+    accessions = accessions[unique & exists]
 
     # Write new accession details
-    accession_df.to_csv(accession_file, sep="\t")
+    accessions.to_csv(accession_file, sep="\t")
 
-    return [(p / i) for i in accession_df["local_filename"].to_list()]
+    return [(p / i) for i in accessions["local_filename"].to_list()]
 
 
 def get_genome_names(genome_files, accfile):
     """Function to go from files -> genome names"""
+
     if not params["custom"]:
-        accession_df = pd.read_csv(accfile, sep="\t").set_index("assembly_accession")
+        accessions = pd.read_csv(accfile, sep="\t").set_index("assembly_accession")
         genome_names = []
+
         for gf in genome_files:
             acc = gf.stem[:15]
-            genome_name = accession_df.loc[acc]["organism_name"]
-            accession_df["infraspecific_name"] = accession_df.infraspecific_name.astype(str)
-            strain_name = accession_df.loc[acc]["infraspecific_name"]
+            genome_name = accessions.loc[acc]["organism_name"]
+            accessions["infraspecific_name"] = accessions.infraspecific_name.astype(str)
+            strain_name = accessions.loc[acc]["infraspecific_name"]
             strain_name = strain_name.replace("strain=", " ")
             genome_names.append(genome_name + strain_name + " " + acc)
+
             # encoding = guess_type(str(gf))[1]  # uses file extension
             # _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
             # with _open(gf) as gfo:
@@ -342,29 +350,35 @@ def get_genome_names(genome_files, accfile):
 
     # if not params["custom"]:
     #     genome_names = [gf.stem[:15] for gf in genome_files]
+
     else:
         genome_names = [gf.stem for gf in genome_files]
     assert len(genome_files) == len(genome_names)
+
     return genome_names
 
 
 def pickle_db(database, fout):
     outfile = fout + ".pkl"
     logger.info(f"Saving database as {outfile}")
+
     with open(outfile, "wb") as ph:
         pickle.dump(database, ph, protocol=pickle.HIGHEST_PROTOCOL)
+
     return
 
 
 def pickle_df(df, filename, method="pickle"):
-
     outfile = params["out"] + ".db"
+
     if method == "pickle":
         df.to_pickle(outfile)
+
     elif method == "hdf":
         outfile = params["out"] + ".sdb"
         df.to_hdf(outfile)
         pd.DataFrame().to_hdf
+
     return
 
 
@@ -372,6 +386,8 @@ def main():
     # Run - Download
     genome_files, accession_summary = download_and_filter_genomes()
     sequence_ids = get_genome_names(genome_files, accession_summary)
+
+    # Log results 1
     print(sequence_ids)
     logger.info(f"{len(genome_files)} genomes found.")
 
@@ -379,10 +395,12 @@ def main():
     database = build_database(genome_files, sequence_ids)
     df = build_df(database, sequence_ids)
 
+    # Log results 2
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database)//1e6} MB")
     logger.debug(f"Kmer-building complete, saving db as {params['out']+'.db'}.")
 
+    # Save Database
     pickle_df(df, params["out"])
 
     return
@@ -397,6 +415,7 @@ if __name__ == "__main__":
 
 def full_sort(db):
     """Sorts each list as well as the dict itself"""
+
     logger.info("Optimizing The Dictionary")
     return {key: sorted(db[key]) for key in sorted(db)}
 
@@ -405,11 +424,13 @@ def convert_to_presence_absence(db):
     """
     Convert database so each entry only has a strain appearing up to 1 time
     """
+
     return {k: set(v) for k, v in db.items()}
 
 
 def filter_most(db, num_strains):
     """Remove kmers that have hits for most strains"""
+
     return {k: v for k, v in db.items() if len(v) > num_strains // 2}
 
 
@@ -418,6 +439,7 @@ def filter_by_length(db, max_len):
     Remove kmers that have more than n hits
     eg) max_len = 1 for unique kmers only
     """
+
     return {k: v for k, v in db.items() if len(v) > max_len}
 
 
