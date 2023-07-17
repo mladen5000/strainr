@@ -1,7 +1,6 @@
 import dataclasses
 import pathlib
 from strainr.kmer_database import StrainDatabase
-from . import parameter_config as params
 
 
 class SequenceFile(pathlib.Path):

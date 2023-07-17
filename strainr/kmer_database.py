@@ -1,8 +1,6 @@
-from dataclasses import dataclass, field
-from typing import ClassVar, Union
+    from typing import ClassVar, Union
 import pathlib
 import pandas as pd
-
 import numpy as np
 import numpy.typing as npt
 
@@ -18,7 +16,6 @@ class StrainDatabase:
     def __init__(self, kmerdb_path: str, k: int = 31) -> None:
         """Load the database from a file"""
 
-        kmer_strain_table: pd.DataFrame = pd.read_pickle(kmerdb_path)
         kmer_strain_table.index
 
         strain_refs = kmer_strain_table.columns  # .to_list()

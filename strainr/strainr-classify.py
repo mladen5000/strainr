@@ -1,22 +1,19 @@
 #!/usr/bin/env python
 import functools
 import multiprocessing as mp
-import mpire
 import pathlib
 import pickle
 import random
-
 import time
-
 from collections import Counter, defaultdict
 from typing import Any, Generator
 
-
+import mpire
 import numpy as np
 import pandas as pd
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
-
 from utils import _open
+
 from strainr.parameter_config import process_arguments
 
 SETCHUNKSIZE = 10000
@@ -78,7 +75,7 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
 def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
     """Generate an updated generator expression, but without quality scores, and encodes sequences."""
     with _open(inputfile) as f:
-        for (seq_id, seq, _) in FastqGeneralIterator(f):
+        for seq_id, seq, _ in FastqGeneralIterator(f):
             yield seq_id, bytes(seq, "utf-8")
 
 
@@ -92,22 +89,22 @@ def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     record_iter = (r for r in FastqEncodedGenerator(input_file))
 
     # Generate k-mers, lookup strain spectra in db, return sequence scores
-    with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
-        results = list(
-            pool.imap_unordered(
-                fast_count_kmers_mpire,
-                record_iter,
-                iterable_len=nreads,
-                progress_bar=True,
-            )
-        )
-
-    # with mp.Pool(processes=args.procs) as pool:
+    # with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
     #     results = list(
     #         pool.imap_unordered(
-    #             fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
+    #             fast_count_kmers_mpire,
+    #             record_iter,
+    #             iterable_len=nreads,
+    #             progress_bar=True,
     #         )
     #     )
+
+    with mp.Pool(processes=args.procs) as pool:
+        results = list(
+            pool.imap_unordered(
+                fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
+            )
+        )
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
@@ -128,7 +125,6 @@ def separate_hits(
     core_reads: dict[str, np.ndarray] = {}
     none_hits: list[str] = []
     for read, hit_array in hitcounts:
-
         if np.all(hit_array == 0):
             none_hits.append(read)
 
@@ -206,9 +202,7 @@ def parallel_resolve(hits, prior, selection):
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(
-    ambig_hits, prior, selection="multinomial"
-) -> tuple[dict, dict]:
+def parallel_resolve_helper(ambig_hits, prior, selection="multinomial") -> tuple[dict, dict]:
     """
     Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
 
@@ -223,17 +217,13 @@ def parallel_resolve_helper(
     resolve_cores = max(1, args.procs // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(
-            ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())
-        ):
+        for read, outhits in zip(ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
 
 
-def collect_reads(
-    clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
-) -> dict[str, Any]:
+def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
@@ -322,9 +312,7 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
             try:
                 name_to_hits[strain_names[k_idx]] = v_hits
             except TypeError:
-                print(
-                    f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type."
-                )
+                print(f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type.")
                 print(f"The type is {type(k_idx)}")
     return Counter(name_to_hits)
 
@@ -340,15 +328,13 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
 
 # Function to make each counter into a pd.DataFrame
 def counter_to_pandas(relab_counter, column_name):
-    relab_df = pd.DataFrame.from_records(
-        list(dict(relab_counter).items()), columns=["strain", column_name]
-    ).set_index("strain")
+    relab_df = pd.DataFrame.from_records(list(dict(relab_counter).items()), columns=["strain", column_name]).set_index(
+        "strain"
+    )
     return relab_df
 
 
-def output_results(
-    results: dict[str, int], strains: list[str], outdir: pathlib.Path
-) -> pd.DataFrame:
+def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
@@ -366,9 +352,7 @@ def output_results(
 
     final_threshab = threshold_by_relab(final_relab, threshold=args.thresh)
     final_threshab = normalize_counter(final_threshab, remove_na=True)
-    choice_strains = display_relab(
-        final_threshab, template_string="Post-thresholding relative abundance"
-    )
+    choice_strains = display_relab(final_threshab, template_string="Post-thresholding relative abundance")
 
     # Each abundance slice gets put into a df/series
     relab_columns = [
@@ -378,9 +362,7 @@ def output_results(
     ]
 
     # Concatenate and sort
-    results_table = pd.concat(relab_columns, axis=1).sort_values(
-        by="sample_hits", ascending=False
-    )
+    results_table = pd.concat(relab_columns, axis=1).sort_values(by="sample_hits", ascending=False)
 
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table.loc[choice_strains]

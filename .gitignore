@@ -6,3 +6,8 @@ strainr/analyze_raw.ipynb
 strainr_out/raw_scores.pkl
 debug.db
 strainr_out
+.mypy_cache
+.pytest_cache
+.ipynb_checkpoints
+.github
+.vscode
