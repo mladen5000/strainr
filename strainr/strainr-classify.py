@@ -18,8 +18,101 @@ from strainr.parameter_config import process_arguments
 SETCHUNKSIZE = 10000
 
 
+# from utils import _open
+
+
+def generate_table(intermediate_results, strains):
+    """Use the k-mer hits from classify in order to build a binning frame."""
+    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
+    df.columns = strains
+    return df
+
+
+def top_bins(final_values, strains):
+    """Use a dict of reads : strain list index and choose the top ones (sorted list)"""
+    out_series = pd.Series(dict(final_values))
+    top_strain_indices = list(out_series.value_counts().index)
+    top_strain_names = [strains[i] for i in top_strain_indices if i != "NA"]
+    return top_strain_names
+
+
+def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
+    """strain_dict is the strain_id : set of reads"""
+    # Make a directory for output
+    bin_dir = outdir / "bins"
+    bin_dir.mkdir(exist_ok=True, parents=True)
+
+    strains_to_bin = top_strain_names[:nbins]
+    print(f"Generating sequence files for the top {nbins} strains.")
+    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
+
+    procs, saved_strains = [], []
+    for strain_id in strains_to_bin:
+        if strain_id == "NA":
+            continue
+
+        # Keep track of binned strains
+        saved_strains.append(strain_id)
+        print(f"Binning reads for {strain_id}...")
+        p = mp.Process(
+            target=bin_single,
+            args=(strain_id, bin_table, f1, f2, bin_dir),
+        )
+        p.start()
+        procs.append(p)
+
+    [p.join() for p in procs]
+
+    # Return the set of strains and the list of processes
+    return set(saved_strains), procs
+
+
+def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
+    """Given a strain, use hit info to extract reads."""
+    strain_accession = strain.split()[-1]  # Get GCF from name
+    paired_files = [forward_file, reverse_file]
+
+    for fidx, input_file in enumerate(paired_files):  # (0,R1), (1,R2)
+        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
+        writefile = bin_dir / writefile_name
+
+        if fidx == 0:
+            reads = set(bin_table[bin_table[strain] > 0].index)
+        else:
+            # reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
+            reads = set(
+                bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N")
+            )  # Illumina extension
+
+        with utils._open(input_file) as original, writefile.open("w") as newfasta:
+            records = (
+                r for r in SeqIO.parse(original, "fastq") if r.description in reads
+            )  # TODO: r.description vs r.id vs fastqiterator
+            count = SeqIO.write(records, newfasta, "fastq")
+
+        print(f"Saved {count} records from {input_file} to {writefile}")
+
+    return
+
+
+def main_bin(intermediate_results, strains, final_values, f1, outdir):
+    """Will become to main binning code"""
+    bin_table = generate_table(intermediate_results, strains)
+    top_strain_names = top_bins(final_values, strains)
+    f1 = pathlib.Path(f1)  # TODO
+    f2 = pathlib.Path(str(f1).replace("_R1", "_R2"))  # TODO
+    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2)
+    return
+
+
+# TODO
+binflag = None
+# if binflag:
+#     main_bin(results_raw, strains, total_hits, fasta, outfile)
+
+
 def count_kmers(seqrecord):
-    
+
     """Main function to assign strain hits to reads"""
     max_index = len(seqrecord.seq) - kmerlen + 1
     matched_kmer_strains = []
@@ -33,7 +126,15 @@ def count_kmers(seqrecord):
 
 
 def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
-    """Main function to assign strain hits to reads"""
+    """Main function to assign strain hits to reads
+    
+    Args:
+    seq_id (str): Sequence ID
+    seq (bytes): Sequence
+    
+    Returns:
+    tuple[str, np.ndarray]: Tuple containing sequence ID and numpy array of matched kmer strains
+    """
     matched_kmer_strains = []
     na_zeros = np.zeros(len(strains), dtype=np.uint8)
     max_index = len(seq) - kmerlen + 1
@@ -49,23 +150,6 @@ def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
         return seq_id, na_zeros
 
 
-def fast_count_kmers_mpire(db: dict, seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
-    """Main function to assign strain hits to reads"""
-    # import mmh3
-    matched_kmer_strains = []
-    na_zeros = np.full(len(strains), 0)
-    max_index = len(str(seq)) - kmerlen + 1
-    with memoryview(seq) as seqview:
-        for i in range(max_index):
-            returned_strains = db.get(seqview[i : i + kmerlen])
-            # returned_strains = db.get(mmh3.hash(bytes(seqview[i : i + kmerlen]), signed=False, seed=SEED))
-            if returned_strains is not None:
-                matched_kmer_strains.append(returned_strains)
-    final_tally = sum(matched_kmer_strains)
-    if isinstance(final_tally, np.ndarray):
-        return seq_id, final_tally
-    else:
-        return seq_id, na_zeros
 
 
 def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
@@ -80,7 +164,14 @@ def fastq_encoded_generator(inputfile: pathlib.Path) -> Generator:
 
 
 def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
-    """Call multiprocessing library to lookup k-mers."""
+    """Call multiprocessing library to lookup k-mers.
+    
+    Args:
+    input_file (pathlib.Path): Path to input file
+    
+    Returns:
+    list[tuple[str, np.ndarray]]: List of tuples containing sequence ID and numpy array of matched kmer strains
+    """
     t0 = time.time()
     nreads = int(sum(1 for i in open(input_file, "rb")) / 4)
     print(f"Reads: {nreads}")
@@ -89,16 +180,6 @@ def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     record_iter = (r for r in fastq_encoded_generator(input_file))
 
     # Generate k-mers, lookup strain spectra in db, return sequence scores
-    # with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
-    #     results = list(
-    #         pool.imap_unordered(
-    #             fast_count_kmers_mpire,
-    #             record_iter,
-    #             iterable_len=nreads,
-    #             progress_bar=True,
-    #         )
-    #     )
-
     with mp.Pool(processes=args.procs) as pool:
         results = list(
             pool.imap_unordered(
