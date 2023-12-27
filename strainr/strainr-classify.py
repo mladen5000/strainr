@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 import functools
 import multiprocessing as mp
 import pathlib
@@ -7,6 +8,7 @@ import random
 import time
 from collections import Counter, defaultdict
 from typing import Any, Generator
+
 
 import mpire
 import numpy as np
@@ -73,7 +75,10 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
 
 
 def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
-    """Generate an updated generator expression, but without quality scores, and encodes sequences."""
+    """
+    Generate an updated generator expression, but without quality scores, and encodes sequences.
+    This is a test to see if the linter will catch
+    """
     with _open(inputfile) as f:
         for seq_id, seq, _ in FastqGeneralIterator(f):
             yield seq_id, bytes(seq, "utf-8")
@@ -111,7 +116,7 @@ def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
 
 
 def separate_hits(
-    hitcounts: list[tuple[str, np.ndarray]]
+    hitcounts: list[tuple[str, np.ndarray]],
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     """
     Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
@@ -223,6 +228,7 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial") -> tuple
     return new_clear, new_ambig
 
 
+
 def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
@@ -298,9 +304,17 @@ def display_relab(
 
     return choice_list
 
-
 def translate_strain_indices_to_names(counter_indices, strain_names):
-    """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
+    """
+    Convert a dictionary or counter from {strain_index: hits} to {strain_name: hits}.
+
+    Args:
+        counter_indices (dict or Counter): The dictionary or counter containing strain indices as keys and hits as values.
+        strain_names (list): The list of strain names corresponding to the indices.
+
+    Returns:
+        Counter: The converted counter with strain names as keys and hits as values.
+    """
     name_to_hits = {}
     for k_idx, v_hits in counter_indices.items():
         if k_idx != "NA" and isinstance(k_idx, int):
@@ -318,7 +332,20 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
 
 
 def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
-    """Provides a counter that has all the strains with 0 hits for completeness"""
+    """
+    Provides a counter that has all the strains with 0 hits for completeness
+
+    Args:
+        strain_names (list[str]): List of strain names
+        final_hits (Counter[str]): Counter object containing the hits for each strain
+
+    Returns:
+        Counter[str]: Counter object with all the strains, including those with 0 hits
+    # Implementation code goes here
+
+    Returns:
+        Counter: Counter object with all the strains, including those with 0 hits
+    """
     full_strain_relab: defaultdict = defaultdict(float)
     for strain in strain_names:
         full_strain_relab[strain] = final_hits[strain]
@@ -338,6 +365,14 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
+
+    Args:
+        results (dict[str, int]): A dictionary mapping reads to strain indices.
+        strains (list[str]): A list of strain names.
+        outdir (pathlib.Path): The output directory.
+
+    Returns:
+        pd.DataFrame: The resulting DataFrame containing strain names and relative abundances.
     """
     outdir.mkdir(parents=True, exist_ok=True)  # todo
 
@@ -357,7 +392,8 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     # Each abundance slice gets put into a df/series
     relab_columns = [
         counter_to_pandas(full_name_hits, "sample_hits"),
-        counter_to_pandas(final_relab, "sample_relab"),  # this should include NA
+        # this should include NA
+        counter_to_pandas(final_relab, "sample_relab"),
         counter_to_pandas(final_threshab, "intra_relab"),
     ]
 
@@ -369,7 +405,18 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
 
 
 def build_database(dbpath):
-    """Load compressed dataframe, extract parameters, build kmer dictionary"""
+    """
+    Build a database from a compressed dataframe.
+
+    Parameters:
+    dbpath (str): The path to the compressed dataframe.
+
+    Returns:
+    tuple: A tuple containing the database, strains, and kmer length.
+
+    Raises:
+    AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
+    """
     print("Loading Database.")
 
     global kmerlen, strains, db
@@ -377,7 +424,10 @@ def build_database(dbpath):
     # kmerlen = len(df.index[0])
     kmerlen = 31
     strains = list(df.columns)
+
+    # Convert to dictionary
     db = dict(zip(df.index, df.to_numpy()))
+
     # assert all(df.index.str.len() == kmerlen)  # Check all kmers
     print(f"Database of {len(strains)} strains loaded")
     return db, strains, kmerlen
@@ -403,8 +453,13 @@ def main():
 
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
-    # Disambiguate
-    assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
+    # 
+    
+    
+    
+    nn
+    # dict values are now single index
+    assigned_clear = resolve_clear_hits(clear_hits)
     cprior = prior_counter(assigned_clear)
     display_relab(normalize_counter(cprior), template_string="Prior Estimate")
 
@@ -418,6 +473,7 @@ def main():
         df_relabund = output_results(total_hits, strains, out)
         print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {out}")
+
 
 
 def save_read_spectra(strains: list[str], results_raw):
@@ -449,6 +505,7 @@ if __name__ == "__main__":
             print(f"Input file:{fasta}")
             main()
             print(f"Time for {fasta}: {time.time()-t0}")
+
 
 # if __name__ == "__main__":
 #     p = pathlib.Path().cwd()

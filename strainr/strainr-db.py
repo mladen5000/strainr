@@ -7,6 +7,7 @@ import pathlib
 import pickle
 import subprocess
 import sys
+
 import csv
 from collections import defaultdict
 from functools import partial
@@ -502,6 +503,7 @@ def pickle_db(database, fout):
 
 def pickle_df(df, filename, method="pickle"):
 
+
     outfile = args.out + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
@@ -563,7 +565,6 @@ def get_mash_dist(genome_files: list[pathlib.Path]):
 
 
 def main():
-
     ### 1. Get the genomes files and names for the database
 
     # 1a. Custom route
