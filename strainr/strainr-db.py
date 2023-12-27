@@ -1,24 +1,23 @@
 #!/usr/bin/env python
 
 import argparse
-
 import gzip
+import logging
 import pathlib
 import pickle
+import subprocess
 import sys
-import logging
 from collections import defaultdict
-from mimetypes import guess_type
 from functools import partial
-import subprocess 
+from mimetypes import guess_type
 
-from tqdm import tqdm
-from Bio import SeqIO
+import ncbi_genome_download as ngd
 import numpy as np
 import pandas as pd
-import ncbi_genome_download as ngd
+from Bio import SeqIO
 from scipy.cluster import hierarchy as sch
 from scipy.spatial.distance import squareform
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -476,7 +475,6 @@ def pickle_db(database, fout):
 
 
 def pickle_df(df, filename, method="pickle"):
-
     outfile = args["out"] + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
@@ -494,18 +492,26 @@ def custom_stuff():
     return genome_names, genome_files
 
 
-def get_mash_dist(genome_files: list[pathlib.Path], outputfile: pathlib.Path) -> pd.DataFrame:
+def get_mash_dist(
+    genome_files: list[pathlib.Path], outputfile: pathlib.Path
+) -> pd.DataFrame:
     # Generate a mash command for each row in the dataframe
     # mash_cmd = ("mash sketch " + true_col + " " + pred_col).str.split()
     # mash_cmd = ["mash sketch " + str(gfile) for gfile in genome_files]
-    msh_file = ''
-    mash_cmd = "mash sketch " + ' '.join([i.name for i in p.glob('*')]) +  "-o mash_all_genomes"
+    msh_file = ""
+    mash_cmd = (
+        "mash sketch " + " ".join([i.name for i in p.glob("*")]) + "-o mash_all_genomes"
+    )
     # mash sketch *fna.gz -p 24 -o mash_all_genomes
 
     # Popen will spawn all mash commands at once rather than wait for them to finish
     distances, proc_list = [], []
     for cmd in mash_cmd:
-        proc_list.append(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        proc_list.append(
+            subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+        )
 
     # Collect results, grab 3rd to last column which is mash distance
     for proc in proc_list:
@@ -527,7 +533,6 @@ def get_mash_dist(genome_files: list[pathlib.Path], outputfile: pathlib.Path) ->
 
 
 def main():
-
     ### 1. Get the genomes files and names for the database
 
     # 1a. Custom route
@@ -537,7 +542,10 @@ def main():
     # 1b. NCBI - download route
     else:
         ngd_kwargs = download_strains()
-        genomes_dir, accession_summary_file = ngd_kwargs["output"], ngd_kwargs["metadata_table"]
+        genomes_dir, accession_summary_file = (
+            ngd_kwargs["output"],
+            ngd_kwargs["metadata_table"],
+        )
         genome_files = list(genomes_dir.glob("*fna.gz"))
 
         if args["unique_taxid"]:  # Filter genome list if only unique taxids desired

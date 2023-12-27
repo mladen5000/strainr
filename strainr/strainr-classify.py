@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 import argparse
-import multiprocessing as mp
 import functools
+import multiprocessing as mp
 import pathlib
+import pickle
 import random
 import time
-import gzip
-import pickle
+from collections import Counter, defaultdict
 from typing import Any, Generator
-from Bio.SeqIO.QualityIO import FastqGeneralIterator
+
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
-from mimetypes import guess_type
-from collections import Counter, defaultdict
+from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 SETCHUNKSIZE = 10000
 
@@ -147,9 +146,12 @@ def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
 
 
 def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
-    """Generate an updated generator expression, but without quality scores, and encodes sequences."""
+    """
+    Generate an updated generator expression, but without quality scores, and encodes sequences.
+    This is a test to see if the linter will catch
+    """
     with _open(inputfile) as f:
-        for (seq_id, seq, _) in FastqGeneralIterator(f):
+        for seq_id, seq, _ in FastqGeneralIterator(f):
             yield seq_id, bytes(seq, "utf-8")
 
 
@@ -202,7 +204,7 @@ def raw_to_dict(raw_classified):  # TODO: Not currently implemented
 
 
 def separate_hits(
-    hitcounts: list[tuple[str, np.ndarray]]
+    hitcounts: list[tuple[str, np.ndarray]],
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     """
     Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
@@ -215,7 +217,6 @@ def separate_hits(
     ambig_hits: dict[str, np.ndarray] = {}
     none_hits: list[str] = []
     for read, hit_array in hitcounts:
-
         if np.all(hit_array == 0):
             none_hits.append(read)
 
@@ -240,14 +241,6 @@ def separate_hits(
 def prior_counter(clear_hits: dict[str, int]) -> Counter[int]:
     """Aggregate the values which are indices corresponding to strain names"""
     return Counter(clear_hits.values())
-
-
-def _open(infile):
-    """Handle unknown file for gzip and non-gzip alike"""
-    encoding = guess_type(str(infile))[1]  # uses file extension
-    _open = functools.partial(gzip.open, mode="rt") if encoding == "gzip" else open
-    file_object = _open(infile)
-    return file_object
 
 
 def counter_to_array(prior_counter: Counter[int], nstrains: int) -> np.ndarray:
@@ -332,7 +325,7 @@ def disambiguate(ambig_hits, prior, selection="multinomial"):  # TODO: not imple
     rng = np.random.default_rng()
     new_clear, new_ambig = {}, {}
 
-    for (read, hits) in ambig_hits.items():  # Treshold at max
+    for read, hits in ambig_hits.items():  # Treshold at max
         belowmax = hits < np.max(hits)
         hits[belowmax] = 0
 
@@ -470,10 +463,17 @@ def display_relab(
     return choice_list
 
 
-def write_abundance_file(strain_names, idx_relab, outfile):  # TODO - not implemented
+def write_abundance_file(strain_names, idx_relab, outfile):
     """
-    For each strain in the database,
-    grab the relab gathered from classification, else print 0.0
+    Write the abundance file based on the strain names and relative abundances.
+
+    Args:
+        strain_names (list): List of strain names.
+        idx_relab (dict): Dictionary containing the relative abundances for each strain.
+        outfile (file): Output file object to write the abundance data.
+
+    Returns:
+        None
     """
     full_relab = defaultdict(float)
 
@@ -488,8 +488,20 @@ def write_abundance_file(strain_names, idx_relab, outfile):  # TODO - not implem
     return
 
 
+from collections import Counter
+
+
 def translate_strain_indices_to_names(counter_indices, strain_names):
-    """Convert dict/counter from {strain_index: hits} to {strain_name:hits}"""
+    """
+    Convert a dictionary or counter from {strain_index: hits} to {strain_name: hits}.
+
+    Args:
+        counter_indices (dict or Counter): The dictionary or counter containing strain indices as keys and hits as values.
+        strain_names (list): The list of strain names corresponding to the indices.
+
+    Returns:
+        Counter: The converted counter with strain names as keys and hits as values.
+    """
     name_to_hits = {}
     for k_idx, v_hits in counter_indices.items():
         if k_idx != "NA" and isinstance(k_idx, int):
@@ -509,7 +521,20 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
 
 
 def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
-    """Provides a counter that has all the strains with 0 hits for completeness"""
+    """
+    Provides a counter that has all the strains with 0 hits for completeness
+
+    Args:
+        strain_names (list[str]): List of strain names
+        final_hits (Counter[str]): Counter object containing the hits for each strain
+
+    Returns:
+        Counter[str]: Counter object with all the strains, including those with 0 hits
+    # Implementation code goes here
+
+    Returns:
+        Counter: Counter object with all the strains, including those with 0 hits
+    """
     full_strain_relab: defaultdict = defaultdict(float)
     for strain in strain_names:
         full_strain_relab[strain] = final_hits[strain]
@@ -531,6 +556,14 @@ def output_results(
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
+
+    Args:
+        results (dict[str, int]): A dictionary mapping reads to strain indices.
+        strains (list[str]): A list of strain names.
+        outdir (pathlib.Path): The output directory.
+
+    Returns:
+        pd.DataFrame: The resulting DataFrame containing strain names and relative abundances.
     """
     outdir.mkdir(parents=True, exist_ok=True)  # todo
 
@@ -552,7 +585,8 @@ def output_results(
     # Each abundance slice gets put into a df/series
     relab_columns = [
         counter_to_pandas(full_name_hits, "sample_hits"),
-        counter_to_pandas(final_relab, "sample_relab"),  # this should include NA
+        # this should include NA
+        counter_to_pandas(final_relab, "sample_relab"),
         counter_to_pandas(final_threshab, "intra_relab"),
     ]
 
@@ -566,15 +600,43 @@ def output_results(
 
 
 def build_database(dbpath):
-    """Load compressed dataframe, extract parameters, build kmer dictionary"""
+    """
+    Build a database from a compressed dataframe.
+
+    Parameters:
+    dbpath (str): The path to the compressed dataframe.
+
+    Returns:
+    tuple: A tuple containing the database, strains, and kmer length.
+
+    Raises:
+    AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
+    """
     print("Loading Database.")
+    # Get relevant parameters
     df = pd.read_pickle(dbpath)
     kmerlen = len(df.index[0])
     strains = list(df.columns)
+
+    # Convert to dictionary
     db = dict(zip(df.index, df.to_numpy()))
-    assert all(df.index.str.len() == kmerlen)  # Check all kmers
-    print(f"Database of {len(strains)} strains loaded")
+    print(f"Database of {len(strains)} strains loaded.")
+
     return db, strains, kmerlen
+
+
+def check_kmer_length(df, kmerlen):
+    """
+    Check if the length of each kmer in the dataframe is equal to kmerlen.
+
+    Parameters:
+    df (pd.DataFrame): The dataframe containing kmers.
+    kmerlen (int): The expected length of each kmer.
+
+    Raises:
+    AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
+    """
+    assert all(df.index.str.len() == kmerlen)
 
 
 def pickle_results(results_raw, total_hits, strains):
@@ -584,90 +646,6 @@ def pickle_results(results_raw, total_hits, strains):
         pickle.dump(total_hits, fh)
 
     save_results(results_raw, total_hits, strains)
-    return
-
-
-def generate_table(intermediate_results, strains):
-    """Use the k-mer hits from classify in order to build a binning frame."""
-    df = pd.DataFrame.from_dict(dict(intermediate_results)).T
-    df.columns = strains
-    return df
-
-
-def top_bins(final_values, strains):
-    """Use a dict of reads : strain list index and choose the top ones (sorted list)"""
-    out_series = pd.Series(dict(final_values))
-    top_strain_indices = list(out_series.value_counts().index)
-    top_strain_names = [strains[i] for i in top_strain_indices if i != "NA"]
-    return top_strain_names
-
-
-def bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2):
-    """strain_dict is the strain_id : set of reads"""
-    # Make a directory for output
-    bin_dir = outdir / "bins"
-    bin_dir.mkdir(exist_ok=True, parents=True)
-
-    strains_to_bin = top_strain_names[:nbins]
-    print(f"Generating sequence files for the top {nbins} strains.")
-    # most_reads_frame = (df != 0).sum().sort_values(ascending=False)
-
-    procs, saved_strains = [], []
-    for strain_id in strains_to_bin:
-        if strain_id == "NA":
-            continue
-
-        # Keep track of binned strains
-        saved_strains.append(strain_id)
-        print(f"Binning reads for {strain_id}...")
-        p = mp.Process(
-            target=bin_single,
-            args=(strain_id, bin_table, f1, f2, bin_dir),
-        )
-        p.start()
-        procs.append(p)
-
-    [p.join() for p in procs]
-
-    # Return the set of strains and the list of processes
-    return set(saved_strains), procs
-
-
-def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
-    """Given a strain, use hit info to extract reads."""
-    strain_accession = strain.split()[-1]  # Get GCF from name
-    paired_files = [forward_file, reverse_file]
-
-    for fidx, input_file in enumerate(paired_files):  # (0,R1), (1,R2)
-        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
-        writefile = bin_dir / writefile_name
-
-        if fidx == 0:
-            reads = set(bin_table[bin_table[strain] > 0].index)
-        else:
-            # reads = set(bin_table[bin_table[strain] > 0].index.str.replace('/1','/2'))
-            reads = set(
-                bin_table[bin_table[strain] > 0].index.str.replace("1:N", "2:N")
-            )  # Illumina extension
-
-        with _open(input_file) as original, writefile.open("w") as newfasta:
-            records = (
-                r for r in SeqIO.parse(original, "fastq") if r.description in reads
-            )  # TODO: r.description vs r.id vs fastqiterator
-            count = SeqIO.write(records, newfasta, "fastq")
-
-        print(f"Saved {count} records from {input_file} to {writefile}")
-
-    return
-
-
-def main_bin(intermediate_results, strains, final_values, f1, outdir):
-    """Will become to main binning code"""
-    bin_table = generate_table(intermediate_results, strains)
-    top_strain_names = top_bins(final_values, strains)
-    f1 = pathlib.Path(f1)  # TODO
-    f2 = pathlib.Path(str(f1).replace("_R1", "_R2"))  # TODO
-    bin_helper(top_strain_names, bin_table, f1, f2, outdir, nbins=2)
     return
 
 
@@ -687,7 +665,8 @@ def main():
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
     # Disambiguate
-    assigned_clear = resolve_clear_hits(clear_hits)  # dict values are now single index
+    # dict values are now single index
+    assigned_clear = resolve_clear_hits(clear_hits)
     cprior = prior_counter(assigned_clear)
     display_relab(normalize_counter(cprior), template_string="Prior Estimate")
 
@@ -710,6 +689,7 @@ def main():
     pickleflag = False
     if pickleflag: pickle_results(results_raw, total_hits, strains)
     """
+
     return
 
 
@@ -728,4 +708,5 @@ if __name__ == "__main__":
         if not out.exists():
             print(f"Input file:{fasta}")
             main()
+            print(f"Time for {fasta}: {time.time()-t0}")
             print(f"Time for {fasta}: {time.time()-t0}")
