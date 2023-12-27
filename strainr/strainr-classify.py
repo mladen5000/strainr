@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import argparse
+
 import functools
 import multiprocessing as mp
 import pathlib
@@ -9,106 +9,16 @@ import time
 from collections import Counter, defaultdict
 from typing import Any, Generator
 
+
+import mpire
 import numpy as np
 import pandas as pd
-from Bio import SeqIO
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
+from utils import _open
+
+from strainr.parameter_config import process_arguments
 
 SETCHUNKSIZE = 10000
-
-
-def get_args():
-    """Parses the available arguments.
-
-    Returns:
-        parser: Object to be converted to dict for parameters
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "input",
-        help="input file",
-        nargs="+",
-        type=str,
-    )
-    parser.add_argument(
-        "-r",
-        "--reverse",
-        help="reverse fastq file, todo",
-        nargs="+",
-        type=str,
-    )
-    parser.add_argument(
-        "-d",
-        "--db",
-        # required=True,
-        help="Database file",
-        type=str,
-    )
-    parser.add_argument(
-        "-p",
-        "--procs",
-        type=int,
-        default=4,
-        help="Number of cores to use (default: 4)",
-    )
-    parser.add_argument(
-        "-o",
-        "--out",
-        type=pathlib.Path,
-        required=False,
-        help="Output folder",
-        default="strainr_out",
-    )
-    parser.add_argument(
-        "-m",
-        "--mode",
-        help="""
-        Selection mode for diambiguation
-        """,
-        choices=[
-            "random",
-            "max",
-            "multinomial",
-            "dirichlet",
-        ],
-        type=str,
-        default="max",
-    )
-    parser.add_argument(
-        "-a",
-        "--thresh",
-        help="",
-        type=float,
-        default=0.001,
-    )
-    parser.add_argument(
-        "--bin",
-        action="store_true",
-        required=False,
-        help="""
-        Perform binning.
-        """,
-    )
-    parser.add_argument(
-        "--save-raw-hits",
-        action="store_true",
-        required=False,
-        help="""
-        Save the intermediate results as a csv file containing
-        each read's strain information.
-        """,
-    )
-    # Examples
-    # parser.add_argument('--source_file', type=open)
-    # parser.add_argument('--dest_file',
-    # type=argparse.FileType('w', encoding='latin-1'))
-    # parser.add_argument('--datapath', type=pathlib.Path)
-    return parser
-
-
-def get_rc(kmer):
-    rc_kmer = kmer.reverse_complement()
-    return kmer if kmer < rc_kmer else rc_kmer
 
 
 def count_kmers(seqrecord):
@@ -127,11 +37,30 @@ def count_kmers(seqrecord):
 def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
     """Main function to assign strain hits to reads"""
     matched_kmer_strains = []
+    na_zeros = np.zeros(len(strains), dtype=np.uint8)
+    max_index = len(seq) - kmerlen + 1
+    with memoryview(seq) as seqview:
+        for i in range(max_index):
+            returned_strains = db.get(seqview[i : i + kmerlen])
+            if returned_strains is not None:
+                matched_kmer_strains.append(returned_strains)
+    final_tally = sum(matched_kmer_strains)
+    if isinstance(final_tally, np.ndarray):
+        return seq_id, final_tally
+    else:
+        return seq_id, na_zeros
+
+
+def fast_count_kmers_mpire(db: dict, seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
+    """Main function to assign strain hits to reads"""
+    # import mmh3
+    matched_kmer_strains = []
     na_zeros = np.full(len(strains), 0)
     max_index = len(str(seq)) - kmerlen + 1
     with memoryview(seq) as seqview:
         for i in range(max_index):
             returned_strains = db.get(seqview[i : i + kmerlen])
+            # returned_strains = db.get(mmh3.hash(bytes(seqview[i : i + kmerlen]), signed=False, seed=SEED))
             if returned_strains is not None:
                 matched_kmer_strains.append(returned_strains)
     final_tally = sum(matched_kmer_strains)
@@ -158,11 +87,23 @@ def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
 def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
     """Call multiprocessing library to lookup k-mers."""
     t0 = time.time()
+    nreads = int(sum(1 for i in open(input_file, "rb")) / 4)
+    print(f"Reads: {nreads}")
 
     # From 3-item generator to 2-item generator
     record_iter = (r for r in FastqEncodedGenerator(input_file))
 
     # Generate k-mers, lookup strain spectra in db, return sequence scores
+    # with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
+    #     results = list(
+    #         pool.imap_unordered(
+    #             fast_count_kmers_mpire,
+    #             record_iter,
+    #             iterable_len=nreads,
+    #             progress_bar=True,
+    #         )
+    #     )
+
     with mp.Pool(processes=args.procs) as pool:
         results = list(
             pool.imap_unordered(
@@ -172,35 +113,6 @@ def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
 
     print(f"Ending classification: {time.time() - t0}s")
     return results
-
-
-def single_classify():  # TODO - not currently working
-    record_index = SeqIO.index(fasta, "fastq")
-    records = (record_index[id] for id in record_index.keys())
-    full_results = []
-    for seqrecord in records:
-        """Main function to assign strain hits to reads"""
-        max_index = len(seqrecord.seq) - kmerlen + 1
-        matched_kmer_strains = []
-        s = seqrecord.seq
-        with memoryview(bytes(s)) as seqview:
-            for i in range(max_index):
-                returned_strains = db.get(seqview[i : i + kmerlen])
-                if returned_strains is not None:
-                    matched_kmer_strains.append(returned_strains)
-        res = (seqrecord, sum(matched_kmer_strains))
-        full_results.append(res)
-    return full_results
-
-
-def raw_to_dict(raw_classified):  # TODO: Not currently implemented
-    """
-    Go from list of tuples (SeqRecord,hits)
-    to dict {ReadID:hits}
-    """
-    return {
-        read.id: hits for read, hits in raw_classified if isinstance(hits, np.ndarray)
-    }
 
 
 def separate_hits(
@@ -215,6 +127,7 @@ def separate_hits(
     """
     clear_hits: dict[str, np.ndarray] = {}
     ambig_hits: dict[str, np.ndarray] = {}
+    core_reads: dict[str, np.ndarray] = {}
     none_hits: list[str] = []
     for read, hit_array in hitcounts:
         if np.all(hit_array == 0):
@@ -226,6 +139,11 @@ def separate_hits(
             if len(max_indices) == 1:  # Single max
                 clear_hits[read] = hit_array
 
+            elif len(max_indices) == len(hit_array):
+                # print("Mladen is testing at 3am")
+                # print(hit_array)
+                core_reads[read] = hit_array
+
             elif len(max_indices) > 1 and sum(hit_array) > 0:
                 ambig_hits[read] = hit_array
 
@@ -235,6 +153,7 @@ def separate_hits(
     print(f"Reads with likely assignment to a single strain: {len(clear_hits)}")
     print(f"Reads with multiple likely candidates: {len(ambig_hits)}")
     print(f"Reads with no hits to any reference genomes: {len(none_hits)}")
+    print(f"Core reads: {len(core_reads)}")
     return clear_hits, ambig_hits, none_hits
 
 
@@ -288,9 +207,7 @@ def parallel_resolve(hits, prior, selection):
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(
-    ambig_hits, prior, selection="multinomial"
-) -> tuple[dict, dict]:
+def parallel_resolve_helper(ambig_hits, prior, selection="multinomial") -> tuple[dict, dict]:
     """
     Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
 
@@ -305,65 +222,14 @@ def parallel_resolve_helper(
     resolve_cores = max(1, args.procs // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(
-            ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())
-        ):
+        for read, outhits in zip(ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
 
 
-def disambiguate(ambig_hits, prior, selection="multinomial"):  # TODO: not implemented
-    """
-    Assign a strain to reads with ambiguous k-mer signals
-    by maximum likelihood.
-    Currently 3 options: random, max, and dirichlet.
-    (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include maxima, multiply w/ prior.
-    """
 
-    rng = np.random.default_rng()
-    new_clear, new_ambig = {}, {}
-
-    for read, hits in ambig_hits.items():  # Treshold at max
-        belowmax = hits < np.max(hits)
-        hits[belowmax] = 0
-
-        # Apply prior
-        mlehits = hits * prior
-
-        # Weighted assignment
-        if selection == "random":
-            select_random = random.choices(range(len(hits)), weights=mlehits, k=1).pop()
-            new_clear[read] = select_random
-
-        # Maximum Likelihood assignment
-        elif selection == "max":
-            select_max = np.argwhere(mlehits == np.max(mlehits)).flatten()
-            if len(select_max) == 1:
-                new_clear[read] = int(select_max)
-
-        # Dirichlet assignment
-        elif selection == "dirichlet":
-            mlehits[mlehits == 0] = 1e-10
-            select_dirichlet = rng.dirichlet(mlehits, 1)
-            new_clear[read] = np.argmax(select_dirichlet)
-
-        elif selection == "multinomial":
-            mlehits[mlehits == 0] = 1e-10
-            select_multi = rng.multinomial(1, mlehits / sum(mlehits))
-            new_clear[read] = np.argmax(select_multi)
-
-        else:
-            raise ValueError("Must select a selection mode")
-
-    assert len(ambig_hits) == len(new_clear) + len(new_ambig)
-    return new_clear, new_ambig
-
-
-def collect_reads(
-    clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
-) -> dict[str, Any]:
+def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
@@ -380,15 +246,6 @@ def resolve_clear_hits(clear_hits) -> dict[str, int]:
     OUTPUT: The index/strain corresponding to the maximum value
     Replace numpy array with index"""
     return {k: int(np.argmax(v)) for k, v in clear_hits.items()}
-
-
-def resolve_ambig_hits(ambig_hits):  # TODO - not implemented
-    """Replace numpy array with index"""
-    return {k: int(v[0]) for k, v in ambig_hits.items()}
-
-
-def build_na_dict(na_hits):  # TODO - not implemented
-    return {k: None for k in na_hits}
 
 
 def normalize_counter(acounter: Counter, remove_na=False) -> Counter[Any]:
@@ -418,26 +275,11 @@ def threshold_by_relab(norm_counter_all, threshold=0.02):
     # return normalize_counter(Counter(thresh_counter),remove_na=True)
 
 
-def save_results(intermediate_scores, results, strains):
-    """
-    Take a dict of readid:hits and convert to a dataframe
-    then save the output
-    """
-    df = pd.DataFrame.from_dict(
-        dict(intermediate_scores), orient="index", columns=strains
-    ).astype(int)
-    final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
-    assigned = pd.Series(final_names).rename("final")
-    df = df.join(assigned)
-    # savepath = outdir / "results_table.csv"
-    # df.to_csv(savepath)
-    picklepath = out / "results_table.pkl"
-    df.to_pickle(picklepath)
-    return
-
-
 def display_relab(
-    acounter: Counter, nstrains: int = 10, template_string: str = "", display_na=True
+    acounter: Counter,
+    nstrains: int = 10,
+    template_string: str = "",
+    display_na=True,
 ):
     """
     Pretty print for counters:
@@ -462,35 +304,6 @@ def display_relab(
 
     return choice_list
 
-
-def write_abundance_file(strain_names, idx_relab, outfile):
-    """
-    Write the abundance file based on the strain names and relative abundances.
-
-    Args:
-        strain_names (list): List of strain names.
-        idx_relab (dict): Dictionary containing the relative abundances for each strain.
-        outfile (file): Output file object to write the abundance data.
-
-    Returns:
-        None
-    """
-    full_relab = defaultdict(float)
-
-    for idx, name in enumerate(strain_names):
-        full_relab[name] = idx_relab[idx]
-    if idx_relab["NA"]:
-        full_relab["NA"] = idx_relab["NA"]
-
-    with outfile.open(mode="w") as fh:
-        for strain, relab in sorted(full_relab.items()):
-            fh.write(f"{strain}\t{relab:.9f}\n")
-    return
-
-
-from collections import Counter
-
-
 def translate_strain_indices_to_names(counter_indices, strain_names):
     """
     Convert a dictionary or counter from {strain_index: hits} to {strain_name: hits}.
@@ -513,9 +326,7 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
             try:
                 name_to_hits[strain_names[k_idx]] = v_hits
             except TypeError:
-                print(
-                    f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type."
-                )
+                print(f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type.")
                 print(f"The type is {type(k_idx)}")
     return Counter(name_to_hits)
 
@@ -544,15 +355,13 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
 
 # Function to make each counter into a pd.DataFrame
 def counter_to_pandas(relab_counter, column_name):
-    relab_df = pd.DataFrame.from_records(
-        list(dict(relab_counter).items()), columns=["strain", column_name]
-    ).set_index("strain")
+    relab_df = pd.DataFrame.from_records(list(dict(relab_counter).items()), columns=["strain", column_name]).set_index(
+        "strain"
+    )
     return relab_df
 
 
-def output_results(
-    results: dict[str, int], strains: list[str], outdir: pathlib.Path
-) -> pd.DataFrame:
+def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
@@ -578,9 +387,7 @@ def output_results(
 
     final_threshab = threshold_by_relab(final_relab, threshold=args.thresh)
     final_threshab = normalize_counter(final_threshab, remove_na=True)
-    choice_strains = display_relab(
-        final_threshab, template_string="Post-thresholding relative abundance"
-    )
+    choice_strains = display_relab(final_threshab, template_string="Post-thresholding relative abundance")
 
     # Each abundance slice gets put into a df/series
     relab_columns = [
@@ -591,9 +398,7 @@ def output_results(
     ]
 
     # Concatenate and sort
-    results_table = pd.concat(relab_columns, axis=1).sort_values(
-        by="sample_hits", ascending=False
-    )
+    results_table = pd.concat(relab_columns, axis=1).sort_values(by="sample_hits", ascending=False)
 
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table.loc[choice_strains]
@@ -613,40 +418,19 @@ def build_database(dbpath):
     AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
     """
     print("Loading Database.")
-    # Get relevant parameters
+
+    global kmerlen, strains, db
     df = pd.read_pickle(dbpath)
-    kmerlen = len(df.index[0])
+    # kmerlen = len(df.index[0])
+    kmerlen = 31
     strains = list(df.columns)
 
     # Convert to dictionary
     db = dict(zip(df.index, df.to_numpy()))
-    print(f"Database of {len(strains)} strains loaded.")
 
+    # assert all(df.index.str.len() == kmerlen)  # Check all kmers
+    print(f"Database of {len(strains)} strains loaded")
     return db, strains, kmerlen
-
-
-def check_kmer_length(df, kmerlen):
-    """
-    Check if the length of each kmer in the dataframe is equal to kmerlen.
-
-    Parameters:
-    df (pd.DataFrame): The dataframe containing kmers.
-    kmerlen (int): The expected length of each kmer.
-
-    Raises:
-    AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
-    """
-    assert all(df.index.str.len() == kmerlen)
-
-
-def pickle_results(results_raw, total_hits, strains):
-    with open((out / "raw_results.pkl"), "wb") as fh:
-        pickle.dump(results_raw, fh)
-    with open((out / "total_hits.pkl"), "wb") as fh:
-        pickle.dump(total_hits, fh)
-
-    save_results(results_raw, total_hits, strains)
-    return
 
 
 def main():
@@ -660,11 +444,20 @@ def main():
     6. Output
     """
     # Build
+    results_raw: list[tuple[str, np.ndarray]] = classify(fasta)
 
-    results_raw = classify(fasta)
+    # TODO
+    save_raw = True
+    if save_raw:
+        save_read_spectra(strains, results_raw)
+
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
-    # Disambiguate
+    # 
+    
+    
+    
+    nn
     # dict values are now single index
     assigned_clear = resolve_clear_hits(clear_hits)
     cprior = prior_counter(assigned_clear)
@@ -681,32 +474,52 @@ def main():
         print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {out}")
 
-    """
-    # TODO
-    binflag = False
-    if binflag: main_bin(results_raw, strains, total_hits, fasta, out)
-    # TODO
-    pickleflag = False
-    if pickleflag: pickle_results(results_raw, total_hits, strains)
-    """
 
+
+def save_read_spectra(strains: list[str], results_raw):
+    """Pickles the raw results from the k-mer db lookup"""
+
+    # TODO - useful elsewhere
+    # df = pd.DataFrame.from_dict(dict(results_raw),orient=index,columns=strains)
+    df = pd.DataFrame(results_raw)
+    print(df.head())
+    out.mkdir(parents=True, exist_ok=True)  # todo
+    output_file = pathlib.Path(out.parent / "raw_scores.pkl")
+    with output_file.open("wb") as pf:
+        pickle.dump(results_raw, pf)  # , file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+        # pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
 
 if __name__ == "__main__":
+    args = process_arguments.parse_args()
+    db, strains, kmerlen = build_database(args.db)
     p = pathlib.Path().cwd()
     rng = np.random.default_rng()
-
-    args = get_args().parse_args()
-    db, strains, kmerlen = build_database(args.db)
     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
-
     for in_fasta in args.input:
         t0 = time.time()
         fasta = pathlib.Path(in_fasta)
-        out = args.out / str(fasta.stem)
+        out: pathlib.Path = args.out / str(fasta.stem)
         if not out.exists():
             print(f"Input file:{fasta}")
             main()
             print(f"Time for {fasta}: {time.time()-t0}")
-            print(f"Time for {fasta}: {time.time()-t0}")
+
+
+# if __name__ == "__main__":
+#     p = pathlib.Path().cwd()
+#     rng = np.random.default_rng()
+
+#     args = get_args().parse_args()
+#     db, strains, kmerlen = build_database(args.db)
+#     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
+
+#     for in_fasta in args.input:
+#         t0 = time.time()
+#         fasta = pathlib.Path(in_fasta)
+#         out = args.out / str(fasta.stem)
+#         if not out.exists():
+#             print(f"Input file:{fasta}")
+#             main()
+#             print(f"Time for {fasta}: {time.time()-t0}")

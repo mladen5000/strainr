@@ -7,6 +7,8 @@ import pathlib
 import pickle
 import subprocess
 import sys
+
+import csv
 from collections import defaultdict
 from functools import partial
 from mimetypes import guess_type
@@ -31,7 +33,7 @@ class ArgumentError(Exception):
     pass
 
 
-def get_args():
+def get_args() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-t",
@@ -106,13 +108,32 @@ def get_args():
         action="store_true",
         required=False,
         help="""
-                        Optional flag to only build the database for genomes that 
+                        Optional flag to only build the database for genomes that
                         have a unique strain taxonomic ID, all downloaded
-                        genomes without a taxid 
-                        or only with a species-taxid will be downloaded, 
-                        but not incorporated into the final database. 
-                        Useful for species which have a large number of 
+                        genomes without a taxid
+                        or only with a species-taxid will be downloaded,
+                        but not incorporated into the final database.
+                        Useful for species which have a large number of
                         genomes in the database, such as E. Coli.""",
+    )
+    parser.add_argument(
+        "--cluster",
+        action="store_true",
+        required=False,
+        help="""
+            Flag to select clustering, see --ani_cutoff for cutoff.
+            This will cluster genomes based on their ANI and build a
+            database of genomes with a unique strain taxonomic ID.
+            """,
+    )
+    parser.add_argument(
+        "--ani_cutoff",
+        type=float,
+        required=False,
+        default=0.001,
+        help="""
+            Cutoff for ANI clustering, default is 0.001 (99.99'%' identity).
+            """,
     )
     return parser
 
@@ -122,7 +143,7 @@ def parse_assembly_level(level: str) -> str:
     Takes the assembly_level option and selects the all-inclusive optarg for which ncbi-genome-download will use.
     """
     # Implies custom so genomes are already defined
-    if args["assembly_accessions"]:
+    if args.assembly_accessions:
         return "all"
 
     level_options = {
@@ -147,35 +168,35 @@ def download_strains():
     """
 
     # Get inclusive assembly level
-    assembly_level: str = parse_assembly_level(args["assembly_levels"])
+    assembly_level: str = parse_assembly_level(args.assembly_levels)
 
     # Build command dict
     ncbi_kwargs = {
         "flat_output": True,
         "groups": "bacteria",
         "file_formats": "fasta",
-        "section": args["source"],
-        "parallel": args["procs"],
+        "section": args.source,
+        "parallel": args.procs,
         "assembly_levels": assembly_level,
     }
 
-    if args["taxid"] and args["assembly_accessions"]:
+    if args.taxid and args.assembly_accessions:
         raise ValueError("Cannot select both taxid and accession")
 
-    elif args["taxid"]:
-        ncbi_kwargs["species_taxids"] = args["taxid"]
-        output_dir = "genomes_s" + str(args["taxid"])
-        accession_summary = "summary_" + str(args["taxid"]) + ".tsv"
+    elif args.taxid:
+        ncbi_kwargs["species_taxids"] = args.taxid
+        output_dir = "genomes_s" + str(args.taxid)
+        accession_summary = "summary_" + str(args.taxid) + ".tsv"
 
-    elif args["assembly_accessions"]:
-        ncbi_kwargs["assembly_accessions"] = args["assembly_accessions"]
-        output_dir = "genomes_f" + args["assembly_accessions"]
+    elif args.assembly_accessions:
+        ncbi_kwargs["assembly_accessions"] = args.assembly_accessions
+        output_dir = "genomes_f" + args.assembly_accessions
         accession_summary = "summary.tsv"
 
-    elif args["genus"]:
-        ncbi_kwargs["genera"] = args["genus"]
-        output_dir = "genomes_g" + args["genus"]
-        accession_summary = "summary_" + args["genus"] + ".tsv"
+    elif args.genus:
+        ncbi_kwargs["genera"] = args.genus
+        output_dir = "genomes_g" + args.genus
+        accession_summary = "summary_" + args.genus + ".tsv"
 
     else:
         raise ValueError(
@@ -212,16 +233,17 @@ def download_strains():
 
 #     return list(genomedir.glob("*fna.gz")), accfile
 
+hi := 
 
 def cluster_strains(
-    mash_distance_table, ani_threshold=0.01, out1_path=None, out2_path=None
+    df: pd.DataFrame, ani_threshold=0.001, out1_path=None, out2_path=None
 ) -> tuple[dict[str, list], dict[str, str], int]:
     """
     Input:
         dists: Mash distance table, all v all genomes (mash sketch * -o blah, mash dist blah.msh blah.msh -t > idklol)
         outfile: File that contains each genome, its' cluster, and dist between genome and cluster rep, (tsv)
         out_clust_table: Column of clustered rep_genomes, followed by members to the right, (tsv)
-        thr: threshold, default set to 0.01, smaller means size of clusters smallers, so n_clusters approaches n_genomes.
+        thr: threshold, default set to 0.01, smaller ani_threshold will increase the number of clusters.
 
     Function does the following:
         1. Cluster the genomes
@@ -231,17 +253,14 @@ def cluster_strains(
         2 saved files and a clust dict object
     """
 
-    # Load mash distance table TODO: call mash
-    df = pd.read_csv(mash_distance_table, sep="\t", index_col=0)
-
     # Hierarchical clustering and cutoff
     Z = sch.linkage(squareform(df.values))
     clust_ids = sch.fcluster(Z, t=ani_threshold, criterion="distance")
     num_clusters = len(np.unique(clust_ids))
 
     print(
-        f""" 
-            Reducing {len(clust_ids)} genome sequences into {num_clusters} clusters 
+        f"""
+            Reducing {len(clust_ids)} genome sequences into {num_clusters} clusters
             using a {(1 - ani_threshold) * 100}% similarity criteria.
         """
     )
@@ -280,7 +299,7 @@ def cluster_strains(
 
 def build_database2(
     p2c: dict[str, list], c2p: dict[str, str], kmerlen: int = 31
-) -> dict[bytes, np.ndarray]:
+) -> tuple[dict[bytes, np.ndarray], list]:
     # TODO: Temporary function to incorporate clusters
     """
     Input:
@@ -304,35 +323,37 @@ def build_database2(
 
     logger.debug(f"There are {len(cluster_set)} clusters and {len(genomes)} genomes")
     logger.info("Building database....")
+    logger.debug(f"the kmer length is {kmerlen}")
 
     """
-        For each cluster, 
+        For each cluster,
             For each genome within cluster
                 For each record in a genome
                     For each kmer in the record
                         DB[kmer]@[cluster_index] = True
-            
+
     """
-    for cluster in cluster_set:  # For each cluster
-        for genome_file in p2c[cluster]:  # Retrieve genome list associated with cluster
-            with gzopen(genome_file) as gf:
-                for record in SeqIO.parse(gf, "fasta"):
-                    with memoryview(bytes(record.seq)) as memseq:
-                        for ki in range(memseq.nbytes - kmerlen + 1):
-                            kmer = memseq[ki : ki + kmerlen]
-                            database[bytes(kmer)][idx] = True
+    for cluster in tqdm(cluster_set):  # For each cluster
+        print(cluster)
+        # for genome_file in p2c[cluster]:  # Retrieve children in the cluster
+        # with gzopen(genome_file) as gf:
+        with gzopen(cluster) as gf:
+            for record in SeqIO.parse(gf, "fasta"):
+                with memoryview(bytes(record.seq)) as memseq:
+                    for ki in range(memseq.nbytes - kmerlen + 1):
+                        kmer = memseq[ki : ki + kmerlen]
+                        database[bytes(kmer)][idx] = True
         idx += 1
-    return database
+    return database, [pathlib.Path(g) for g in cluster_set]
 
 
 def log_clusters2(out2_path, clust):
     """Write tsv where each row starts with cluster genome, followed by each member genome within cluster"""
-    with open(out2_path, "w") as of:
-        df_clusters = pd.DataFrame.from_dict(clust, orient="index")
-        df_clusters.index.name = "genome_rep"
-        most_members = lambda gi: df_clusters.count(axis=1)[gi]
-        df_clusters = df_clusters.sort_index(key=most_members, ascending=False)
-        df_clusters.to_csv(out2_path, sep="\t")
+    df_clusters = pd.DataFrame.from_dict(clust, orient="index")
+    df_clusters.index.name = "genome_rep"
+    most_members = lambda gi: df_clusters.count(axis=1)[gi]
+    df_clusters = df_clusters.sort_index(key=most_members, ascending=False)
+    df_clusters.to_csv(out2_path, sep="\t")
 
 
 def log_clusters1(out1_path, df, clust, child_to_parent):
@@ -360,6 +381,8 @@ def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
     idx = 0
     database = defaultdict(partial(np.zeros, len(genomes), dtype=bool))
     logger.info("Building database....")
+    import mmh3 #test hashed kmers
+    SEED = 432
 
     for genome_file in tqdm(genomes):
         # Open fasta
@@ -372,6 +395,7 @@ def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
                     for ki in range(memseq.nbytes - kmerlen + 1):
                         kmer = memseq[ki : ki + kmerlen]
                         database[bytes(kmer)][idx] = True
+                        # database[mmh3.hash(bytes(kmer),signed=False,seed=SEED)][idx] = True #test hashed kmers
         idx += 1
     return database
 
@@ -391,15 +415,14 @@ def build_parallel(genome_file, genome_files, full_set):
     Strain ID is appended upon collision
     Output: Database of kmer: strain_hits
     """
-    kmerlen = args["kmerlen"]
+    kmerlen = args.kmerlen
     col = genome_files.index(genome_file)
     rows = []
     encoding = guess_type(str(genome_file))[1]
     _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
     with _open(genome_file) as g:
-        for record in SeqIO.parse(
-            g, "fasta"
-        ):  # Include all subsequences under one label
+        for record in SeqIO.parse(g, "fasta"):
+            # Include all subsequences under one label
             max_index = len(record.seq) - kmerlen + 1
             with memoryview(bytes(record.seq)) as seq_buffer:
                 for i in range(max_index):
@@ -413,8 +436,11 @@ def build_df(db, strain_list):
     """Build the dataframe"""
     values = np.array(list(db.values()))
     df = pd.DataFrame(values, index=db.keys(), columns=strain_list, dtype=bool)
+    df.columns = [pathlib.Path(f).name for f in df.columns]
+    # df.index = [pathlib.Path(f).name for f in df.index]
     # df = pd.DataFrame.from_dict(db, orient="index", columns=strain_list, dtype=bool)
     logger.debug(df)
+    print(df.head)
     return df
 
 
@@ -454,7 +480,8 @@ def get_genome_names(
 
     for gf in genome_files:
         acc = gf.stem[:15]
-        genome_name = accession_df.loc[acc]["organism_name"]
+        # The line below is what messes up when u dont delete genome folder name
+        genome_name = accession_df.loc[acc]["organism_name"]  # TODO
         accession_df["infraspecific_name"] = accession_df["infraspecific_name"].astype(
             str
         )
@@ -475,11 +502,13 @@ def pickle_db(database, fout):
 
 
 def pickle_df(df, filename, method="pickle"):
-    outfile = args["out"] + ".db"
+
+
+    outfile = args.out + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
     elif method == "hdf":
-        outfile = args["out"] + ".sdb"
+        outfile = args.out + ".sdb"
         df.to_hdf(outfile)
         pd.DataFrame().to_hdf
     return
@@ -487,48 +516,51 @@ def pickle_df(df, filename, method="pickle"):
 
 def custom_stuff():
     # TODO: Custom stuff should be done entirely in here
-    genome_files = list((p / args["custom"]).glob("*"))
+    genome_files = list((p / args.custom).glob("*"))
     genome_names = [gf.stem for gf in genome_files]
     return genome_names, genome_files
 
 
-def get_mash_dist(
-    genome_files: list[pathlib.Path], outputfile: pathlib.Path
-) -> pd.DataFrame:
+def get_mash_dist(genome_files: list[pathlib.Path]):
     # Generate a mash command for each row in the dataframe
     # mash_cmd = ("mash sketch " + true_col + " " + pred_col).str.split()
     # mash_cmd = ["mash sketch " + str(gfile) for gfile in genome_files]
-    msh_file = ""
-    mash_cmd = (
-        "mash sketch " + " ".join([i.name for i in p.glob("*")]) + "-o mash_all_genomes"
-    )
     # mash sketch *fna.gz -p 24 -o mash_all_genomes
+    # msh_file = ""
+    import shlex
 
-    # Popen will spawn all mash commands at once rather than wait for them to finish
-    distances, proc_list = [], []
-    for cmd in mash_cmd:
-        proc_list.append(
-            subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            )
+    # Generate sketch
+    sketch_file = genome_files[0].with_name("mash_all_genomes")
+    mash_cmd = shlex.split(
+        "mash sketch "
+        + " ".join([str(i) for i in genome_files])
+        + " -o "
+        + str(sketch_file)
+    )
+    subprocess.Popen(
+        mash_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    ).wait()
+
+    dist_file = sketch_file.with_name("mash_table.tsv")
+    with dist_file.open("w") as dtable:
+        dist_cmd = shlex.split(
+            "mash dist "
+            + str(sketch_file)
+            + ".msh "
+            + str(sketch_file)
+            + ".msh "
+            + "-t"
         )
-
-    # Collect results, grab 3rd to last column which is mash distance
-    for proc in proc_list:
-        stdout = proc.communicate()[0]
-        try:
-            distances.append(stdout.split()[-3])
-        except:
-            # Many panphlan_results results returned 0.000 abundance so append NaN and fill later
-            distances.append(np.nan)
-    return distances
-
-    # TODO - need to subproc call this lol
-    genome_files = pathlib.Path("/hdd/blah/lol/goodluck").glob("*")
-    call_list = ["mash", "sketch", "blah"].extend(genome_files)
-    subprocess.run(call_list)
-    # sysout2, sysexit2 = subprocess.run(['mash','dist','the sketch to itself',-o, outputfile])
-    mash_df = pd.read_csv(outputfile)
+        p = subprocess.Popen(
+            dist_cmd,
+            stdout=dtable,
+            stderr=subprocess.PIPE,
+        )
+        r = p.wait()
+    mash_df = pd.read_csv(dist_file, index_col=0, sep="\t")
+    # mash_df.columns = [pathlib.Path(f).name for f in mash_df.columns]
+    # mash_df.index = [pathlib.Path(f).name for f in mash_df.index]
+    # print(mash_df)
     return mash_df
 
 
@@ -536,8 +568,9 @@ def main():
     ### 1. Get the genomes files and names for the database
 
     # 1a. Custom route
-    if args["custom"]:  # Do custom build
-        sequence_ids, genome_files = custom_stuff()
+    if args.custom:  # Do custom build
+        genome_names, genome_files = custom_stuff()
+        accession_summary_file = None
 
     # 1b. NCBI - download route
     else:
@@ -548,43 +581,47 @@ def main():
         )
         genome_files = list(genomes_dir.glob("*fna.gz"))
 
-        if args["unique_taxid"]:  # Filter genome list if only unique taxids desired
+        if args.unique_taxid:  # Filter genome list if only unique taxids desired
             genome_files = unique_taxid_strains(accession_summary_file)
 
         # Run - Download
-        sequence_ids = get_genome_names(genome_files, accession_summary_file)
+        genome_names = get_genome_names(genome_files, accession_summary_file)
 
-    logger.info(sequence_ids)
+    logger.info(genome_names)
     logger.info(f"{len(genome_files)} genomes found.")
 
-    # TODO - Implement clustering
-    outputfile_for_mash = pathlib.Path("/hdd/hi/lol")
-
     ## 2. Build Database
-    clustering = False
-    if clustering:
-        mash_distance_table = get_mash_dist(genome_files, outputfile_for_mash)
+    if args.cluster:
+        o1path = args.out + "clusterreps.tsv"
+        o2path = args.out + "clustermembers.tsv"
+        mash_distance_table = get_mash_dist(genome_files)
         p2c, c2p, numclusties = cluster_strains(
-            mash_distance_table, ani_threshold=0.01, out1_path=None, out2_path=None
+            mash_distance_table,
+            ani_threshold=args.ani_cutoff,
+            out1_path=o1path,
+            out2_path=o2path,
         )
-        database = build_database2(p2c, c2p, numclusties)
+        database, cluster_ids = build_database2(p2c, c2p)
+        genome_names = get_genome_names(cluster_ids, accession_summary_file)
 
     else:
         database = build_database(genome_files)
 
-    df = build_df(database, sequence_ids)
+    df = build_df(database, genome_names)
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database)//1e6} MB")
-    logger.debug(f"Kmer-building complete, saving db as {args['out']+'.db'}.")
+    logger.debug(f"Kmer-building complete, saving db as {args.out+'.db'}.")
 
     ## 3. Save the results
-    pickle_df(df, args["out"])
+    pickle_df(df, args.out)
 
     return
 
 
 if __name__ == "__main__":
     p = pathlib.Path().cwd()
-    args = vars(get_args().parse_args())
+    # p = pathlib.Path("/media/mladen/kai/sarc/")  # .cwd()
+    args = get_args().parse_args()
+    print(args)
     main()
