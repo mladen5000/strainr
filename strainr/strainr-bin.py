@@ -4,9 +4,8 @@ import multiprocessing as mp
 import pathlib
 
 import pandas as pd
-from Bio import SeqIO
-
 import utils
+from Bio import SeqIO
 
 # from utils import _open
 

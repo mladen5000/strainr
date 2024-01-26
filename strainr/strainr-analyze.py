@@ -10,15 +10,15 @@ import pandas as pd
 
 
 # Dummy class for args
-class args():
+class args:
     procs: int
     mode: str
     input: list[pathlib.Path]
-    out: pathlib.Path 
+    out: pathlib.Path
 
 
 def separate_hits(
-    hitcounts: list[tuple[str, np.ndarray]]
+    hitcounts: list[tuple[str, np.ndarray]],
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     """
     Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
@@ -31,7 +31,6 @@ def separate_hits(
     ambig_hits: dict[str, np.ndarray] = {}
     none_hits: list[str] = []
     for read, hit_array in hitcounts:
-
         if np.all(hit_array == 0):
             none_hits.append(read)
 

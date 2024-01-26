@@ -1,8 +1,9 @@
-    from typing import ClassVar, Union
 import pathlib
-import pandas as pd
+from typing import ClassVar, Union
+
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 # CountVector = NDArray[Shape["*"], UInt8]
 CountVector = npt.NDArray(np.uint8)
@@ -64,4 +65,5 @@ class StrainDatabase:
 #     Calculate the data attributes and load the database
 #     Args: filepath (str): Location of the pickle file containing the database
 #     # global self.num_strain, self.strains_names, self.db
+#     """
 #     """

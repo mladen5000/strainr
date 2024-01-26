@@ -9,8 +9,6 @@ import time
 from collections import Counter, defaultdict
 from typing import Any, Generator
 
-
-import mpire
 import numpy as np
 import pandas as pd
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
@@ -207,7 +205,9 @@ def parallel_resolve(hits, prior, selection):
         raise ValueError("Must select a selection mode")
 
 
-def parallel_resolve_helper(ambig_hits, prior, selection="multinomial") -> tuple[dict, dict]:
+def parallel_resolve_helper(
+    ambig_hits, prior, selection="multinomial"
+) -> tuple[dict, dict]:
     """
     Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
 
@@ -222,14 +222,17 @@ def parallel_resolve_helper(ambig_hits, prior, selection="multinomial") -> tuple
     resolve_cores = max(1, args.procs // 4)
 
     with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())):
+        for read, outhits in zip(
+            ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())
+        ):
             new_clear[read] = outhits
 
     return new_clear, new_ambig
 
 
-
-def collect_reads(clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]) -> dict[str, Any]:
+def collect_reads(
+    clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
+) -> dict[str, Any]:
     """Assign the NA string to na and join all 3 dicts."""
     np.full(len(strains), 0.0)
     na = {k: "NA" for k in na_hits}
@@ -304,6 +307,7 @@ def display_relab(
 
     return choice_list
 
+
 def translate_strain_indices_to_names(counter_indices, strain_names):
     """
     Convert a dictionary or counter from {strain_index: hits} to {strain_name: hits}.
@@ -326,7 +330,9 @@ def translate_strain_indices_to_names(counter_indices, strain_names):
             try:
                 name_to_hits[strain_names[k_idx]] = v_hits
             except TypeError:
-                print(f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type.")
+                print(
+                    f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type."
+                )
                 print(f"The type is {type(k_idx)}")
     return Counter(name_to_hits)
 
@@ -355,13 +361,15 @@ def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
 
 # Function to make each counter into a pd.DataFrame
 def counter_to_pandas(relab_counter, column_name):
-    relab_df = pd.DataFrame.from_records(list(dict(relab_counter).items()), columns=["strain", column_name]).set_index(
-        "strain"
-    )
+    relab_df = pd.DataFrame.from_records(
+        list(dict(relab_counter).items()), columns=["strain", column_name]
+    ).set_index("strain")
     return relab_df
 
 
-def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.Path) -> pd.DataFrame:
+def output_results(
+    results: dict[str, int], strains: list[str], outdir: pathlib.Path
+) -> pd.DataFrame:
     """
     From {reads->strain_index} to {strain_name->rel. abundance}
     and returns a dataFrame.
@@ -387,7 +395,9 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
 
     final_threshab = threshold_by_relab(final_relab, threshold=args.thresh)
     final_threshab = normalize_counter(final_threshab, remove_na=True)
-    choice_strains = display_relab(final_threshab, template_string="Post-thresholding relative abundance")
+    choice_strains = display_relab(
+        final_threshab, template_string="Post-thresholding relative abundance"
+    )
 
     # Each abundance slice gets put into a df/series
     relab_columns = [
@@ -398,7 +408,9 @@ def output_results(results: dict[str, int], strains: list[str], outdir: pathlib.
     ]
 
     # Concatenate and sort
-    results_table = pd.concat(relab_columns, axis=1).sort_values(by="sample_hits", ascending=False)
+    results_table = pd.concat(relab_columns, axis=1).sort_values(
+        by="sample_hits", ascending=False
+    )
 
     results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
     return results_table.loc[choice_strains]
@@ -453,10 +465,8 @@ def main():
 
     clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
 
-    # 
-    
-    
-    
+    #
+
     nn
     # dict values are now single index
     assigned_clear = resolve_clear_hits(clear_hits)
@@ -473,7 +483,6 @@ def main():
         df_relabund = output_results(total_hits, strains, out)
         print(df_relabund[df_relabund["sample_hits"] > 0])
         print(f"Saving results to {out}")
-
 
 
 def save_read_spectra(strains: list[str], results_raw):

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+
 import mmh3
 
 
@@ -67,4 +68,5 @@ def get_kmers(sequence: SimpleSeq, k: int = 31) -> list[bytes]:
     """Main function to assign strain hits to reads"""
     max_index: int = len(sequence.seq) - k + 1
     with memoryview(sequence.seq) as kmer_view:
+        sequence.kmers = [kmer_view[index : index + k] for index in range(max_index)]  # type: ignore
         sequence.kmers = [kmer_view[index : index + k] for index in range(max_index)]  # type: ignore

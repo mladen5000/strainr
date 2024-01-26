@@ -1,5 +1,6 @@
 import dataclasses
 import pathlib
+
 from strainr.kmer_database import StrainDatabase
 
 
@@ -52,4 +53,5 @@ class Runner:
     #     if not out.exists():
     #         print(f"Input file:{fasta}")
     #         main()
+    #         print(f"Time for {fasta}: {time.time()-t0}")
     #         print(f"Time for {fasta}: {time.time()-t0}")
