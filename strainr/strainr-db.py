@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 
 import argparse
+import csv
 import gzip
 import logging
 import pathlib
 import pickle
 import subprocess
 import sys
-
-import csv
 from collections import defaultdict
 from functools import partial
 from mimetypes import guess_type
@@ -233,7 +232,6 @@ def download_strains():
 
 #     return list(genomedir.glob("*fna.gz")), accfile
 
-hi := 
 
 def cluster_strains(
     df: pd.DataFrame, ani_threshold=0.001, out1_path=None, out2_path=None
@@ -319,7 +317,7 @@ def build_database2(
     cluster_set = list({parent for parent in c2p.values()})
     cluster_set.sort()
     genomes = {fasta for fasta in c2p.keys()}
-    database = defaultdict(partial(np.zeros, len(cluster_set), dtype=bool))
+    database: dict = defaultdict(partial(np.zeros, len(cluster_set), dtype=bool))
 
     logger.debug(f"There are {len(cluster_set)} clusters and {len(genomes)} genomes")
     logger.info("Building database....")
@@ -379,9 +377,8 @@ def build_database(genomes: list, kmerlen: int = 31) -> dict[bytes, np.ndarray]:
     Note: No labels at this point, so order of genome list must be preserved.
     """
     idx = 0
-    database = defaultdict(partial(np.zeros, len(genomes), dtype=bool))
+    database: dict = defaultdict(partial(np.zeros, len(genomes), dtype=bool))
     logger.info("Building database....")
-    import mmh3 #test hashed kmers
     SEED = 432
 
     for genome_file in tqdm(genomes):
@@ -502,8 +499,6 @@ def pickle_db(database, fout):
 
 
 def pickle_df(df, filename, method="pickle"):
-
-
     outfile = args.out + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
@@ -579,6 +574,7 @@ def main():
             ngd_kwargs["output"],
             ngd_kwargs["metadata_table"],
         )
+        accession_summary_file: pathlib.Path
         genome_files = list(genomes_dir.glob("*fna.gz"))
 
         if args.unique_taxid:  # Filter genome list if only unique taxids desired

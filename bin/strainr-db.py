@@ -169,7 +169,9 @@ def download_strains():
         accession_summary = "summary_" + params["genus"] + ".tsv"
 
     else:
-        raise ValueError("Need to choose either taxid or provide an accession list from a file.")
+        raise ValueError(
+            "Need to choose either taxid or provide an accession list from a file."
+        )
 
     output_dir = p / output_dir
     accession_summary = p / output_dir / accession_summary
@@ -183,7 +185,9 @@ def download_strains():
     # Call ncbi-genome-download
     exitcode: int = ngd.download(**ncbi_kwargs)
     if exitcode != 0:
-        raise ConnectionError("ncbi-genome-download did not successfully download the genomes")
+        raise ConnectionError(
+            "ncbi-genome-download did not successfully download the genomes"
+        )
 
     return output_dir, accession_summary
 
@@ -248,7 +252,9 @@ def build_database(genome_files, sequence_names):
         _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
 
         with _open(genome_file) as g:
-            for record in SeqIO.parse(g, "fasta"):  # Include all subsequences under one label
+            for record in SeqIO.parse(
+                g, "fasta"
+            ):  # Include all subsequences under one label
                 max_index = len(record.seq) - kmerlen + 1
                 with memoryview(bytes(record.seq)) as seq_buffer:
                     for i in range(max_index):
@@ -275,7 +281,9 @@ def build_parallel(genome_file, genome_files, full_set):
     _open = partial(gzip.open, mode="rt") if encoding == "gzip" else open
 
     with _open(genome_file) as g:
-        for record in SeqIO.parse(g, "fasta"):  # Include all subsequences under one label
+        for record in SeqIO.parse(
+            g, "fasta"
+        ):  # Include all subsequences under one label
             max_index = len(record.seq) - kmerlen + 1
 
             with memoryview(bytes(record.seq)) as seq_buffer:
@@ -407,12 +415,6 @@ def main():
     logger.info(f"Database saved to {params['out']} ")
 
 
-if __name__ == "__main__":
-    p = pathlib.Path().cwd()
-    params = vars(get_args().parse_args())
-    main()
-
-
 def full_sort(db):
     """Sorts each list as well as the dict itself"""
 
@@ -460,3 +462,9 @@ def pickle_genome(metadata, kmerdir):
     with ppath.open("wb") as ph:
         pickle.dump(metadata, ph)
     return
+
+
+if __name__ == "__main__":
+    p = pathlib.Path().cwd()
+    params = vars(get_args().parse_args())
+    main()
