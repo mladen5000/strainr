@@ -5,7 +5,9 @@ import csv
 import gzip
 import logging
 import pathlib
+
 import pickle
+
 import subprocess
 import sys
 from collections import defaultdict
@@ -296,7 +298,7 @@ def cluster_strains(
 
 
 def build_database2(
-    p2c: dict[str, list], c2p: dict[str, str], kmerlen: int = 31
+    c2p: dict[str, str], kmerlen: int = 31
 ) -> tuple[dict[bytes, np.ndarray], list]:
     # TODO: Temporary function to incorporate clusters
     """
@@ -321,7 +323,7 @@ def build_database2(
 
     logger.debug(f"There are {len(cluster_set)} clusters and {len(genomes)} genomes")
     logger.info("Building database....")
-    logger.debug(f"the kmer length is {kmerlen}")
+    logger.debug("the kmer length is %s", kmerlen)
 
     """
         For each cluster,
