@@ -10,9 +10,9 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-# import os
-# import sys
-# sys.path.insert(0, os.path.abspath('.'))
+import os
+import sys
+sys.path.insert(0, os.path.abspath('../')) # Point to the project root
 
 
 # -- Project information -----------------------------------------------------
@@ -27,7 +27,42 @@ author = "Mladen Rasic"
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = []
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.napoleon',  # For Google-style docstrings
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.viewcode',
+]
+
+# Autodoc settings
+autodoc_default_options = {
+    'members': True,
+    'member-order': 'bysource',
+    'special-members': '__init__',
+    'undoc-members': True,
+    'exclude-members': '__weakref__'
+}
+
+# Napoleon settings for Google style docstrings
+napoleon_google_docstring = True
+napoleon_numpy_docstring = False # Not using NumPy style
+napoleon_include_init_with_doc = True
+napoleon_include_private_with_doc = False
+napoleon_include_special_with_doc = True
+napoleon_use_admonition_for_examples = False
+napoleon_use_admonition_for_notes = False
+napoleon_use_admonition_for_references = False
+napoleon_use_ivar = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+
+# Intersphinx mapping
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3', None),
+    'numpy': ('https://numpy.org/doc/stable/', None),
+    'pandas': ('https://pandas.pydata.org/pandas-docs/stable/', None),
+    'Bio': ('https://biopython.org/docs/latest/api/', None) # For BioPython
+}
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]

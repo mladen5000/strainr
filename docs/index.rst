@@ -1,16 +1,25 @@
-.. Strainr documentation master file, created by
-   sphinx-quickstart on Sat Mar 12 11:49:07 2022.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. Strainr documentation master file.
 
-Welcome to Strainr's documentation!
-===================================
+##################################
+StrainR Documentation
+##################################
+
+Welcome to StrainR's documentation!
+
+StrainR is a Python-based toolkit for k-mer based metagenomic classification.
+It assigns strain labels to DNA sequences by analyzing k-mer distributions
+against a custom-built database.
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
-
+   introduction
+   installation
+   usage
+   api_reference
+   contributing
+   license
 
 Indices and tables
 ==================
@@ -18,44 +27,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-$project
-========
-
-$project will solve your problem of where to start with documentation,
-by providing a basic explanation of how to do it easily.
-
-Look how easy it is to use:
-
-    import project
-    # Get your stuff done
-    project.do_stuff()
-
-Features
---------
-
-- Be awesome
-- Make things faster
-
-Installation
-------------
-
-Install $project by running:
-
-    install project
-
-Contribute
-----------
-
-- Issue Tracker: github.com/$project/$project/issues
-- Source Code: github.com/$project/$project
-
-Support
--------
-
-If you are having issues, please let us know.
-We have a mailing list located at: project@google-groups.com
-
-License
--------
-
-The project is licensed under the BSD license.

@@ -1,4 +1,22 @@
 #!/usr/bin/env python
+"""
+StrainR Pangenome Analysis Script.
+
+This script provides a workflow for k-mer based analysis of sequence reads,
+potentially with a focus on pangenome contexts (though the specific "pangenome"
+aspect isn't fully elaborated in the original functions beyond standard classification).
+
+It involves:
+1. Loading a k-mer database.
+2. Parsing input FASTQ/FASTA files (single or paired-end).
+3. Classifying reads by counting k-mer hits against the database.
+4. Analyzing classification results:
+    - Separating clear, ambiguous, and no-hit reads.
+    - Calculating priors from clear hits.
+    - Resolving ambiguous hits using various disambiguation strategies.
+    - Combining all assignments.
+5. Calculating and reporting strain abundances.
+"""
 
 import functools
 import multiprocessing as mp
@@ -6,538 +24,412 @@ import pathlib
 import pickle
 import random
 import time
+import logging # Added for logging
+import sys # Added for logging handler
+
 from collections import Counter, defaultdict
-from typing import Any, Generator
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, TextIO
 
 import numpy as np
 import pandas as pd
+from Bio import SeqIO # Used if FASTA parsing is kept separate
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
-from utils import _open
 
-from strainr.parameter_config import process_arguments
+# StrainR module imports
+from strainr.utils import open_file_transparently # Corrected import
+from strainr.kmer_database import KmerStrainDatabase
+from strainr.analyze import ClassificationAnalyzer
+from strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
 
-SETCHUNKSIZE = 10000
+# Argument parsing setup (assuming it returns an argparse-like namespace)
+from strainr.parameter_config import process_arguments # This will be used as is
 
+# --- Configuration ---
+SETCHUNKSIZE = 10000 # For multiprocessing map functions
 
-def count_kmers(seqrecord):
-    """Main function to assign strain hits to reads"""
-    max_index = len(seqrecord.seq) - kmerlen + 1
-    matched_kmer_strains = []
-    s = seqrecord.seq
-    with memoryview(bytes(s)) as seqview:
-        for i in range(max_index):
-            returned_strains = db.get(seqview[i : i + kmerlen])
-            if returned_strains is not None:
-                matched_kmer_strains.append(returned_strains)
-    return seqrecord, sum(matched_kmer_strains)
-
-
-def fast_count_kmers(seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
-    """Main function to assign strain hits to reads"""
-    matched_kmer_strains = []
-    na_zeros = np.zeros(len(strains), dtype=np.uint8)
-    max_index = len(seq) - kmerlen + 1
-    with memoryview(seq) as seqview:
-        for i in range(max_index):
-            returned_strains = db.get(seqview[i : i + kmerlen])
-            if returned_strains is not None:
-                matched_kmer_strains.append(returned_strains)
-    final_tally = sum(matched_kmer_strains)
-    if isinstance(final_tally, np.ndarray):
-        return seq_id, final_tally
-    else:
-        return seq_id, na_zeros
+# --- Logging Setup ---
+logger = logging.getLogger(__name__)
+# Ensure logging is configured if not already done by other modules or if this is a standalone entry point
+if not logger.hasHandlers(): # Check if handlers are already configured
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.FileHandler("strainr_pangenome.log"), logging.StreamHandler(sys.stdout)],
+    )
 
 
-def fast_count_kmers_mpire(db: dict, seq_id: str, seq: bytes) -> tuple[str, np.ndarray]:
-    """Main function to assign strain hits to reads"""
-    # import mmh3
-    matched_kmer_strains = []
-    na_zeros = np.full(len(strains), 0)
-    max_index = len(str(seq)) - kmerlen + 1
-    with memoryview(seq) as seqview:
-        for i in range(max_index):
-            returned_strains = db.get(seqview[i : i + kmerlen])
-            # returned_strains = db.get(mmh3.hash(bytes(seqview[i : i + kmerlen]), signed=False, seed=SEED))
-            if returned_strains is not None:
-                matched_kmer_strains.append(returned_strains)
-    final_tally = sum(matched_kmer_strains)
-    if isinstance(final_tally, np.ndarray):
-        return seq_id, final_tally
-    else:
-        return seq_id, na_zeros
-
-
-def fast_count_kmers_helper(seqtuple: tuple[str, bytes]):
-    return fast_count_kmers(*seqtuple)
-
-
-def FastqEncodedGenerator(inputfile: pathlib.Path) -> Generator:
+class PangenomeAnalysisWorkflow:
     """
-    Generate an updated generator expression, but without quality scores, and encodes sequences.
-    This is a test to see if the linter will catch
+    Orchestrates the pangenome analysis workflow.
+
+    This class encapsulates database loading, read processing, k-mer classification,
+    statistical analysis of hits, and abundance reporting.
     """
-    with _open(inputfile) as f:
-        for seq_id, seq, _ in FastqGeneralIterator(f):
-            yield seq_id, bytes(seq, "utf-8")
+
+    UNASSIGNED_READ_MARKER = "NA" # Marker for unassigned reads
+
+    def __init__(self, args: Any) -> None: # args type depends on process_arguments
+        """
+        Initializes the PangenomeAnalysisWorkflow.
+
+        Args:
+            args: Command-line arguments, typically an `argparse.Namespace`
+                  or a Pydantic model if `process_arguments` was refactored.
+                  Expected to have attributes like `db` (db_path), `procs`,
+                  `mode` (disambiguation_mode), `thresh` (abundance_threshold),
+                  `input` (input_files), `out` (output_dir), `save_raw_hits`.
+        """
+        logger.info("Initializing PangenomeAnalysisWorkflow.")
+        self.args = args
+        self.database: Optional[KmerStrainDatabase] = None
+        self.analyzer: Optional[ClassificationAnalyzer] = None
+        
+        # Ensure output directory exists
+        self.output_dir: pathlib.Path = pathlib.Path(self.args.out)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize RNG for methods that might need it (e.g., certain disambiguation modes)
+        # This rng is specific to this workflow instance if needed locally,
+        # ClassificationAnalyzer also has its own.
+        self.rng = np.random.default_rng()
 
 
-def classify(input_file: pathlib.Path) -> list[tuple[str, np.ndarray]]:
-    """Call multiprocessing library to lookup k-mers."""
-    t0 = time.time()
-    nreads = int(sum(1 for i in open(input_file, "rb")) / 4)
-    print(f"Reads: {nreads}")
-
-    # From 3-item generator to 2-item generator
-    record_iter = (r for r in FastqEncodedGenerator(input_file))
-
-    # Generate k-mers, lookup strain spectra in db, return sequence scores
-    # with mpire.WorkerPool(n_jobs=args.procs, shared_objects=db) as pool:
-    #     results = list(
-    #         pool.imap_unordered(
-    #             fast_count_kmers_mpire,
-    #             record_iter,
-    #             iterable_len=nreads,
-    #             progress_bar=True,
-    #         )
-    #     )
-
-    with mp.Pool(processes=args.procs) as pool:
-        results = list(
-            pool.imap_unordered(
-                fast_count_kmers_helper, record_iter, chunksize=SETCHUNKSIZE
-            )
+    def _initialize_database(self) -> None:
+        """Loads the k-mer database using KmerStrainDatabase."""
+        logger.info(f"Loading k-mer database from: {self.args.db}")
+        self.database = KmerStrainDatabase(database_filepath=self.args.db)
+        logger.info(
+            f"Database loaded: {self.database.num_kmers} k-mers, "
+            f"{self.database.num_strains} strains, k-mer length {self.database.kmer_length}."
+        )
+        # Initialize ClassificationAnalyzer once the database (and thus strain names) is available
+        self.analyzer = ClassificationAnalyzer(
+            strain_names=self.database.strain_names,
+            disambiguation_mode=self.args.mode,
+            # abundance_threshold is not used by analyzer, but by local output functions
+            num_processes=self.args.procs 
         )
 
-    print(f"Ending classification: {time.time() - t0}s")
-    return results
+    def _parse_fastq_sequences(
+        self, fastq_file_path: pathlib.Path
+    ) -> Generator[Tuple[ReadId, bytes], None, None]:
+        """
+        Parses a FASTQ file and yields read IDs and their sequences as bytes.
+        Uses `open_file_transparently` for potentially gzipped files.
+
+        Args:
+            fastq_file_path: Path to the input FASTQ file.
+
+        Yields:
+            Tuples of (ReadId, sequence_bytes).
+        """
+        logger.info(f"Parsing FASTQ file: {fastq_file_path}")
+        with open_file_transparently(fastq_file_path) as file_handle:
+            for read_id, sequence_str, _ in FastqGeneralIterator(file_handle):
+                yield read_id, sequence_str.encode("utf-8") # Ensure bytes
+
+    def _count_kmers_for_read(
+        self, read_data: Tuple[ReadId, bytes]
+    ) -> Tuple[ReadId, CountVector]:
+        """
+        Counts k-mer occurrences for a single read against the loaded database.
+
+        Args:
+            read_data: A tuple containing (ReadId, sequence_bytes).
+
+        Returns:
+            A tuple (ReadId, CountVector) for the read.
+        """
+        if self.database is None:
+            raise RuntimeError("Database not initialized prior to k-mer counting.")
+
+        read_id, seq_bytes = read_data
+        read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
+
+        if len(seq_bytes) < self.database.kmer_length:
+            return read_id, read_strain_counts # Sequence too short
+
+        with memoryview(seq_bytes) as seq_view:
+            for i in range(len(seq_bytes) - self.database.kmer_length + 1):
+                kmer: bytes = seq_view[i : i + self.database.kmer_length].tobytes()
+                strain_counts_for_kmer = self.database.get_strain_counts_for_kmer(kmer)
+                if strain_counts_for_kmer is not None:
+                    read_strain_counts += strain_counts_for_kmer
+        return read_id, read_strain_counts
+
+    def _classify_reads_in_file(self, fastq_file_path: pathlib.Path) -> ReadHitResults:
+        """
+        Classifies all reads in a FASTQ file using multiprocessing.
+
+        Args:
+            fastq_file_path: Path to the input FASTQ file.
+
+        Returns:
+            A list of (ReadId, CountVector) tuples.
+        """
+        start_time = time.time()
+        logger.info(f"Starting classification for {fastq_file_path}...")
+
+        # Count reads for progress (can be slow for large gzipped files)
+        # n_reads = 0
+        # with open_file_transparently(fastq_file_path) as f_count:
+        #     for _ in FastqGeneralIterator(f_count):
+        #         n_reads +=1
+        # logger.info(f"Processing approximately {n_reads} reads from {fastq_file_path}.")
+        # Decided to remove read counting for performance, can be added back if progress is essential
+
+        sequence_iterator = self._parse_fastq_sequences(fastq_file_path)
+        
+        results: ReadHitResults
+        with mp.Pool(processes=self.args.procs) as pool:
+            results = pool.map(
+                self._count_kmers_for_read,
+                sequence_iterator,
+                chunksize=SETCHUNKSIZE
+            )
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Classification of {fastq_file_path} finished in {elapsed_time:.2f}s. Classified {len(results)} reads.")
+        return results
+
+    def _save_raw_kmer_spectra(self, raw_hit_results: ReadHitResults, sample_name: str) -> None:
+        """Saves raw k-mer hit spectra (CountVectors per read) to a pickle file."""
+        if self.database is None: raise RuntimeError("Database not initialized.")
+        
+        spectra_output_dir = self.output_dir / "kmer_spectra"
+        spectra_output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = spectra_output_dir / f"{sample_name}_raw_kmer_spectra.pkl"
+        
+        # Structure to save: dict of read_id -> CountVector
+        # And also save strain names for context
+        data_to_save = {
+            "strain_names": self.database.strain_names,
+            "read_spectra": dict(raw_hit_results)
+        }
+        
+        with output_file.open("wb") as pf:
+            pickle.dump(data_to_save, pf)
+        logger.info(f"Raw k-mer spectra saved to: {output_file}")
 
 
-def separate_hits(
-    hitcounts: list[tuple[str, np.ndarray]],
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
-    """
-    Return maps of reads with 1 (clear), multiple (ambiguous), or no signal.
+    # --- Abundance Calculation and Output (Refactored In-Place) ---
+    def _output_abundance_results(
+        self,
+        final_assignments: Dict[ReadId, Union[StrainIndex, str]], # From ClassificationAnalyzer
+        sample_name: str
+    ) -> pd.DataFrame:
+        """
+        Calculates abundances and generates output files and console display.
+        This method consolidates the logic from the original script's output functions.
 
-    "Positions in the array correspond to bins for each strain, so we search
-    for maxima along the vector, single max providing single strain evidence,
-    multiple maxima as ambiguous, NA as NA, etc.
-    """
-    clear_hits: dict[str, np.ndarray] = {}
-    ambig_hits: dict[str, np.ndarray] = {}
-    core_reads: dict[str, np.ndarray] = {}
-    none_hits: list[str] = []
-    for read, hit_array in hitcounts:
-        if np.all(hit_array == 0):
-            none_hits.append(read)
+        Args:
+            final_assignments: Dictionary mapping ReadId to assigned StrainIndex or "NA".
+            sample_name: Name of the sample being processed, for output file naming.
 
-        else:  # Find all max values and check for mulitiple maxima within the same array
-            max_indices = np.argwhere(hit_array == np.max(hit_array)).flatten()
+        Returns:
+            A Pandas DataFrame containing the abundance report.
+        """
+        if self.database is None or self.analyzer is None:
+            raise RuntimeError("Database or Analyzer not initialized before outputting results.")
 
-            if len(max_indices) == 1:  # Single max
-                clear_hits[read] = hit_array
-
-            elif len(max_indices) == len(hit_array):
-                # print("Mladen is testing at 3am")
-                # print(hit_array)
-                core_reads[read] = hit_array
-
-            elif len(max_indices) > 1 and sum(hit_array) > 0:
-                ambig_hits[read] = hit_array
-
-            else:
-                raise Exception("This shouldnt occcur")
-
-    print(f"Reads with likely assignment to a single strain: {len(clear_hits)}")
-    print(f"Reads with multiple likely candidates: {len(ambig_hits)}")
-    print(f"Reads with no hits to any reference genomes: {len(none_hits)}")
-    print(f"Core reads: {len(core_reads)}")
-    return clear_hits, ambig_hits, none_hits
+        # 1. Translate final assignments (indices/"NA") to strain names
+        # This is a bit redundant if final_assignments already contains names for assigned,
+        # but ensures "NA" and indices are handled correctly.
+        named_assignments: Dict[ReadId, str] = {}
+        for read_id, assignment in final_assignments.items():
+            if isinstance(assignment, int): # StrainIndex
+                if 0 <= assignment < len(self.database.strain_names):
+                    named_assignments[read_id] = self.database.strain_names[assignment]
+                else: # Should not happen if analyzer works correctly
+                    named_assignments[read_id] = self.UNASSIGNED_READ_MARKER 
+            else: # It's a string, should be self.UNASSIGNED_READ_MARKER
+                named_assignments[read_id] = str(assignment)
+        
+        # 2. Calculate hit counts per strain name
+        hit_counts: Counter[str] = Counter(named_assignments.values())
+        for s_name in self.database.strain_names: # Ensure all strains are present
+            hit_counts.setdefault(s_name, 0)
+        hit_counts.setdefault(self.UNASSIGNED_READ_MARKER, 0)
 
 
-def prior_counter(clear_hits: dict[str, int]) -> Counter[int]:
-    """Aggregate the values which are indices corresponding to strain names"""
-    return Counter(clear_hits.values())
+        # 3. Calculate sample relative abundance (normalized by all reads, including NA)
+        total_reads_for_sample_relab = sum(hit_counts.values())
+        sample_relab: Dict[str, float] = {
+            name: count / total_reads_for_sample_relab if total_reads_for_sample_relab > 0 else 0.0
+            for name, count in hit_counts.items()
+        }
 
+        # 4. Calculate intra-sample relative abundance (normalized by assigned reads, post-threshold)
+        # Strains below threshold are excluded from this normalization base.
+        counts_for_intra_relab = Counter()
+        for strain_name, rel_ab in sample_relab.items():
+            if strain_name != self.UNASSIGNED_READ_MARKER and rel_ab >= self.args.thresh:
+                counts_for_intra_relab[strain_name] = hit_counts[strain_name]
+        
+        total_hits_for_intra_relab = sum(counts_for_intra_relab.values())
+        intra_relab: Dict[str, float] = {
+            name: count / total_hits_for_intra_relab if total_hits_for_intra_relab > 0 else 0.0
+            for name, count in counts_for_intra_relab.items()
+        }
+        # Ensure all original strains are in intra_relab dict, with 0 if they didn't pass
+        for s_name in self.database.strain_names:
+            intra_relab.setdefault(s_name, 0.0)
+        intra_relab.setdefault(self.UNASSIGNED_READ_MARKER, 0.0) # NA has 0 intra-sample relab
 
-def counter_to_array(prior_counter: Counter[int], nstrains: int) -> np.ndarray:
-    """
-    Aggregate signals from reads with singular
-    maximums and return a vector of probabilities for each strain
-    """
-    prior_array = np.zeros(nstrains)
-    total = sum(prior_counter.values())
-    for k, v in prior_counter.items():
-        prior_array[k] = v / total
+        # 5. Create DataFrame
+        report_data = []
+        # Ensure order: known strains first, then "NA"
+        ordered_strain_names_for_report = self.database.strain_names + [self.UNASSIGNED_READ_MARKER]
+        
+        for strain_name in ordered_strain_names_for_report:
+            if strain_name not in hit_counts: continue # Skip if a name (e.g. NA) had no hits at all
 
-    prior_array[prior_array == 0] = 1e-20
-    return prior_array
-
-
-def parallel_resolve(hits, prior, selection):
-    """Call the resolution for parallel option selection.
-
-    Main function called by helper for parallel disambiguation"""
-    # Treshold at max
-    belowmax = hits < np.max(hits)
-    hits[belowmax] = 0
-    mlehits = hits * prior  # Apply prior
-
-    if selection == "random":  # Weighted assignment
-        return random.choices(
-            range(len(hits)),
-            weights=mlehits,
-            k=1,
-        ).pop()
-
-    elif selection == "max":  # Maximum Likelihood assignment
-        return np.argmax(mlehits)
-
-    elif selection == "dirichlet":  # Dirichlet assignment
-        mlehits[mlehits == 0] = 1e-10
-        return np.argmax(rng.dirichlet(mlehits, 1))
-
-    elif selection == "multinomial":  # Multinomial
-        mlehits[mlehits == 0] = 1e-10
-        return np.argmax(rng.multinomial(1, mlehits / sum(mlehits)))
-
-    else:
-        raise ValueError("Must select a selection mode")
-
-
-def parallel_resolve_helper(
-    ambig_hits, prior, selection="multinomial"
-) -> tuple[dict, dict]:
-    """
-    Assign a strain to reads with ambiguous k-mer signals by maximum likelihood.
-
-    Currently 3 options: random, max,
-    and dirichlet. (dirichlet is slow and performs similar to random)
-    For all 3, threshold spectra to only include
-    maxima, multiply w/ prior.
-    """
-    new_clear, new_ambig = {}, {}
-    mapfunc = functools.partial(parallel_resolve, prior=prior, selection=selection)
-
-    resolve_cores = max(1, args.procs // 4)
-
-    with mp.Pool(processes=resolve_cores) as pool:
-        for read, outhits in zip(
-            ambig_hits.keys(), pool.map(mapfunc, ambig_hits.values())
-        ):
-            new_clear[read] = outhits
-
-    return new_clear, new_ambig
-
-
-def collect_reads(
-    clear_hits: dict[str, int], updated_hits: dict[str, int], na_hits: list[str]
-) -> dict[str, Any]:
-    """Assign the NA string to na and join all 3 dicts."""
-    np.full(len(strains), 0.0)
-    na = {k: "NA" for k in na_hits}
-    all_dict = clear_hits | updated_hits | na
-    print(len(all_dict), len(clear_hits), len(updated_hits), len(na_hits))
-    # assert len(all_dict) == len(clear_hits) +
-    # len(updated_hits) + len(na_hits)
-    return all_dict
-
-
-def resolve_clear_hits(clear_hits) -> dict[str, int]:
-    """
-    INPUT: Reads whose arrays contain singular maxima - clear hits
-    OUTPUT: The index/strain corresponding to the maximum value
-    Replace numpy array with index"""
-    return {k: int(np.argmax(v)) for k, v in clear_hits.items()}
-
-
-def normalize_counter(acounter: Counter, remove_na=False) -> Counter[Any]:
-    """Regardless of key type, return values that sum to 1."""
-    if remove_na:
-        acounter.pop("NA", None)
-    total_counts = sum(acounter.values())
-    norm_counter = Counter({k: v / total_counts for k, v in acounter.items()})
-    return norm_counter
-
-
-def threshold_by_relab(norm_counter_all, threshold=0.02):
-    """
-    Given a percentage cutoff [threshold], remove strains
-    which do not meet the criteria and recalculate relab.
-    """
-    thresh_counter = {}
-    for k, v in norm_counter_all.items():
-        if v > threshold:
-            thresh_counter[k] = v
+            report_data.append({
+                "strain_name": strain_name,
+                "sample_hits": hit_counts.get(strain_name, 0),
+                "sample_relab": sample_relab.get(strain_name, 0.0),
+                "intra_relab": intra_relab.get(strain_name, 0.0) if strain_name != self.UNASSIGNED_READ_MARKER else 0.0,
+            })
+        
+        abundance_df = pd.DataFrame(report_data).set_index("strain_name")
+        # Sort by sample_hits, ensuring NA is last if present
+        if self.UNASSIGNED_READ_MARKER in abundance_df.index:
+            df_assigned = abundance_df.drop(self.UNASSIGNED_READ_MARKER).sort_values(by="sample_hits", ascending=False)
+            df_unassigned = abundance_df.loc[[self.UNASSIGNED_READ_MARKER]]
+            abundance_df_sorted = pd.concat([df_assigned, df_unassigned])
         else:
-            thresh_counter[k] = 0.0
-    # thresh_results = Counter({k: v for k, v in norm_counter_all.items() if v > threshold})
-    # if thresh_results["NA"]:
-    #     thresh_results.pop("NA")
-    return Counter(thresh_counter)
-    # return normalize_counter(Counter(thresh_counter),remove_na=True)
+            abundance_df_sorted = abundance_df.sort_values(by="sample_hits", ascending=False)
+
+        # Save to TSV
+        output_tsv_path = self.output_dir / f"{sample_name}_abundance.tsv"
+        abundance_df_sorted.to_csv(output_tsv_path, sep="\t", float_format="%.6f")
+        logger.info(f"Abundance report for {sample_name} saved to: {output_tsv_path}")
+
+        # 6. Display to console
+        self._display_console_report(abundance_df_sorted, sample_name)
+        
+        return abundance_df_sorted
+
+    def _display_console_report(self, abundance_df: pd.DataFrame, sample_name: str, top_n: int = 10) -> None:
+        """Displays a formatted abundance report to the console."""
+        logger.info(f"Displaying abundance summary for {sample_name}:")
+        print(f"\n--- Top {top_n} Strain Abundances for Sample: {sample_name} ---")
+        
+        # Filter out zero abundances for display unless it's the Unassigned category
+        df_display = abundance_df[
+            (abundance_df["sample_hits"] > 0) | (abundance_df.index == self.UNASSIGNED_READ_MARKER)
+        ]
+
+        # Separate Unassigned for specific display
+        unassigned_info_str = ""
+        if self.UNASSIGNED_READ_MARKER in df_display.index:
+            unassigned_row = df_display.loc[self.UNASSIGNED_READ_MARKER]
+            unassigned_info_str = (
+                f"{self.UNASSIGNED_READ_MARKER:<30} "
+                f"{int(unassigned_row['sample_hits']):<12} "
+                f"{unassigned_row['sample_relab']:.4f}"
+            ) # intra_relab for Unassigned is typically 0 or not meaningful
+            df_display = df_display.drop(index=self.UNASSIGNED_READ_MARKER)
+
+        # Display header
+        print(f"{'Strain Name':<30} {'Sample Hits':<12} {'Sample RelAb':<12} {'Intra-Sample RelAb':<18}")
+        print("-" * 75)
+
+        for strain_name, row_data in df_display.head(top_n).iterrows():
+            print(
+                f"{str(strain_name):<30} "
+                f"{int(row_data['sample_hits']):<12} "
+                f"{row_data['sample_relab']:.4f}           " # Align
+                f"{row_data['intra_relab']:.4f}"
+            )
+        
+        if unassigned_info_str:
+            print("-" * 75)
+            print(unassigned_info_str)
+        print("--- End of Report ---")
 
 
-def display_relab(
-    acounter: Counter,
-    nstrains: int = 10,
-    template_string: str = "",
-    display_na=True,
-):
-    """
-    Pretty print for counters:
-    Can work with either indices or names
-    """
-    print(f"\n\n{template_string}\n")
+    def run(self) -> None:
+        """
+        Main execution method for the pangenome analysis workflow.
+        """
+        logger.info("Pangenome analysis workflow started.")
+        self._initialize_database()
+        if self.database is None or self.analyzer is None: # Should have been initialized
+            logger.critical("Database or Analyzer initialization failed. Exiting.")
+            sys.exit(1)
 
-    choice_list = []
-    for strain, abund in acounter.most_common(n=nstrains):
-        if isinstance(strain, int):
-            s_index = strain  # for clarity
-            if abund > 0.0:
-                print(f"{abund}\t{strains[s_index]}")
-                choice_list.append(strains[s_index])
-        elif isinstance(strain, str) and strain != "NA":
-            if abund > 0.0:
-                print(f"{abund}\t{strain}")
-                choice_list.append(strain)
+        # Assuming args.input is a list of forward read files from process_arguments
+        # This part needs to align with how process_arguments structures 'input'
+        # If it's a single file, wrap it in a list for iteration
+        input_files_fwd = self.args.input
+        if not isinstance(input_files_fwd, list):
+            input_files_fwd = [input_files_fwd]
+        
+        # Paired-end logic needs corresponding reverse files if provided by process_arguments
+        # For simplicity, this example assumes single-end or that pairing is handled by process_arguments
+        # and `input_files_fwd` would contain tuples or be processed accordingly.
+        # The original script had `args.input.reverse()` and then iterated.
+        # Here, we'll iterate through what `process_arguments` gives.
 
-    if display_na and acounter["NA"] > 0.0:
-        print(f"{acounter['NA']}\tNA\n")
+        for fwd_fastq_path_str in input_files_fwd:
+            fwd_fastq_path = pathlib.Path(fwd_fastq_path_str) # Ensure it's a Path object
+            sample_name = fwd_fastq_path.name.split('_R1')[0].split('.')[0] # Basic sample naming from fwd read
+            logger.info(f"Processing sample: {sample_name} (File: {fwd_fastq_path.name})")
 
-    return choice_list
+            # This script doesn't explicitly handle paired-end reads in its main loop structure.
+            # The _classify_reads_in_file and _parse_fastq_sequences can, but the loop here is simple.
+            # If paired-end is a use case, argument parsing and file iteration need adjustment.
+            
+            # 1. Classify reads
+            raw_kmer_hits: ReadHitResults = self._classify_reads_in_file(fwd_fastq_path)
 
+            if not raw_kmer_hits:
+                logger.warning(f"No reads classified for {sample_name}. Skipping further analysis for this sample.")
+                continue
 
-def translate_strain_indices_to_names(counter_indices, strain_names):
-    """
-    Convert a dictionary or counter from {strain_index: hits} to {strain_name: hits}.
+            # 2. Optionally save raw k-mer spectra (CountVectors per read)
+            if self.args.save_raw_hits: # Assuming `save_raw_hits` is an arg
+                self._save_raw_kmer_spectra(raw_kmer_hits, sample_name)
 
-    Args:
-        counter_indices (dict or Counter): The dictionary or counter containing strain indices as keys and hits as values.
-        strain_names (list): The list of strain names corresponding to the indices.
+            # 3. Analyze classification results using ClassificationAnalyzer
+            clear_hits_vec, ambiguous_hits_vec, no_hit_ids = \
+                self.analyzer.separate_hit_categories(raw_kmer_hits)
+            
+            clear_assignments_idx = self.analyzer.resolve_clear_hits_to_indices(clear_hits_vec)
+            
+            prior_counts = self.analyzer.calculate_strain_prior_from_assignments(clear_assignments_idx)
+            prior_prob_vector = self.analyzer.convert_prior_counts_to_probability_vector(prior_counts)
+            
+            resolved_ambiguous_idx = self.analyzer.resolve_ambiguous_hits_parallel(
+                ambiguous_hits_vec, prior_prob_vector
+            )
+            
+            final_assignments: Dict[ReadId, Union[StrainIndex, str]] = self.analyzer.combine_assignments(
+                clear_assignments_idx,
+                resolved_ambiguous_idx,
+                no_hit_ids,
+                unassigned_marker=self.UNASSIGNED_READ_MARKER 
+            )
+            
+            # 4. Output abundance results
+            self._output_abundance_results(final_assignments, sample_name)
 
-    Returns:
-        Counter: The converted counter with strain names as keys and hits as values.
-    """
-    name_to_hits = {}
-    for k_idx, v_hits in counter_indices.items():
-        if k_idx != "NA" and isinstance(k_idx, int):
-            name_to_hits[strain_names[k_idx]] = v_hits
-        elif k_idx == "NA":
-            continue
-            # name_to_hits['NA'] = v_hits
-        else:
-            try:
-                name_to_hits[strain_names[k_idx]] = v_hits
-            except TypeError:
-                print(
-                    f"The value from either {k_idx} or {strain_names[k_idx]} is not the correct type."
-                )
-                print(f"The type is {type(k_idx)}")
-    return Counter(name_to_hits)
-
-
-def add_missing_strains(strain_names: list[str], final_hits: Counter[str]):
-    """
-    Provides a counter that has all the strains with 0 hits for completeness
-
-    Args:
-        strain_names (list[str]): List of strain names
-        final_hits (Counter[str]): Counter object containing the hits for each strain
-
-    Returns:
-        Counter[str]: Counter object with all the strains, including those with 0 hits
-    # Implementation code goes here
-
-    Returns:
-        Counter: Counter object with all the strains, including those with 0 hits
-    """
-    full_strain_relab: defaultdict = defaultdict(float)
-    for strain in strain_names:
-        full_strain_relab[strain] = final_hits[strain]
-    full_strain_relab["NA"] = final_hits["NA"]
-    return Counter(full_strain_relab)
-
-
-# Function to make each counter into a pd.DataFrame
-def counter_to_pandas(relab_counter, column_name):
-    relab_df = pd.DataFrame.from_records(
-        list(dict(relab_counter).items()), columns=["strain", column_name]
-    ).set_index("strain")
-    return relab_df
-
-
-def output_results(
-    results: dict[str, int], strains: list[str], outdir: pathlib.Path
-) -> pd.DataFrame:
-    """
-    From {reads->strain_index} to {strain_name->rel. abundance}
-    and returns a dataFrame.
-
-    Args:
-        results (dict[str, int]): A dictionary mapping reads to strain indices.
-        strains (list[str]): A list of strain names.
-        outdir (pathlib.Path): The output directory.
-
-    Returns:
-        pd.DataFrame: The resulting DataFrame containing strain names and relative abundances.
-    """
-    outdir.mkdir(parents=True, exist_ok=True)  # todo
-
-    # Transform hit counts to rel. abundance through counters, and fetch name mappings.
-    index_hits = Counter(results.values())
-    name_hits: Counter[str] = translate_strain_indices_to_names(index_hits, strains)
-    full_name_hits: Counter[str] = add_missing_strains(strains, name_hits)
-    display_relab(full_name_hits, template_string="Overall hits")
-
-    final_relab: Counter[str] = normalize_counter(full_name_hits, remove_na=False)
-    display_relab(final_relab, template_string="Initial relative abundance ")
-
-    final_threshab = threshold_by_relab(final_relab, threshold=args.thresh)
-    final_threshab = normalize_counter(final_threshab, remove_na=True)
-    choice_strains = display_relab(
-        final_threshab, template_string="Post-thresholding relative abundance"
-    )
-
-    # Each abundance slice gets put into a df/series
-    relab_columns = [
-        counter_to_pandas(full_name_hits, "sample_hits"),
-        # this should include NA
-        counter_to_pandas(final_relab, "sample_relab"),
-        counter_to_pandas(final_threshab, "intra_relab"),
-    ]
-
-    # Concatenate and sort
-    results_table = pd.concat(relab_columns, axis=1).sort_values(
-        by="sample_hits", ascending=False
-    )
-
-    results_table.to_csv((outdir / "abundance.tsv"), sep="\t")
-    return results_table.loc[choice_strains]
-
-
-def build_database(dbpath):
-    """
-    Build a database from a compressed dataframe.
-
-    Parameters:
-    dbpath (str): The path to the compressed dataframe.
-
-    Returns:
-    tuple: A tuple containing the database, strains, and kmer length.
-
-    Raises:
-    AssertionError: If the length of any kmer in the dataframe is not equal to kmerlen.
-    """
-    print("Loading Database.")
-
-    global kmerlen, strains, db
-    df = pd.read_pickle(dbpath)
-    # kmerlen = len(df.index[0])
-    kmerlen = 31
-    strains = list(df.columns)
-
-    # Convert to dictionary
-    db = dict(zip(df.index, df.to_numpy()))
-
-    # assert all(df.index.str.len() == kmerlen)  # Check all kmers
-    print(f"Database of {len(strains)} strains loaded")
-    return db, strains, kmerlen
-
-
-def main():
-    """
-    Execute main loop.
-    1. Classify
-    2. Generate Initial Abundance estimate
-    3. Reclassify ambiguous
-    4. Collect reads for abundance
-    5. Normalize, threshold, re-normalize
-    6. Output
-    """
-    # Build
-    results_raw: list[tuple[str, np.ndarray]] = classify(fasta)
-
-    # TODO
-    save_raw = True
-    if save_raw:
-        save_read_spectra(strains, results_raw)
-
-    clear_hits, ambig_hits, na_hits = separate_hits(results_raw)
-
-    #
-
-    nn
-    # dict values are now single index
-    assigned_clear = resolve_clear_hits(clear_hits)
-    cprior = prior_counter(assigned_clear)
-    display_relab(normalize_counter(cprior), template_string="Prior Estimate")
-
-    # Finalize
-    prior = counter_to_array(cprior, len(strains))  # counter to vector
-    new_clear, _ = parallel_resolve_helper(ambig_hits, prior, args.mode)
-    total_hits: dict = collect_reads(assigned_clear, new_clear, na_hits)
-
-    # Output
-    if out:
-        df_relabund = output_results(total_hits, strains, out)
-        print(df_relabund[df_relabund["sample_hits"] > 0])
-        print(f"Saving results to {out}")
-
-
-def save_read_spectra(strains: list[str], results_raw):
-    """Pickles the raw results from the k-mer db lookup"""
-    import pickle
-
-    # TODO - useful elsewhere
-    # df = pd.DataFrame.from_dict(dict(results_raw),orient=index,columns=strains)
-    df = pd.DataFrame(results_raw)
-    print(df.head())
-    out.mkdir(parents=True, exist_ok=True)  # todo
-    output_file = pathlib.Path(out.parent / "raw_scores.pkl")
-    with output_file.open("wb") as pf:
-<<<<<<< HEAD:strainr/strainr-classify.py
-        pickle.dump(results_raw, pf)  # , file=pf, protocol=pickle.HIGHEST_PROTOCOL)
-=======
-        pickle.dump(results_raw, pf) #, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
->>>>>>> 5c49409 (Add strainr-pangenome script and associated functionalities):strainr/strainr-pangenome.py
-        # pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
-    return
+        logger.info("Pangenome analysis workflow finished.")
 
 
 if __name__ == "__main__":
-    args = process_arguments.parse_args()
-    db, strains, kmerlen = build_database(args.db)
-    p = pathlib.Path().cwd()
-    rng = np.random.default_rng()
-    print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
-    args.input.reverse()
-    for in_fasta in args.input:
-        t0 = time.time()
-        fasta = pathlib.Path(in_fasta)
-        out: pathlib.Path = args.out / str(fasta.stem)
-        if not out.exists():
-            print(f"Input file:{fasta}")
-            main()
-            print(f"Time for {fasta}: {time.time()-t0}")
-<<<<<<< HEAD:strainr/strainr-classify.py
-
-
-# if __name__ == "__main__":
-#     p = pathlib.Path().cwd()
-#     rng = np.random.default_rng()
-
-#     args = get_args().parse_args()
-#     db, strains, kmerlen = build_database(args.db)
-#     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
-
-#     for in_fasta in args.input:
-#         t0 = time.time()
-#         fasta = pathlib.Path(in_fasta)
-#         out = args.out / str(fasta.stem)
-#         if not out.exists():
-#             print(f"Input file:{fasta}")
-#             main()
-#             print(f"Time for {fasta}: {time.time()-t0}")
-=======
->>>>>>> 5c49409 (Add strainr-pangenome script and associated functionalities):strainr/strainr-pangenome.py
+    logger.info("StrainR Pangenome Script Started.")
+    
+    # Parse arguments using the function from strainr.parameter_config
+    # This assumes process_arguments.parse_args() returns an object
+    # compatible with PangenomeAnalysisWorkflow constructor (e.g., has .db, .procs etc.)
+    args_namespace = process_arguments.parse_args()
+    
+    workflow = PangenomeAnalysisWorkflow(args=args_namespace)
+    try:
+        workflow.run()
+    except Exception as e:
+        logger.critical(f"A critical error occurred: {e}", exc_info=True)
+        sys.exit(1)
+    logger.info("StrainR Pangenome Script Finished Successfully.")
