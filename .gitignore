@@ -13,6 +13,6 @@ strainr_out
 .vscode/
 .conda/
 
+.DS_Store
 poetry.lock
 python-package-conda.yml
-docs/
