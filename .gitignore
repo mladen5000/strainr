@@ -48,3 +48,10 @@ ncbi-rs/
 htmls/
 fastas/
 823.3496/
+*.png
+*.db
+*.lock
+*.msh
+*.csv
+*.lock
+docs/

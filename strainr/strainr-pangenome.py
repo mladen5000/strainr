@@ -487,6 +487,7 @@ def main():
 
 def save_read_spectra(strains: list[str], results_raw):
     """Pickles the raw results from the k-mer db lookup"""
+    import pickle
 
     # TODO - useful elsewhere
     # df = pd.DataFrame.from_dict(dict(results_raw),orient=index,columns=strains)
@@ -495,7 +496,11 @@ def save_read_spectra(strains: list[str], results_raw):
     out.mkdir(parents=True, exist_ok=True)  # todo
     output_file = pathlib.Path(out.parent / "raw_scores.pkl")
     with output_file.open("wb") as pf:
+<<<<<<< HEAD:strainr/strainr-classify.py
         pickle.dump(results_raw, pf)  # , file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+=======
+        pickle.dump(results_raw, pf) #, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
+>>>>>>> 5c49409 (Add strainr-pangenome script and associated functionalities):strainr/strainr-pangenome.py
         # pickle.dump(strains, file=pf, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
@@ -506,6 +511,7 @@ if __name__ == "__main__":
     p = pathlib.Path().cwd()
     rng = np.random.default_rng()
     print("\n".join(f"{k} = {v}" for k, v in vars(args).items()))
+    args.input.reverse()
     for in_fasta in args.input:
         t0 = time.time()
         fasta = pathlib.Path(in_fasta)
@@ -514,6 +520,7 @@ if __name__ == "__main__":
             print(f"Input file:{fasta}")
             main()
             print(f"Time for {fasta}: {time.time()-t0}")
+<<<<<<< HEAD:strainr/strainr-classify.py
 
 
 # if __name__ == "__main__":
@@ -532,3 +539,5 @@ if __name__ == "__main__":
 #             print(f"Input file:{fasta}")
 #             main()
 #             print(f"Time for {fasta}: {time.time()-t0}")
+=======
+>>>>>>> 5c49409 (Add strainr-pangenome script and associated functionalities):strainr/strainr-pangenome.py
