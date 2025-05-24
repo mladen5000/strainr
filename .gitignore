@@ -9,6 +9,7 @@ __pycache__/
 .session/
 *.py[cod]
 kmer_counter_rs/target/
+target/
 
 ###############################################################################
 # Jupyter Notebook Checkpoints and Outputs
