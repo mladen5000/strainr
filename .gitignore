@@ -1,57 +1,94 @@
+###############################################################################
+# Bytecode, Caches, and Python Artifacts
+###############################################################################
+__pycache__/
 */__pycache__**
-*.code-workspace
-strainr_plus.code-workspace
-strainr/analyze_raw.ipynb
-.vscode/launch.json
-strainr_out/raw_scores.pkl
-debug.db
-strainr_out
 .mypy_cache/
 .pytest_cache/
+.cache/
+.session/
+*.py[cod]
+
+###############################################################################
+# Jupyter Notebook Checkpoints and Outputs
+###############################################################################
 .ipynb_checkpoints/
-.github/*
+strainr/analyze_raw.ipynb
+
+###############################################################################
+# Editor and IDE Configurations
+###############################################################################
 .vscode/
-.conda/
-docs/
-.DS_Store
+.vscode/launch.json
+*.code-workspace
+strainr_plus.code-workspace
+
+###############################################################################
+# Dependency & Lock Files
+###############################################################################
 poetry.lock
-python-package-conda.yml*.png
-*.pdf
-.ipynb_checkpoints
-.mypy_cache
-.pytest_cache
+*.lock
+python-package-conda.yml
+
+###############################################################################
+# System & Platform-Specific Files
+###############################################################################
 .DS_Store
-.vscode
+
+###############################################################################
+# Project Build, Output, and Data Artifacts
+###############################################################################
+strainr_out/
+strainr_out/raw_scores.pkl
+debug.db
+823.3496/
+fastas/
+htmls/
+images/
+ncbi-rs/
+other/
 species_84112_complete/
 tests/
-*.db
-*.msh
-*.lock
-*.toml
-*.yaml
-*.yml
-*.json
+*Zymo/
+
+###############################################################################
+# Documentation Build
+###############################################################################
+docs/
+
+###############################################################################
+# Data, Results, and Miscellaneous File Types
+###############################################################################
 *.csv
 *.tsv
-*.txt
-*.log
+*.json
+*.db
+*.msh
+*.pdf
 *.png
 *.out
 *.err
 *.tmp
 *.cache
-*.session
-images/
-*Zymo
-other/
-ncbi-rs/
-htmls/
-fastas/
-823.3496/
-*.png
-*.db
-*.lock
-*.msh
-*.csv
-*.lock
-docs/
+*.log
+*.yaml
+*.yml
+*.toml
+
+###############################################################################
+# Ignore anything in .github that isn’t workflows or templates (if desired)
+###############################################################################
+.github/*
+# Uncomment next line if you *do* want to keep workflows, README, etc.
+!.github/workflows/
+!.github/README.md
+
+###############################################################################
+# Optional: Ignore all test outputs (add more patterns as needed)
+###############################################################################
+test_output/
+*.test
+
+###############################################################################
+# End of file
+###############################################################################
