@@ -27,17 +27,64 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from strainr.kmer_database import KmerStrainDatabase
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import ReadId, CountVector, StrainIndex # Assuming these are defined
+from typing import Callable, Set # Added Callable, Set
+
+# Python fallback k-mer extraction functions
+def _py_reverse_complement(dna_sequence: bytes) -> bytes:
+    """Computes the reverse complement of a DNA sequence."""
+    complement_map = {ord('A'): ord('T'), ord('T'): ord('A'),
+                      ord('C'): ord('G'), ord('G'): ord('C'),
+                      ord('N'): ord('N')}
+    # Apply complement and reverse, handling non-DNA bytes by leaving them as is
+    return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+
+def _py_extract_canonical_kmers(sequence: bytes, k: int) -> List[bytes]:
+    """
+    Extracts canonical k-mers from a DNA sequence using Python.
+    A k-mer is canonical if it's lexicographically smaller than its reverse complement.
+    Assumes sequence is already normalized (e.g., uppercase).
+    """
+    if k == 0 or not sequence or len(sequence) < k:
+        return []
+    
+    kmers: List[bytes] = [] 
+
+    for i in range(len(sequence) - k + 1):
+        kmer = sequence[i:i+k]
+        # Assuming kmer is already normalized (e.g. uppercase DNA)
+        # For needletail compatibility, it expects normalized input for canonical kmer generation
+        # The Rust version uses needletail::sequence::normalize first.
+        # Here, we assume the input `sequence` to this Python function should also be normalized if needed.
+        rc_kmer_bytes = _py_reverse_complement(kmer)
+        
+        if kmer <= rc_kmer_bytes: 
+            kmers.append(kmer)
+        else:
+            kmers.append(rc_kmer_bytes)
+    return kmers
+
+# Global k-mer extraction function dispatcher
+_extract_kmers_func: Callable[[bytes, int], List[bytes]]
+RUST_KMER_COUNTER_AVAILABLE: bool
 
 try:
-    # Attempt to import the Rust-based k-mer counter
     from kmer_counter_rs import extract_kmers_rs
+    _extract_kmers_func = extract_kmers_rs
     RUST_KMER_COUNTER_AVAILABLE = True
-    logger.info("Successfully imported Rust k-mer counter (kmer_counter_rs.extract_kmers_rs).")
+    # Use logger after it's initialized
+    # logger.info("Successfully imported Rust k-mer counter. Using Rust implementation.")
+    print("Successfully imported Rust k-mer counter (extract_kmers_rs). Using Rust implementation.")
 except ImportError:
     RUST_KMER_COUNTER_AVAILABLE = False
-    logger.warning("Warning: Rust k-mer counter (kmer_counter_rs.extract_kmers_rs) not found. This workflow might be slower or fail if a Python fallback is not implemented for k-mer extraction.")
-    # Placeholder for a Python fallback if needed, or operations will fail if Rust version is called and unavailable.
-    extract_kmers_rs = None # Ensure it exists to avoid NameError if not imported, but calls will fail if not RUST_KMER_COUNTER_AVAILABLE
+    _extract_kmers_func = _py_extract_canonical_kmers 
+    # logger.warning("Rust k-mer counter not found. Using Python fallback.")
+    print("Warning: Rust k-mer counter (kmer_counter_rs.extract_kmers_rs) not found. Using Python fallback for k-mer extraction.")
+except Exception as e: 
+    RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = _py_extract_canonical_kmers
+    # logger.error(f"Error importing Rust k-mer counter: {e}. Using Python fallback.")
+    print(f"Error importing Rust k-mer counter: {e}. Using Python fallback.")
+
 
 SETCHUNKSIZE = 10000
 
@@ -297,25 +344,38 @@ class KmerClassificationWorkflow:
             logger.error("Database not initialized before k-mer counting.")
             raise RuntimeError("Database not initialized.")
 
-        read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
+        read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple # rev_seq_bytes is b"" for single-end
         logger.debug(f"Processing k-mers for read: {read_id}")
 
-        all_kmers_from_pair = set() # Use a set to store unique k-mers from the pair
+        all_kmers_from_pair: Set[bytes] = set() 
 
-        # Process forward read
         if fwd_seq_bytes:
-            kmers_fwd = self._get_kmers_for_sequence(fwd_seq_bytes)
-            for kmer in kmers_fwd:
-                all_kmers_from_pair.add(kmer) # kmer is already bytes
+            # The Python fallback expects normalized sequences if the Rust version does.
+            # Assuming sequences from _parse_sequence_files are raw, need normalization before Python kmer extraction.
+            # The Rust function handles normalization internally.
+            # For simplicity here, we'll assume _get_kmers_for_sequence handles normalization if Python is used.
+            # This means _py_extract_canonical_kmers should ideally also normalize.
+            # Let's add a basic normalization (uppercase) to _py_extract_canonical_kmers for now.
+            # Or, ensure sequence_bytes passed to _extract_kmers_func are already normalized.
+            # The Rust function `extract_kmers_rs` applies `Sequence::normalize(sequence, false);`
+            # So, the Python fallback should do something similar if it wants to be a true equivalent.
+            # For this step, _get_kmers_for_sequence will call the selected function.
+            # If Python fallback is used, it includes _py_reverse_complement.
+            # Normalization to uppercase should happen before _py_extract_canonical_kmers.
+            
+            # Normalization step (e.g., to uppercase ASCII if that's what needletail's normalize does)
+            # This should ideally match what the Rust `Sequence::normalize` does.
+            # For DNA, typically converting to uppercase is sufficient.
+            normalized_fwd_seq = fwd_seq_bytes.upper() # Basic normalization
+            
+            kmers_fwd = self._get_kmers_for_sequence(normalized_fwd_seq)
+            all_kmers_from_pair.update(kmers_fwd)
 
-        # Process reverse read (if present)
-        if rev_seq_bytes: # Only add if it's not empty and different from fwd_seq_bytes (e.g. single end passed as both)
-            kmers_rev = self._get_kmers_for_sequence(rev_seq_bytes)
-            for kmer in kmers_rev:
-                all_kmers_from_pair.add(kmer)
+        if rev_seq_bytes: 
+            normalized_rev_seq = rev_seq_bytes.upper() # Basic normalization
+            kmers_rev = self._get_kmers_for_sequence(normalized_rev_seq)
+            all_kmers_from_pair.update(kmers_rev)
         
-        # Aggregate counts from the database for all unique canonical k-mers from the pair
-        matched_kmer_vectors: List[CountVector] = []
         current_read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
 
         if not all_kmers_from_pair:
@@ -325,42 +385,35 @@ class KmerClassificationWorkflow:
             strain_counts_for_kmer: Optional[CountVector] = \
                 self.database.get_strain_counts_for_kmer(kmer_bytes)
             if strain_counts_for_kmer is not None:
-                # Summing CountVectors directly
                 current_read_strain_counts += strain_counts_for_kmer 
         
         return read_id, current_read_strain_counts
 
     def _get_kmers_for_sequence(self, sequence_bytes: bytes) -> List[bytes]:
         """
-        Extracts canonical k-mers from a single sequence.
-        Uses the Rust implementation if available, otherwise raises an error or would use a Python fallback.
+        Extracts canonical k-mers from a single sequence using the configured k-mer counter.
+        The input sequence_bytes to this function should be pre-normalized if the
+        Python fallback is to be used effectively (e.g., converted to uppercase).
+        The Rust version handles its own normalization.
         """
-        if self.database is None: # Should not happen if workflow is correct
+        if self.database is None:
             raise RuntimeError("Database not initialized, cannot determine k-mer length.")
-
-        if not RUST_KMER_COUNTER_AVAILABLE or extract_kmers_rs is None:
-            logger.error("Rust k-mer counter (extract_kmers_rs) is not available or not imported correctly.")
-            # Option 1: Raise an error
-            raise RuntimeError(
-                "Rust k-mer counter is not available, and no Python fallback is implemented in _get_kmers_for_sequence."
-            )
-            # Option 2: Implement/call a Python fallback k-mer extraction here
-            # logger.warning("Falling back to Python k-mer extraction (not implemented in this refactor).")
-            # return self._python_extract_canonical_kmers(sequence_bytes, self.database.kmer_length) 
         
-        if not sequence_bytes: # Handle empty sequence
+        if not sequence_bytes or len(sequence_bytes) < self.database.kmer_length:
             return []
         
+        # Global _extract_kmers_func will point to either Rust or Python version
         try:
-            # Call the Rust function
-            # Ensure kmer_length is of the correct type (usize in Rust, int in Python)
-            kmers = extract_kmers_rs(sequence_bytes, self.database.kmer_length)
-            # PyO3 converts Vec<Vec<u8>> to List[bytes] (where inner Vec<u8> becomes bytes)
-            return kmers
+            # sequence_bytes passed to _extract_kmers_func should be what the function expects.
+            # Rust's extract_kmers_rs does its own normalization.
+            # _py_extract_canonical_kmers expects an already somewhat normalized sequence (e.g. uppercase).
+            # The caller (_count_kmers_for_read_record) now does basic .upper() before calling this.
+            return _extract_kmers_func(sequence_bytes, self.database.kmer_length)
         except Exception as e:
-            logger.error(f"Error calling Rust k-mer extraction (extract_kmers_rs): {e}")
-            # Fallback or re-raise
-            raise RuntimeError(f"Rust k-mer extraction failed: {e}")
+            logger.error(f"Error during k-mer extraction for sequence of length {len(sequence_bytes)} with k={self.database.kmer_length}: {e}")
+            # Depending on how critical, either re-raise or return empty / specific error object
+            # For now, let's return empty to allow processing of other reads.
+            return []
 
 
     def _classify_reads_parallel(

@@ -1,43 +1,71 @@
-name: Python Package using Conda
+name: Python Package using Conda and Rust
 
 on: [push]
 
 jobs:
   build-linux:
-
-    name: Build Linux
+    name: Build and Test Linux
     runs-on: ubuntu-latest
     strategy:
-      max-parallel: 5
+      max-parallel: 5 # You might reduce this if Rust compilation is heavy
 
     steps:
-      - uses: actions/checkout@v3
-      
+      - name: Checkout code
+        uses: actions/checkout@v4 # Updated version
+
       - name: Set up Python 3.9
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v4 # Updated version
         with:
           python-version: 3.9
-          
-      - name: Add conda to system path
+
+      - name: Initialize Conda
+        uses: conda-incubator/setup-miniconda@v3 # More robust Conda setup
+        with:
+          auto-update-conda: true
+          python-version: 3.9
+          # mamba-version: "*" # Optional: for faster solving
+          # channels: conda-forge,bioconda,defaults # Optional: can be set here or in environment.yml
+          activate-environment: base # Name from environment.yml
+          environment-file: environment.yml # Use the created environment.yml
+          use-only-tar-bz2: true # Speeds up installs
+
+      - name: Install Python dependencies (conda)
+        shell: bash -l {0} # Ensures conda environment is activated
         run: |
-          # $CONDA is an environment variable pointing to the root of the miniconda directory
-          echo $CONDA/bin >> $GITHUB_PATH
-          
-      - name: Install dependencies
-        run: |
+          echo "Attempting to install dependencies from environment.yml"
           conda env update --file environment.yml --name base
-          
+          conda list # List packages for debugging
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable # Installs Rust and Cargo
+        with:
+          toolchain: stable # Or specify a version
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Compile Rust extension (kmer_counter_rs)
+        shell: bash -l {0} # Ensures conda env with python/pip for maturin is active
+        run: |
+          cd kmer_counter_rs
+          maturin build --release -o ../target/wheels # Build wheel and place in a known dir
+          cd ..
+          pip install target/wheels/*.whl # Install the built wheel
+
       - name: Lint with flake8
+        shell: bash -l {0}
         run: |
-          conda install flake8
-          
-          # stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics'
-          
-          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          # flake8 is installed via environment.yml
+          echo "Running flake8..."
+          # Corrected command (removed trailing quote)
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # This one is fine, but consider if the select above should also be --exit-zero or if failure is intended
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-          
+
       - name: Test with pytest
+        shell: bash -l {0}
         run: |
-          conda install pytest
-          pytest
+          # pytest is installed via environment.yml
+          echo "Running pytest..."
+          pytest tests/ # Be more specific if tests are in tests/ directory
+                        # Add other options like --cov if pytest-cov is used
