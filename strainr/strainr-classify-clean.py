@@ -28,6 +28,17 @@ from strainr.kmer_database import KmerStrainDatabase
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import ReadId, CountVector, StrainIndex # Assuming these are defined
 
+try:
+    # Attempt to import the Rust-based k-mer counter
+    from kmer_counter_rs import extract_kmers_rs
+    RUST_KMER_COUNTER_AVAILABLE = True
+    logger.info("Successfully imported Rust k-mer counter (kmer_counter_rs.extract_kmers_rs).")
+except ImportError:
+    RUST_KMER_COUNTER_AVAILABLE = False
+    logger.warning("Warning: Rust k-mer counter (kmer_counter_rs.extract_kmers_rs) not found. This workflow might be slower or fail if a Python fallback is not implemented for k-mer extraction.")
+    # Placeholder for a Python fallback if needed, or operations will fail if Rust version is called and unavailable.
+    extract_kmers_rs = None # Ensure it exists to avoid NameError if not imported, but calls will fail if not RUST_KMER_COUNTER_AVAILABLE
+
 SETCHUNKSIZE = 10000
 
 # Set up logging
@@ -283,33 +294,74 @@ class KmerClassificationWorkflow:
             A tuple containing (ReadId, CountVector) for the processed read.
         """
         if self.database is None:
-            # This should not happen if _initialize_database is called first.
             logger.error("Database not initialized before k-mer counting.")
             raise RuntimeError("Database not initialized.")
 
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
-        logger.debug(f"Counting k-mers for read: {read_id}")
+        logger.debug(f"Processing k-mers for read: {read_id}")
 
-        # Initialize a zero vector for this read's k-mer counts
-        read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
+        all_kmers_from_pair = set() # Use a set to store unique k-mers from the pair
+
+        # Process forward read
+        if fwd_seq_bytes:
+            kmers_fwd = self._get_kmers_for_sequence(fwd_seq_bytes)
+            for kmer in kmers_fwd:
+                all_kmers_from_pair.add(kmer) # kmer is already bytes
+
+        # Process reverse read (if present)
+        if rev_seq_bytes: # Only add if it's not empty and different from fwd_seq_bytes (e.g. single end passed as both)
+            kmers_rev = self._get_kmers_for_sequence(rev_seq_bytes)
+            for kmer in kmers_rev:
+                all_kmers_from_pair.add(kmer)
         
-        sequences_to_process = [fwd_seq_bytes]
-        if rev_seq_bytes: # Only add if it's not empty
-            sequences_to_process.append(rev_seq_bytes)
+        # Aggregate counts from the database for all unique canonical k-mers from the pair
+        matched_kmer_vectors: List[CountVector] = []
+        current_read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
 
-        for seq_bytes in sequences_to_process:
-            if len(seq_bytes) < self.database.kmer_length:
-                continue # Skip sequences shorter than k-mer length
+        if not all_kmers_from_pair:
+            return read_id, current_read_strain_counts
 
-            with memoryview(seq_bytes) as seq_view:
-                for i in range(len(seq_bytes) - self.database.kmer_length + 1):
-                    kmer: bytes = seq_view[i : i + self.database.kmer_length].tobytes()
-                    # Query the database (KmerStrainDatabase handles canonical k-mers if needed)
-                    strain_counts_for_kmer = self.database.get_strain_counts_for_kmer(kmer)
-                    if strain_counts_for_kmer is not None:
-                        read_strain_counts += strain_counts_for_kmer
+        for kmer_bytes in all_kmers_from_pair:
+            strain_counts_for_kmer: Optional[CountVector] = \
+                self.database.get_strain_counts_for_kmer(kmer_bytes)
+            if strain_counts_for_kmer is not None:
+                # Summing CountVectors directly
+                current_read_strain_counts += strain_counts_for_kmer 
         
-        return read_id, read_strain_counts
+        return read_id, current_read_strain_counts
+
+    def _get_kmers_for_sequence(self, sequence_bytes: bytes) -> List[bytes]:
+        """
+        Extracts canonical k-mers from a single sequence.
+        Uses the Rust implementation if available, otherwise raises an error or would use a Python fallback.
+        """
+        if self.database is None: # Should not happen if workflow is correct
+            raise RuntimeError("Database not initialized, cannot determine k-mer length.")
+
+        if not RUST_KMER_COUNTER_AVAILABLE or extract_kmers_rs is None:
+            logger.error("Rust k-mer counter (extract_kmers_rs) is not available or not imported correctly.")
+            # Option 1: Raise an error
+            raise RuntimeError(
+                "Rust k-mer counter is not available, and no Python fallback is implemented in _get_kmers_for_sequence."
+            )
+            # Option 2: Implement/call a Python fallback k-mer extraction here
+            # logger.warning("Falling back to Python k-mer extraction (not implemented in this refactor).")
+            # return self._python_extract_canonical_kmers(sequence_bytes, self.database.kmer_length) 
+        
+        if not sequence_bytes: # Handle empty sequence
+            return []
+        
+        try:
+            # Call the Rust function
+            # Ensure kmer_length is of the correct type (usize in Rust, int in Python)
+            kmers = extract_kmers_rs(sequence_bytes, self.database.kmer_length)
+            # PyO3 converts Vec<Vec<u8>> to List[bytes] (where inner Vec<u8> becomes bytes)
+            return kmers
+        except Exception as e:
+            logger.error(f"Error calling Rust k-mer extraction (extract_kmers_rs): {e}")
+            # Fallback or re-raise
+            raise RuntimeError(f"Rust k-mer extraction failed: {e}")
+
 
     def _classify_reads_parallel(
         self, fwd_reads_path: pathlib.Path, rev_reads_path: Optional[pathlib.Path] = None
