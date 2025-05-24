@@ -7,65 +7,79 @@ jobs:
     name: Build and Test Linux
     runs-on: ubuntu-latest
     strategy:
-      max-parallel: 5 # You might reduce this if Rust compilation is heavy
+      max-parallel: 5
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # Updated version
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.9
-        uses: actions/setup-python@v4 # Updated version
+        uses: actions/setup-python@v4
         with:
           python-version: 3.9
 
       - name: Initialize Conda
-        uses: conda-incubator/setup-miniconda@v3 # More robust Conda setup
+        uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
           python-version: 3.9
-          # mamba-version: "*" # Optional: for faster solving
-          # channels: conda-forge,bioconda,defaults # Optional: can be set here or in environment.yml
-          activate-environment: base # Name from environment.yml
-          environment-file: environment.yml # Use the created environment.yml
-          use-only-tar-bz2: true # Speeds up installs
+          activate-environment: base
+          environment-file: environment.yml
+          use-only-tar-bz2: true
 
       - name: Install Python dependencies (conda)
         shell: bash -l {0} # Ensures conda environment is activated
         run: |
           echo "Attempting to install dependencies from environment.yml"
-          conda env update --file environment.yml --name base
+          # The setup-miniconda action should handle environment creation and update
+          # based on environment-file. If not, uncomment below.
+          # conda env update --file environment.yml --name base
           conda list # List packages for debugging
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable # Installs Rust and Cargo
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable # Or specify a version
+          toolchain: stable
 
       - name: Install Maturin
-        run: pip install maturin
+        run: pip install maturin # Will use pip from the Conda env
 
-      - name: Compile Rust extension (kmer_counter_rs)
-        shell: bash -l {0} # Ensures conda env with python/pip for maturin is active
+      - name: Compile and install Rust extension (kmer_counter_rs)
+        shell: bash -l {0}
         run: |
+          echo "Building and installing Rust extension..."
           cd kmer_counter_rs
-          maturin build --release -o ../target/wheels # Build wheel and place in a known dir
+          maturin build --release -o ../target/wheels 
           cd ..
-          pip install target/wheels/*.whl # Install the built wheel
+          pip install target/wheels/*.whl
+          # Verify installation by trying to import
+          python -c "import kmer_counter_rs; print('kmer_counter_rs imported successfully')"
 
-      - name: Lint with flake8
+
+      - name: Lint and Format Check with Ruff
         shell: bash -l {0}
         run: |
-          # flake8 is installed via environment.yml
-          echo "Running flake8..."
-          # Corrected command (removed trailing quote)
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # This one is fine, but consider if the select above should also be --exit-zero or if failure is intended
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          # ruff is installed via environment.yml
+          echo "Running ruff check (linting)..."
+          ruff check .
+          echo "Running ruff format --check (format check)..."
+          ruff format --check .
 
-      - name: Test with pytest
+      - name: Test with pytest and Coverage
         shell: bash -l {0}
         run: |
-          # pytest is installed via environment.yml
-          echo "Running pytest..."
-          pytest tests/ # Be more specific if tests are in tests/ directory
-                        # Add other options like --cov if pytest-cov is used
+          # pytest and pytest-cov are installed via environment.yml
+          echo "Running pytest with coverage..."
+          # Assuming 'strainr' is the main package directory for coverage source.
+          # Adjust if your main source code is elsewhere or named differently.
+          pytest tests/ --cov=strainr --cov-report=xml --cov-report=term
+          # The 'term' report shows coverage in the console.
+          # The 'xml' report (coverage.xml) can be used by other tools (e.g., Codecov).
+
+      - name: Upload Coverage Report (Optional)
+        uses: actions/upload-artifact@v4
+        if: success() # Or always() if you want to upload even on failure
+        with:
+          name: coverage-report
+          path: coverage.xml # Path to the coverage report file
+          retention-days: 7

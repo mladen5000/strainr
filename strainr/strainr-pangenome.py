@@ -40,9 +40,56 @@ from strainr.utils import open_file_transparently # Corrected import
 from strainr.kmer_database import KmerStrainDatabase
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
+from typing import Callable, Set # Added Callable, Set
 
 # Argument parsing setup (assuming it returns an argparse-like namespace)
 from strainr.parameter_config import process_arguments # This will be used as is
+
+
+# --- Python K-mer Extraction Fallback ---
+def _py_reverse_complement(dna_sequence: bytes) -> bytes:
+    """Computes the reverse complement of a DNA sequence."""
+    complement_map = {ord('A'): ord('T'), ord('T'): ord('A'),
+                      ord('C'): ord('G'), ord('G'): ord('C'),
+                      ord('N'): ord('N')}
+    return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+
+def _py_extract_canonical_kmers(sequence: bytes, k: int) -> List[bytes]:
+    """
+    Extracts canonical k-mers from a DNA sequence using Python.
+    A k-mer is canonical if it's lexicographically smaller than its reverse complement.
+    Assumes sequence is already normalized (e.g., uppercase).
+    """
+    if k == 0 or not sequence or len(sequence) < k:
+        return []
+    kmers: List[bytes] = []
+    for i in range(len(sequence) - k + 1):
+        kmer = sequence[i:i+k]
+        rc_kmer_bytes = _py_reverse_complement(kmer)
+        if kmer <= rc_kmer_bytes:
+            kmers.append(kmer)
+        else:
+            kmers.append(rc_kmer_bytes)
+    return kmers
+
+_extract_kmers_func: Callable[[bytes, int], List[bytes]]
+RUST_KMER_COUNTER_AVAILABLE: bool
+
+try:
+    from kmer_counter_rs import extract_kmers_rs
+    _extract_kmers_func = extract_kmers_rs
+    RUST_KMER_COUNTER_AVAILABLE = True
+    # Using print here as logger might not be configured when this module is imported elsewhere
+    print("Successfully imported Rust k-mer counter for pangenome script. Using Rust implementation.")
+except ImportError:
+    RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = _py_extract_canonical_kmers
+    print("Warning: Rust k-mer counter (kmer_counter_rs.extract_kmers_rs) not found for pangenome script. Using Python fallback.")
+except Exception as e:
+    RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = _py_extract_canonical_kmers
+    print(f"Error importing Rust k-mer counter for pangenome script: {e}. Using Python fallback.")
+
 
 # --- Configuration ---
 SETCHUNKSIZE = 10000 # For multiprocessing map functions
@@ -144,18 +191,53 @@ class PangenomeAnalysisWorkflow:
             raise RuntimeError("Database not initialized prior to k-mer counting.")
 
         read_id, seq_bytes = read_data
-        read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
+        # Initialize a zero vector for this read's k-mer counts
+        current_read_strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
 
-        if len(seq_bytes) < self.database.kmer_length:
-            return read_id, read_strain_counts # Sequence too short
+        if not seq_bytes or len(seq_bytes) < self.database.kmer_length:
+            return read_id, current_read_strain_counts # Sequence too short or empty
 
-        with memoryview(seq_bytes) as seq_view:
-            for i in range(len(seq_bytes) - self.database.kmer_length + 1):
-                kmer: bytes = seq_view[i : i + self.database.kmer_length].tobytes()
-                strain_counts_for_kmer = self.database.get_strain_counts_for_kmer(kmer)
-                if strain_counts_for_kmer is not None:
-                    read_strain_counts += strain_counts_for_kmer
-        return read_id, read_strain_counts
+        # Normalize sequence (e.g., to uppercase) before k-mer extraction if Python fallback is used
+        # The Rust function handles its own normalization.
+        normalized_seq_bytes = seq_bytes.upper()
+        
+        kmers_from_read: List[bytes] = self._get_kmers_for_sequence(normalized_seq_bytes)
+        
+        if not kmers_from_read:
+            return read_id, current_read_strain_counts
+
+        for kmer_bytes in kmers_from_read:
+            strain_counts_for_kmer: Optional[CountVector] = \
+                self.database.get_strain_counts_for_kmer(kmer_bytes)
+            if strain_counts_for_kmer is not None:
+                current_read_strain_counts += strain_counts_for_kmer
+        
+        return read_id, current_read_strain_counts
+
+    def _get_kmers_for_sequence(self, sequence_bytes: bytes) -> List[bytes]:
+        """
+        Extracts canonical k-mers from a single sequence using the configured k-mer counter.
+        The input sequence_bytes to this function should be pre-normalized if the
+        Python fallback is to be used effectively (e.g., converted to uppercase).
+        The Rust version handles its own normalization.
+        """
+        if self.database is None:
+            raise RuntimeError("Database not initialized, cannot determine k-mer length.")
+        
+        if not sequence_bytes or len(sequence_bytes) < self.database.kmer_length:
+            return []
+        
+        # Global _extract_kmers_func will point to either Rust or Python version
+        try:
+            # sequence_bytes passed to _extract_kmers_func should be what the function expects.
+            # Rust's extract_kmers_rs does its own normalization.
+            # _py_extract_canonical_kmers expects an already somewhat normalized sequence (e.g. uppercase).
+            # The caller (_count_kmers_for_read) now does basic .upper() before calling this.
+            return _extract_kmers_func(sequence_bytes, self.database.kmer_length)
+        except Exception as e:
+            logger.error(f"Error during k-mer extraction for sequence of length {len(sequence_bytes)} with k={self.database.kmer_length}: {e}")
+            return []
+
 
     def _classify_reads_in_file(self, fastq_file_path: pathlib.Path) -> ReadHitResults:
         """
