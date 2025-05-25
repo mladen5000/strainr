@@ -22,7 +22,7 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
-          python-version: 3.9
+          python-version: 3.12
           activate-environment: base
           environment-file: environment.yml
           use-only-tar-bz2: true
