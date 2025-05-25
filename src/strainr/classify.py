@@ -739,7 +739,7 @@ def parse_cli_arguments() -> CliArgs:
     )
     parser.add_argument(
         "--verbose",
-        help="Enable verbose logging",
+        help="Enable conda install pydanticverbose logging",
         action="store_true",
         default=False,
     )
