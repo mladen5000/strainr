@@ -65,6 +65,7 @@ dependencies:
   - pytz
   - qhull
   - readline
+  - ruff
   - scipy
   - seaborn
   - seaborn-base
