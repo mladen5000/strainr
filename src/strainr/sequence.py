@@ -1,14 +1,5 @@
 """
 Sequence handling and k-mer extraction functionality.
-
-CHANGES:
-- Added comprehensive type hints (already mostly present)
-- Improved error handling and validation (already mostly present)
-- Better documentation (already mostly present)
-- Renamed variables for clarity (already mostly good)
-- Fixed potential encoding issues (already mostly good)
-- Refined GenomicSequence.validate_sequence_data for stricter bytes input.
-- Corrected example in extract_kmers_from_sequence docstring.
 """
 
 from dataclasses import dataclass, field
@@ -16,7 +7,7 @@ from typing import List, Set # Added Set for type hinting
 import mmh3
 
 
-@dataclass(order=True, slots=True)
+@dataclass(order=True, slots=True, frozen=True) # Added frozen=True for immutability
 class GenomicSequence:
     """
     Immutable genomic sequence representation optimized for k-mer analysis.
@@ -116,11 +107,19 @@ class GenomicSequence:
 
         Returns:
             The nucleotide at the specified position, decoded as an ASCII character.
+        
+        Raises:
+            IndexError: If the index is out of bounds.
+            UnicodeDecodeError: If the byte at the index is not valid ASCII (should not happen if validation passed).
         """
-        return self.sequence_data.decode("ascii")[index]
+        # More efficient than decoding the whole sequence for a single character
+        return bytes([self.sequence_data[index]]).decode('ascii')
 
     def __str__(self) -> str:
         """Return the sequence as an ASCII string."""
+        # Validation ensures ASCII compatibility, so direct decode is fine.
+        # errors='replace' could be used for more lenient string conversion if desired,
+        # but strict 'ascii' aligns with validation.
         return self.sequence_data.decode(encoding="ascii")
 
     def is_valid_dna(self) -> bool:
