@@ -24,7 +24,7 @@ jobs:
           auto-update-conda: true
           python-version: 3.9
           activate-environment: base
-          environment-file: /Users/mladenrasic/Projects/strainr_messy/Strainr_during_cruise/Strainr/environment.yml
+          environment-file: environment.yml
           use-only-tar-bz2: true
 
       - name: Install Python dependencies (conda)
