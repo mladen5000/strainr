@@ -18,7 +18,6 @@ jobs:
         with:
           auto-update-conda: true
           python-version: 3.12
-          miniforge-variant: Mambaforge
           miniforge-version: latest
           activate-environment: strainr
           environment-file: environment.yml
