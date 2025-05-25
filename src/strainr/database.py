@@ -10,9 +10,11 @@ CHANGES:
 """
 
 import pathlib
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union, Any, Tuple
+from pathlib import Path
 import numpy as np
 import pandas as pd
+from strainr.genomic_types import KmerCountDict, CountVector
 
 
 class StrainKmerDatabase:
@@ -138,5 +140,3 @@ class StrainKmerDatabase:
             True if k-mer length matches database expectation
         """
         return len(test_kmer) == self.kmer_length
-
-

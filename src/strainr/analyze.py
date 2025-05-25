@@ -13,19 +13,19 @@ import functools
 import multiprocessing as mp
 import random
 from collections import Counter
-from typing import Dict, List, Tuple, Any, Optional, Union, Set # Added Set
+from typing import Dict, List, Tuple, Any, Optional, Union, Set  # Added Set
 
 import numpy as np
-import pandas as pd # Not directly used in this snippet, but often useful in analysis pipelines
+import pandas as pd  # Not directly used in this snippet, but often useful in analysis pipelines
 
 # Assuming genomic_types.py is in the same package or accessible in PYTHONPATH
 # Adjust import path as necessary (e.g., from strainr.genomic_types import ...)
-from strainr.genomic_types import (
+from genomic_types import (
     CountVector,
-    ReadHitResults, # Typically List[Tuple[ReadId, CountVector]]
-    StrainIndex,    # Typically int
+    ReadHitResults,  # Typically List[Tuple[ReadId, CountVector]]
+    StrainIndex,  # Typically int
     # StrainAbundanceDict, # Not used here
-    ReadId,         # Typically str
+    ReadId,  # Typically str
     # KmerString, # Not used here
     # KmerCountDict # Not used here
 )
@@ -54,13 +54,18 @@ class ClassificationAnalyzer:
             for stochastic disambiguation methods.
     """
 
-    SUPPORTED_DISAMBIGUATION_MODES: Set[str] = {"max", "random", "multinomial", "dirichlet"}
+    SUPPORTED_DISAMBIGUATION_MODES: Set[str] = {
+        "max",
+        "random",
+        "multinomial",
+        "dirichlet",
+    }
 
     def __init__(
         self,
         strain_names: List[str],
         disambiguation_mode: str = "max",
-        abundance_threshold: float = 0.001, # Currently not used in this class's methods
+        abundance_threshold: float = 0.001,  # Currently not used in this class's methods
         num_processes: int = 4,
     ) -> None:
         """
@@ -83,7 +88,9 @@ class ClassificationAnalyzer:
                         `num_processes` is not positive.
             TypeError: If `strain_names` is not a list of strings.
         """
-        if not isinstance(strain_names, list) or not all(isinstance(s, str) for s in strain_names):
+        if not isinstance(strain_names, list) or not all(
+            isinstance(s, str) for s in strain_names
+        ):
             raise TypeError("strain_names must be a list of strings.")
         if not strain_names:
             raise ValueError("strain_names cannot be empty.")
@@ -95,18 +102,20 @@ class ClassificationAnalyzer:
         if not isinstance(num_processes, int) or num_processes <= 0:
             raise ValueError("num_processes must be a positive integer.")
         if not (0.0 <= abundance_threshold < 1.0):
-            raise ValueError("abundance_threshold must be between 0.0 and 1.0 (exclusive of 1.0).")
-
+            raise ValueError(
+                "abundance_threshold must be between 0.0 and 1.0 (exclusive of 1.0)."
+            )
 
         self.strain_names: List[str] = strain_names
         self.disambiguation_mode: str = disambiguation_mode
-        self.abundance_threshold: float = abundance_threshold # Stored but not used by methods here
+        self.abundance_threshold: float = (
+            abundance_threshold  # Stored but not used by methods here
+        )
         self.num_processes: int = num_processes
         self.random_generator: np.random.Generator = np.random.default_rng()
 
     def separate_hit_categories(
-        self,
-        classification_results: ReadHitResults
+        self, classification_results: ReadHitResults
     ) -> Tuple[Dict[ReadId, CountVector], Dict[ReadId, CountVector], List[ReadId]]:
         """
         Categorizes reads based on their k-mer hit patterns to strains.
@@ -135,9 +144,13 @@ class ClassificationAnalyzer:
         no_hit_read_ids: List[ReadId] = []
 
         for read_id, strain_count_vector in classification_results:
-            if not isinstance(read_id, str) or not isinstance(strain_count_vector, np.ndarray):
+            if not isinstance(read_id, str) or not isinstance(
+                strain_count_vector, np.ndarray
+            ):
                 # Or log a warning and skip
-                raise TypeError("Each item in classification_results must be (ReadId, CountVector).")
+                raise TypeError(
+                    "Each item in classification_results must be (ReadId, CountVector)."
+                )
 
             if np.all(strain_count_vector == 0):
                 no_hit_read_ids.append(read_id)
@@ -148,9 +161,9 @@ class ClassificationAnalyzer:
 
                 if len(max_positions) == 1:
                     clear_hits_dict[read_id] = strain_count_vector
-                else: # len(max_positions) > 1 or (rarely) 0 if vector was non-numeric (should not happen)
+                else:  # len(max_positions) > 1 or (rarely) 0 if vector was non-numeric (should not happen)
                     ambiguous_hits_dict[read_id] = strain_count_vector
-        
+
         print(
             f"Hit categorization summary:\n"
             f"  Clear assignments: {len(clear_hits_dict)}\n"
@@ -160,7 +173,7 @@ class ClassificationAnalyzer:
         return clear_hits_dict, ambiguous_hits_dict, no_hit_read_ids
 
     def resolve_clear_hits_to_indices(
-            self, clear_hits_dict: Dict[ReadId, CountVector]
+        self, clear_hits_dict: Dict[ReadId, CountVector]
     ) -> Dict[ReadId, StrainIndex]:
         """
         Converts clear hit count vectors to their corresponding strain indices.
@@ -185,7 +198,7 @@ class ClassificationAnalyzer:
         }
 
     def calculate_strain_prior_from_assignments(
-            self, clear_strain_assignments: Dict[ReadId, StrainIndex]
+        self, clear_strain_assignments: Dict[ReadId, StrainIndex]
     ) -> Counter[StrainIndex]:
         """
         Calculates the prior probability (raw counts) of each strain based on clear assignments.
@@ -204,8 +217,7 @@ class ClassificationAnalyzer:
         return Counter(clear_strain_assignments.values())
 
     def convert_prior_counts_to_probability_vector(
-        self,
-        strain_prior_counts: Counter[StrainIndex]
+        self, strain_prior_counts: Counter[StrainIndex]
     ) -> np.ndarray:
         """
         Converts raw strain prior counts into a normalized probability vector.
@@ -227,15 +239,19 @@ class ClassificationAnalyzer:
             raise TypeError("strain_prior_counts must be a Counter.")
 
         num_total_strains = len(self.strain_names)
-        prior_probabilities = np.full(num_total_strains, 1e-20, dtype=float) # Initialize with epsilon
-        
+        prior_probabilities = np.full(
+            num_total_strains, 1e-20, dtype=float
+        )  # Initialize with epsilon
+
         total_clear_counts = sum(strain_prior_counts.values())
 
         if total_clear_counts > 0:
             for strain_index, count in strain_prior_counts.items():
-                if 0 <= strain_index < num_total_strains: # Ensure index is valid
-                    prior_probabilities[strain_index] = float(count) / total_clear_counts
-        
+                if 0 <= strain_index < num_total_strains:  # Ensure index is valid
+                    prior_probabilities[strain_index] = (
+                        float(count) / total_clear_counts
+                    )
+
         # Re-normalize if any epsilon values were not overwritten, to ensure sum is close to 1
         # (though with initial epsilon, this might not be strictly necessary if all have some counts)
         # sum_probs = np.sum(prior_probabilities)
@@ -247,9 +263,7 @@ class ClassificationAnalyzer:
         return prior_probabilities
 
     def _resolve_single_ambiguous_read(
-        self,
-        strain_hit_counts: CountVector,
-        prior_probabilities: np.ndarray
+        self, strain_hit_counts: CountVector, prior_probabilities: np.ndarray
     ) -> StrainIndex:
         """
         Resolves a single ambiguously assigned read to one strain.
@@ -272,58 +286,67 @@ class ClassificationAnalyzer:
         # Filter for strains at maximum hit count for this read
         max_hit_value = np.max(strain_hit_counts)
         # Create a working copy to modify
-        candidate_strain_hits = strain_hit_counts.astype(float) # Use float for calculations
+        candidate_strain_hits = strain_hit_counts.astype(
+            float
+        )  # Use float for calculations
         candidate_strain_hits[candidate_strain_hits < max_hit_value] = 0.0
-        
+
         # Apply prior probabilities to get likelihood scores
         # Ensure prior_probabilities has the same length as candidate_strain_hits
         if len(prior_probabilities) != len(candidate_strain_hits):
-            raise ValueError("Length of prior_probabilities must match strain_hit_counts.")
-            
+            raise ValueError(
+                "Length of prior_probabilities must match strain_hit_counts."
+            )
+
         likelihood_scores = candidate_strain_hits * prior_probabilities
 
         # If all likelihood scores are zero (e.g. if priors for max-hit strains were zero),
         # fall back to just the candidate hits (equal likelihood among max-hit strains)
         if np.all(likelihood_scores == 0):
-            likelihood_scores = candidate_strain_hits # Use original max hits if priors zeroed everything out
+            likelihood_scores = candidate_strain_hits  # Use original max hits if priors zeroed everything out
 
         # Normalize likelihood_scores to sum to 1 for probabilistic choices
         sum_likelihood_scores = np.sum(likelihood_scores)
-        if sum_likelihood_scores == 0: # Should be rare if handled above, means no valid choice
-             # Fallback: if all scores are zero, pick randomly among those with max_hit_value
-             max_indices = np.where(strain_hit_counts == max_hit_value)[0]
-             return int(self.random_generator.choice(max_indices))
-
+        if (
+            sum_likelihood_scores == 0
+        ):  # Should be rare if handled above, means no valid choice
+            # Fallback: if all scores are zero, pick randomly among those with max_hit_value
+            max_indices = np.where(strain_hit_counts == max_hit_value)[0]
+            return int(self.random_generator.choice(max_indices))
 
         normalized_scores = likelihood_scores / sum_likelihood_scores
 
         if self.disambiguation_mode == "max":
             # Np.argmax will return the first index in case of ties in likelihood_scores
-            return int(np.argmax(likelihood_scores)) # Argmax on non-normalized is fine
-        
+            return int(np.argmax(likelihood_scores))  # Argmax on non-normalized is fine
+
         # For probabilistic modes, use normalized_scores
         strain_indices = np.arange(len(self.strain_names))
 
         if self.disambiguation_mode == "random":
-            return int(self.random_generator.choice(
-                strain_indices, p=normalized_scores
-            ))
-        
+            return int(
+                self.random_generator.choice(strain_indices, p=normalized_scores)
+            )
+
         elif self.disambiguation_mode == "multinomial":
-             # Draw 1 time from a multinomial distribution
-            selected_index_array = self.random_generator.multinomial(1, pvals=normalized_scores)
-            return int(np.argmax(selected_index_array)) # Index where the '1' is
-        
+            # Draw 1 time from a multinomial distribution
+            selected_index_array = self.random_generator.multinomial(
+                1, pvals=normalized_scores
+            )
+            return int(np.argmax(selected_index_array))  # Index where the '1' is
+
         elif self.disambiguation_mode == "dirichlet":
             # Dirichlet gives sample from distribution; not directly an index.
             # We need to adjust likelihood_scores for dirichlet (alpha values > 0)
             dirichlet_alpha = likelihood_scores.copy()
-            dirichlet_alpha[dirichlet_alpha == 0] = 1e-10 # Ensure alpha > 0
+            dirichlet_alpha[dirichlet_alpha == 0] = 1e-10  # Ensure alpha > 0
             # Sample from dirichlet, then choose based on sampled probabilities
-            sampled_probabilities = self.random_generator.dirichlet(alpha=dirichlet_alpha)
-            return int(self.random_generator.choice(
-                strain_indices, p=sampled_probabilities
-            ))
+            sampled_probabilities = self.random_generator.dirichlet(
+                alpha=dirichlet_alpha
+            )
+            return int(
+                self.random_generator.choice(strain_indices, p=sampled_probabilities)
+            )
         else:
             # This case should have been caught by __init__
             raise ValueError(f"Unknown disambiguation mode: {self.disambiguation_mode}")
@@ -331,7 +354,7 @@ class ClassificationAnalyzer:
     def resolve_ambiguous_hits_parallel(
         self,
         ambiguous_hits_dict: Dict[ReadId, CountVector],
-        prior_probabilities: np.ndarray
+        prior_probabilities: np.ndarray,
     ) -> Dict[ReadId, StrainIndex]:
         """
         Resolves ambiguous read assignments in parallel.
@@ -360,31 +383,38 @@ class ClassificationAnalyzer:
 
         # Create a partial function with fixed prior_probabilities for starmap/map
         resolve_func_with_priors = functools.partial(
-            self._resolve_single_ambiguous_read,
-            prior_probabilities=prior_probabilities
+            self._resolve_single_ambiguous_read, prior_probabilities=prior_probabilities
         )
 
         # Determine number of processes for this specific task (can be less than self.num_processes)
         # Using a smaller pool for disambiguation might be reasonable if it's memory/CPU intensive per task
         # but not massively parallelizable beyond a few cores, or to leave resources.
         # Original code used num_processes // 4.
-        num_disambiguation_processes = max(1, self.num_processes // 2) # Adjusted policy
+        num_disambiguation_processes = max(
+            1, self.num_processes // 2
+        )  # Adjusted policy
 
         # Items for mapping: list of CountVectors
         hit_vectors_to_process = list(ambiguous_hits_dict.values())
         read_ids_in_order = list(ambiguous_hits_dict.keys())
 
-        if not hit_vectors_to_process: # Should be caught by the first check but good for safety
+        if (
+            not hit_vectors_to_process
+        ):  # Should be caught by the first check but good for safety
             return {}
 
         with mp.Pool(processes=num_disambiguation_processes) as pool:
             # `map` is suitable here as we pass only one iterable (the hit_vectors)
             # to the function (resolve_func_with_priors already has the priors).
-            resolved_indices_list = pool.map(resolve_func_with_priors, hit_vectors_to_process)
+            resolved_indices_list = pool.map(
+                resolve_func_with_priors, hit_vectors_to_process
+            )
 
-        for read_id, resolved_strain_index in zip(read_ids_in_order, resolved_indices_list):
+        for read_id, resolved_strain_index in zip(
+            read_ids_in_order, resolved_indices_list
+        ):
             resolved_assignments[read_id] = resolved_strain_index
-        
+
         print(f"Resolved {len(resolved_assignments)} ambiguous assignments.")
         return resolved_assignments
 
@@ -393,7 +423,7 @@ class ClassificationAnalyzer:
         clear_assignments: Dict[ReadId, StrainIndex],
         resolved_ambiguous_assignments: Dict[ReadId, StrainIndex],
         no_hit_read_ids: List[ReadId],
-        unassigned_marker: str = "NA" # Consistent marker for unassigned
+        unassigned_marker: str = "NA",  # Consistent marker for unassigned
     ) -> Dict[ReadId, Union[StrainIndex, str]]:
         """
         Combines assignments from clear, resolved ambiguous, and no-hit categories.
@@ -410,9 +440,11 @@ class ClassificationAnalyzer:
             A dictionary representing the final assignments, where keys are `ReadId`s
             and values are either `StrainIndex` (int) or the `unassigned_marker` (str).
         """
-        if not isinstance(clear_assignments, dict) or \
-           not isinstance(resolved_ambiguous_assignments, dict) or \
-           not isinstance(no_hit_read_ids, list):
+        if (
+            not isinstance(clear_assignments, dict)
+            or not isinstance(resolved_ambiguous_assignments, dict)
+            or not isinstance(no_hit_read_ids, list)
+        ):
             raise TypeError("Invalid input types for assignment dictionaries or list.")
 
         # Create assignments for no-hit reads
@@ -425,7 +457,9 @@ class ClassificationAnalyzer:
         final_assignments: Dict[ReadId, Union[StrainIndex, str]] = {}
         final_assignments.update(clear_assignments)
         final_assignments.update(resolved_ambiguous_assignments)
-        final_assignments.update(unassigned_dict) # Type hint needs Union[StrainIndex, str]
+        final_assignments.update(
+            unassigned_dict
+        )  # Type hint needs Union[StrainIndex, str]
 
         print(
             f"Final combined assignment summary:\n"
@@ -434,6 +468,7 @@ class ClassificationAnalyzer:
             f"  Marked '{unassigned_marker}': {len(unassigned_dict)}"
         )
         return final_assignments
+
 
 # The commented-out streaming analysis method is preserved below as per instructions.
 # Alternative streaming analysis method (commented out as requested)

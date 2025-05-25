@@ -12,7 +12,7 @@ fn extract_kmer_rs(file_path: &str) -> PyResult<usize> {
         let norm_seq = seqrec.normalize(false);
         let rc = norm_seq.reverse_complement();
         for (_, kmer, _) in norm_seq.canonical_kmers(4, &rc) {
-            if kmer == b"AAAA" {
+            if kmer == b"AAAA" { //TODO: Make this count the kmers and output them
                 count += 1;
             }
         }
