@@ -73,9 +73,6 @@ docs/
 *.tmp
 *.cache
 *.log
-*.yaml
-*.yml
-*.toml
 
 ###############################################################################
 # Ignore anything in .github that isn’t workflows or templates (if desired)
