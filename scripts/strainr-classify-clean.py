@@ -33,9 +33,9 @@ from Bio.SeqIO.QualityIO import FastqGeneralIterator
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from Strainr.kmer_database import KmerStrainDatabase
+from strainr.kmer_database import KmerStrainDatabase
 from strainr.analyze import ClassificationAnalyzer
-from Strainr.genomic_types import (
+from strainr.genomic_types import (
     ReadId,
     CountVector,
     StrainIndex,

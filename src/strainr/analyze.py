@@ -20,7 +20,7 @@ import pandas as pd  # Not directly used in this snippet, but often useful in an
 
 # Assuming genomic_types.py is in the same package or accessible in PYTHONPATH
 # Adjust import path as necessary (e.g., from strainr.genomic_types import ...)
-from genomic_types import (
+from strainr.genomic_types import (
     CountVector,
     ReadHitResults,  # Typically List[Tuple[ReadId, CountVector]]
     StrainIndex,  # Typically int

@@ -1,7 +1,7 @@
 import dataclasses
 import pathlib
 
-from strainr.kmer_database import StrainDatabase
+from strainr.kmer_database import KmerStrainDatabase
 
 
 class SequenceFile(pathlib.Path):
@@ -30,7 +30,7 @@ def main():
     k = args.k
 
     # Generate the database
-    database = StrainDatabase(args.k)
+    database = KmerStrainDatabase(args.k)
     strain_run = Runner(input_sequences, database)
 
 
@@ -39,7 +39,7 @@ class Runner:
     """Container class for run parameters"""
 
     fasta = pathlib.Path
-    kmer_database: StrainDatabase = StrainDatabase()
+    kmer_database: KmerStrainDatabase = KmerStrainDatabase()
     k: int = 31
 
     # db, strains, kmerlen = build_database(args.db)
