@@ -1,254 +1,85 @@
-name: base
+name: strainr
 channels:
   - conda-forge
   - defaults
   - bioconda
 dependencies:
-  - anyio
-  - appnope
-  - archspec
-  - argon2-cffi
-  - argon2-cffi-bindings
-  - arrow
-  - asttokens
-  - async-lru
-  - attrs
-  - babel
-  - beautifulsoup4
-  - biom-format
-  - blast
-  - bleach
-  - bleach-with-css
-  - boltons
-  - brotli-python
+  - annotated-types
+  - biopython
+  - brotli
+  - brotli-bin
   - bzip2
-  - c-ares
   - ca-certificates
-  - cached-property
-  - cached_property
-  - certifi
-  - cffi
-  - charset-normalizer
-  - click
   - colorama
-  - comm
-  - conda
-  - conda-libmamba-solver
-  - conda-package-handling
-  - conda-package-streaming
-  - debugpy
-  - decorator
-  - defusedxml
-  - distro
-  - exceptiongroup
-  - executing
-  - fmt
-  - fqdn
-  - frozendict
-  - h11
-  - h2
-  - h5py
-  - hdf5
-  - hpack
-  - httpcore
-  - httpx
-  - hyperframe
-  - idna
-  - importlib-metadata
-  - importlib_resources
-  - iniconfig
-  - ipykernel
-  - ipython
-  - ipython_pygments_lexers
-  - ipywidgets
-  - isoduration
-  - jedi
-  - jinja2
-  - json5
-  - jsonpatch
-  - jsonpointer
-  - jsonschema
-  - jsonschema-specifications
-  - jsonschema-with-format-nongpl
-  - jupyter
-  - jupyter-lsp
-  - jupyter_client
-  - jupyter_console
-  - jupyter_core
-  - jupyter_events
-  - jupyter_server
-  - jupyter_server_terminals
-  - jupyterlab
-  - jupyterlab_pygments
-  - jupyterlab_server
-  - jupyterlab_widgets
-  - kraken2
-  - krb5
-  - libaec
-  - libarchive
+  - contourpy
+  - cycler
+  - fonttools
+  - freetype
+  - kiwisolver
+  - lcms2
+  - lerc
   - libblas
+  - libbrotlicommon
+  - libbrotlidec
+  - libbrotlienc
   - libcblas
-  - libcurl
   - libcxx
-  - libedit
-  - libev
+  - libdeflate
   - libexpat
   - libffi
+  - libfreetype
+  - libfreetype6
   - libgfortran
   - libgfortran5
-  - libiconv
+  - libjpeg-turbo
   - liblapack
   - liblzma
-  - libmamba
-  - libmambapy
-  - libnghttp2
-  - libsodium
-  - libsolv
+  - libopenblas
+  - libpng
   - libsqlite
-  - libssh2
-  - libxml2
+  - libtiff
+  - libwebp-base
+  - libxcb
   - libzlib
-  - llvm-meta
   - llvm-openmp
-  - lz4-c
-  - lzo
-  - mamba
-  - markupsafe
-  - matplotlib-inline
-  - menuinst
-  - mistune
-  - natsort
-  - nbclient
-  - nbconvert-core
-  - nbformat
+  - matplotlib-base
+  - mmh3
+  - munkres
   - ncurses
-  - nest-asyncio
-  - notebook
-  - notebook-shim
   - numpy
-  - openmp
+  - openjpeg
   - openssl
-  - overrides
   - packaging
   - pandas
-  - pandocfilters
-  - parso
   - patsy
-  - perl
-  - pexpect
-  - pickleshare
+  - pillow
   - pip
-  - pkgutil-resolve-name
-  - platformdirs
-  - pluggy
-  - prometheus_client
-  - prompt-toolkit
-  - prompt_toolkit
-  - psutil
-  - ptyprocess
-  - pure_eval
-  - pybind11-abi
-  - pycosat
-  - pycparser
-  - pygments
-  - pysocks
-  - pytest
+  - pthread-stubs
+  - pydantic
+  - pydantic-core
+  - pyparsing
   - python
   - python-dateutil
-  - python-fastjsonschema
-  - python-json-logger
   - python-tzdata
   - python_abi
   - pytz
-  - pyyaml
-  - pyzmq
+  - qhull
   - readline
-  - referencing
-  - reproc
-  - reproc-cpp
-  - requests
-  - rfc3339-validator
-  - rfc3986-validator
-  - rpds-py
-  - ruamel.yaml
-  - ruamel.yaml.clib
-  - scikit-bio
   - scipy
-  - send2trash
+  - seaborn
+  - seaborn-base
   - setuptools
   - six
-  - sniffio
-  - soupsieve
-  - stack_data
   - statsmodels
-  - terminado
-  - tinycss2
   - tk
-  - tomli
-  - tornado
   - tqdm
-  - traitlets
-  - truststore
-  - types-python-dateutil
   - typing-extensions
+  - typing-inspection
   - typing_extensions
-  - typing_utils
   - tzdata
-  - uri-template
-  - urllib3
-  - wcwidth
-  - webcolors
-  - webencodings
-  - websocket-client
+  - unicodedata2
   - wheel
-  - widgetsnbextension
-  - yaml
-  - yaml-cpp
-  - zeromq
-  - zipp
-  - zstandard
+  - xorg-libxau
+  - xorg-libxdmcp
   - zstd
-  - pip:
-      - aiohappyeyeballs
-      - aiohttp
-      - aiosignal
-      - backoff
-      - biodeepseek
-      - bleak
-      - blinker
-      - branca
-      - contourpy
-      - cycler
-      - et-xmlfile
-      - flaredantic
-      - flask
-      - folium
-      - fonttools
-      - frozenlist
-      - future
-      - geocoder
-      - itsdangerous
-      - kiwisolver
-      - linkook
-      - matplotlib
-      - maturin
-      - multidict
-      - networkx
-      - opencage
-      - openpyxl
-      - phonenumbers
-      - pillow
-      - propcache
-      - pyobjc-core
-      - pyobjc-framework-cocoa
-      - pyobjc-framework-corebluetooth
-      - pyobjc-framework-libdispatch
-      - pyparsing
-      - ratelim
-      - requests-futures
-      - sherlock-project
-      - stem
-      - werkzeug
-      - xyzservices
-      - yarl
-prefix: /Users/mladenrasic/miniforge3
+prefix: /Users/mladenrasic/miniforge3/envs/strainr
