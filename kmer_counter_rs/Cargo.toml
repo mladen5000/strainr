@@ -1,0 +1,12 @@
+  [package]
+  name = "kmer_counter_rs"
+  version = "0.1.0"
+  edition = "2021"
+
+  [lib]
+  name = "kmer_counter_rs"
+  crate-type = ["cdylib"]
+
+  [dependencies]
+  needletail = "0.6.3"
+  pyo3 = { version = "0.25.0", features = ["extension-module"] }
