@@ -13,39 +13,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.9
-
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
-          python-version: 3.12  # or whatever you need
+          python-version: 3.12
           miniforge-variant: Mambaforge
           miniforge-version: latest
-          activate-environment: base
+          activate-environment: strainr
           environment-file: environment.yml
 
-
-      # - name: Initialize Conda
-      #   uses: conda-incubator/setup-miniconda@v3
-      #   with:
-      #     auto-update-conda: true
-      #     python-version: 3.12
-      #     activate-environment: base
-      #     environment-file: environment.yml
-      #     use-only-tar-bz2: true
-
       - name: Install Python dependencies (conda)
-        shell: bash -l {0} # Ensures conda environment is activated
+        shell: bash -l {0}
         run: |
           echo "Attempting to install dependencies from environment.yml"
-          # The setup-miniconda action should handle environment creation and update
-          # based on environment-file. If not, uncomment below.
-          # conda env update --file environment.yml --name base
-          conda list # List packages for debugging
+          # Should already be done by setup-miniconda, but here for debug.
+          conda list
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -53,7 +36,8 @@ jobs:
           toolchain: stable
 
       - name: Install Maturin
-        run: pip install maturin # Will use pip from the Conda env
+        shell: bash -l {0}
+        run: pip install maturin
 
       - name: Compile and install Rust extension (kmer_counter_rs)
         shell: bash -l {0}
@@ -63,14 +47,11 @@ jobs:
           maturin build --release -o ../target/wheels 
           cd ..
           pip install target/wheels/*.whl
-          # Verify installation by trying to import
           python -c "import kmer_counter_rs; print('kmer_counter_rs imported successfully')"
-
 
       - name: Lint and Format Check with Ruff
         shell: bash -l {0}
         run: |
-          # ruff is installed via environment.yml
           echo "Running ruff check (linting)..."
           ruff check .
           echo "Running ruff format --check (format check)..."
@@ -79,18 +60,13 @@ jobs:
       - name: Test with pytest and Coverage
         shell: bash -l {0}
         run: |
-          # pytest and pytest-cov are installed via environment.yml
           echo "Running pytest with coverage..."
-          # Assuming 'strainr' is the main package directory for coverage source.
-          # Adjust if your main source code is elsewhere or named differently.
           pytest tests/ --cov=strainr --cov-report=xml --cov-report=term
-          # The 'term' report shows coverage in the console.
-          # The 'xml' report (coverage.xml) can be used by other tools (e.g., Codecov).
 
       - name: Upload Coverage Report (Optional)
         uses: actions/upload-artifact@v4
-        if: success() # Or always() if you want to upload even on failure
+        if: success()
         with:
           name: coverage-report
-          path: coverage.xml # Path to the coverage report file
+          path: coverage.xml
           retention-days: 7
