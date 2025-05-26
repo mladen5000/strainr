@@ -1,21 +1,15 @@
 import pathlib
 import pickle
-from typing import Dict, List, Optional, Union, Any # Added Any for get_database_stats
+
+from typing import Optional, Any  # Only keep what is not in genomic_types
+from typing import List, Dict, Union  # Needed for type annotations from genomic_types
 
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 
-# Type Aliases from genomic_types (or define locally if preferred for standalone module)
-# Assuming they are available via from strainr.genomic_types import ... in actual use
-CountVector = npt.NDArray[np.uint8]
-Kmer = bytes 
-KmerDatabaseDict = Dict[Kmer, CountVector]
 
-
-
-class StrainKmerDb: # Renamed from KmerStrainDatabase
+class StrainKmerDb:  # Renamed from KmerStrainDatabase
     """
     Represents a database of k-mers and their corresponding strain frequency vectors.
 
@@ -64,14 +58,18 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
                           wrapping underlying exceptions like `pickle.UnpicklingError` or
                           `pd.errors.EmptyDataError`.
         """
-        self.database_filepath = pathlib.Path(database_filepath).resolve() # Resolve for absolute path
+        self.database_filepath = pathlib.Path(
+            database_filepath
+        ).resolve()  # Resolve for absolute path
         if not self.database_filepath.is_file():
-            raise FileNotFoundError(f"Database file not found or is not a file: {self.database_filepath}")
+            raise FileNotFoundError(
+                f"Database file not found or is not a file: {self.database_filepath}"
+            )
 
         # Initialize attributes
-        self.kmer_length: int = 0 
+        self.kmer_length: int = 0
 
-        self.kmer_to_counts_map: KmerDatabaseDict = {}
+        self.kmer_to_counts_map = {}
         self.strain_names: List[str] = []
         self.num_strains: int = 0
         self.num_kmers: int = 0
@@ -94,12 +92,17 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         try:
             kmer_strain_df: pd.DataFrame = pd.read_pickle(self.database_filepath)
         except (pickle.UnpicklingError, pd.errors.EmptyDataError, EOFError) as e:
-            raise RuntimeError(f"Could not read or unpickle database file: {self.database_filepath}. File may be corrupted or empty. Original error: {e}") from e
-        except FileNotFoundError: 
-             raise RuntimeError(f"Database file {self.database_filepath} vanished after initial check.") from None
-        except Exception as e: 
-            raise RuntimeError(f"An unexpected error occurred while reading {self.database_filepath}: {e}") from e
-
+            raise RuntimeError(
+                f"Could not read or unpickle database file: {self.database_filepath}. File may be corrupted or empty. Original error: {e}"
+            ) from e
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"Database file {self.database_filepath} vanished after initial check."
+            ) from None
+        except Exception as e:
+            raise RuntimeError(
+                f"An unexpected error occurred while reading {self.database_filepath}: {e}"
+            ) from e
 
         if not isinstance(kmer_strain_df, pd.DataFrame):
             raise RuntimeError(
@@ -133,8 +136,9 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             inferred_k_len = len(first_kmer_obj)
             kmer_type_is_str = False
         else:
-            raise TypeError(f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes.")
-
+            raise TypeError(
+                f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes."
+            )
 
         if inferred_k_len == 0:
             raise ValueError(
@@ -151,77 +155,95 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         else:
             self.kmer_length = inferred_k_len
             print(f"K-mer length inferred from first k-mer: {self.kmer_length}")
-        
-        if self.kmer_length <=0: # Should be caught by inferred_k_len == 0, but as safety
-            raise ValueError(f"Determined k-mer length ({self.kmer_length}) must be positive.")
 
-        temp_kmer_map: KmerDatabaseDict = {}
+        if (
+            self.kmer_length <= 0
+        ):  # Should be caught by inferred_k_len == 0, but as safety
+            raise ValueError(
+                f"Determined k-mer length ({self.kmer_length}) must be positive."
+            )
+
+        temp_kmer_map = {}
         try:
             count_matrix = kmer_strain_df.to_numpy(dtype=np.uint8)
-        except ValueError as e: 
-
+        except ValueError as e:
             raise TypeError(
                 f"Could not convert database values to count matrix (np.uint8). "
                 f"Ensure all values are numeric and within 0-255. Error: {e}"
             ) from e
-        
+
         skipped_kmers_count = 0
 
         for i, kmer_obj in enumerate(kmer_strain_df.index):
-            kmer_bytes: Kmer
+            kmer_bytes: bytes
             current_obj_len: int
 
             if kmer_type_is_str:
-                if not isinstance(kmer_obj, str): # Type consistency check
-                    print(f"Warning: Inconsistent k-mer type at index {i}. Expected str, got {type(kmer_obj)}. Skipping.")
-                    skipped_kmers_count +=1
+                if not isinstance(kmer_obj, str):  # Type consistency check
+                    print(
+                        f"Warning: Inconsistent k-mer type at index {i}. Expected str, got {type(kmer_obj)}. Skipping."
+                    )
+                    skipped_kmers_count += 1
                     continue
                 current_obj_len = len(kmer_obj)
                 if current_obj_len != self.kmer_length:
-                    print(f"Warning: Inconsistent k-mer string length at index {i}. Expected {self.kmer_length}, k-mer '{kmer_obj}' has length {current_obj_len}. Skipping.")
-                    skipped_kmers_count +=1
+                    print(
+                        f"Warning: Inconsistent k-mer string length at index {i}. Expected {self.kmer_length}, k-mer '{kmer_obj}' has length {current_obj_len}. Skipping."
+                    )
+                    skipped_kmers_count += 1
                     continue
                 try:
-                    kmer_bytes = kmer_obj.encode('utf-8')
+                    kmer_bytes = kmer_obj.encode("utf-8")
                 except UnicodeEncodeError as e:
-                    print(f"Warning: Failed to encode k-mer string '{kmer_obj}' (index {i}) to UTF-8 bytes. Error: {e}. Skipping.")
-                    skipped_kmers_count +=1
+                    print(
+                        f"Warning: Failed to encode k-mer string '{kmer_obj}' (index {i}) to UTF-8 bytes. Error: {e}. Skipping."
+                    )
+                    skipped_kmers_count += 1
                     continue
-            else: # k-mer type is bytes
-                if not isinstance(kmer_obj, bytes): # Type consistency check
-                    print(f"Warning: Inconsistent k-mer type at index {i}. Expected bytes, got {type(kmer_obj)}. Skipping.")
-                    skipped_kmers_count +=1
+            else:  # k-mer type is bytes
+                if not isinstance(kmer_obj, bytes):  # Type consistency check
+                    print(
+                        f"Warning: Inconsistent k-mer type at index {i}. Expected bytes, got {type(kmer_obj)}. Skipping."
+                    )
+                    skipped_kmers_count += 1
                     continue
                 kmer_bytes = kmer_obj
                 current_obj_len = len(kmer_bytes)
                 if current_obj_len != self.kmer_length:
-                    print(f"Warning: Inconsistent k-mer bytes length at index {i}. Expected {self.kmer_length}, k-mer {kmer_bytes!r} has length {current_obj_len}. Skipping.")
-                    skipped_kmers_count +=1
+                    print(
+                        f"Warning: Inconsistent k-mer bytes length at index {i}. Expected {self.kmer_length}, k-mer {kmer_bytes!r} has length {current_obj_len}. Skipping."
+                    )
+                    skipped_kmers_count += 1
                     continue
-            
-            if len(kmer_bytes) != self.kmer_length: # Final byte length check
-                print(f"Warning: Post-encoding/cast k-mer byte length validation failed at index {i}. Expected {self.kmer_length}, k-mer '{kmer_obj}' (bytes: {kmer_bytes!r}) has byte length {len(kmer_bytes)}. Skipping.")
-                skipped_kmers_count +=1
+
+            if len(kmer_bytes) != self.kmer_length:  # Final byte length check
+                print(
+                    f"Warning: Post-encoding/cast k-mer byte length validation failed at index {i}. Expected {self.kmer_length}, k-mer '{kmer_obj}' (bytes: {kmer_bytes!r}) has byte length {len(kmer_bytes)}. Skipping."
+                )
+                skipped_kmers_count += 1
                 continue
-            
 
             temp_kmer_map[kmer_bytes] = count_matrix[i]
 
         self.kmer_to_counts_map = temp_kmer_map
         self.num_kmers = len(self.kmer_to_counts_map)
 
-        if self.num_kmers == 0 and not kmer_strain_df.index.empty and skipped_kmers_count == len(kmer_strain_df.index) :
+        if (
+            self.num_kmers == 0
+            and not kmer_strain_df.index.empty
+            and skipped_kmers_count == len(kmer_strain_df.index)
+        ):
             raise ValueError(
                 f"No k-mers were successfully loaded into the database from {self.database_filepath} "
                 f"(all {skipped_kmers_count} k-mers from input were skipped). "
                 "This is likely due to encoding issues or consistent length mismatches. Check warnings."
             )
         if skipped_kmers_count > 0:
-            print(f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues.")
+            print(
+                f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues."
+            )
 
-
-
-    def get_strain_counts_for_kmer(self, kmer: Kmer) -> Optional[CountVector]:
+    def get_strain_counts_for_kmer(self, kmer):
         """
         Retrieves the strain count vector for a given k-mer. (Equivalent to lookup_kmer)
 
@@ -233,7 +255,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             k-mer is found, otherwise None.
         """
         if not isinstance(kmer, bytes):
-             # Consider raising TypeError or attempting encoding if string and matches kmer_length
+            # Consider raising TypeError or attempting encoding if string and matches kmer_length
             return None
         return self.kmer_to_counts_map.get(kmer)
 
@@ -253,11 +275,11 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         """
         return {
             "num_strains": self.num_strains,
-            "num_kmers": self.num_kmers, 
+            "num_kmers": self.num_kmers,
             "kmer_length": self.kmer_length,
-            "database_filepath": str(self.database_filepath), # Already resolved
-            "strain_names_preview": self.strain_names[:5], 
-            "total_strain_names": self.num_strains, 
+            "database_filepath": str(self.database_filepath),  # Already resolved
+            "strain_names_preview": self.strain_names[:5],
+            "total_strain_names": self.num_strains,
         }
 
     def validate_kmer_length(self, test_kmer: Union[str, bytes]) -> bool:
@@ -277,32 +299,35 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             False otherwise. Returns False for non-str/bytes input.
         """
         if not isinstance(test_kmer, (str, bytes)):
-            return False 
+            return False
         return len(test_kmer) == self.kmer_length
 
     def __len__(self) -> int:
         """Returns the number of unique k-mers in the database."""
         return self.num_kmers
 
-    def __contains__(self, kmer: Kmer) -> bool:
+    def __contains__(self, kmer: bytes) -> bool:
         """Checks if a k-mer (bytes) is present in the database."""
         # Ensure kmer is bytes for lookup, consistent with KmerDatabaseDict keys
         if not isinstance(kmer, bytes):
-            return False # Or attempt encoding if it's a string of correct char length
+            return False  # Or attempt encoding if it's a string of correct char length
         return kmer in self.kmer_to_counts_map
+
 
 # Example Usage (retained and adapted from KmerStrainDatabase)
 if __name__ == "__main__":
-    dummy_kmers_str = [("A" * 4), ("C" * 4), ("G" * 4), ("T" * 4)] 
+    dummy_kmers_str = [("A" * 4), ("C" * 4), ("G" * 4), ("T" * 4)]
     dummy_strains = ["ExampleStrain1", "ExampleStrain2"]
     dummy_data_np = np.array([[10, 5], [3, 12], [8, 8], [0, 15]], dtype=np.uint8)
-    dummy_df_str_idx = pd.DataFrame(dummy_data_np, index=dummy_kmers_str, columns=dummy_strains)
-    
+    dummy_df_str_idx = pd.DataFrame(
+        dummy_data_np, index=dummy_kmers_str, columns=dummy_strains
+    )
+
     # Create a temporary directory for test databases if it doesn't exist
     # For a real script, consider using tempfile module or a defined output path
     try:
         script_dir = pathlib.Path(__file__).parent
-    except NameError: # __file__ not defined (e.g. in interactive environment)
+    except NameError:  # __file__ not defined (e.g. in interactive environment)
         script_dir = pathlib.Path.cwd()
     dummy_db_output_dir = script_dir / "test_db_output_consolidated"
     dummy_db_output_dir.mkdir(exist_ok=True)
@@ -314,26 +339,24 @@ if __name__ == "__main__":
     try:
         print("\n--- Testing consolidated StrainKmerDb (inferred length) ---")
         # kmer_length inferred as 4 from data
-        db_inferred = StrainKmerDb(dummy_db_path_str) 
-        kmer_to_find_bytes = b"AAAA" # Was "ATGC"
+        db_inferred = StrainKmerDb(dummy_db_path_str)
+        kmer_to_find_bytes = b"AAAA"  # Was "ATGC"
         counts = db_inferred.get_strain_counts_for_kmer(kmer_to_find_bytes)
         print(f"Counts for {kmer_to_find_bytes.decode('utf-8', 'replace')}: {counts}")
-        
-        known_kmer_bytes = b"CCCC" # Was "GTAC"
+
+        known_kmer_bytes = b"CCCC"  # Was "GTAC"
         if known_kmer_bytes in db_inferred:
             print(f"K-mer {known_kmer_bytes.decode()} is in the database.")
-        
+
         print(f"Total k-mers in database: {len(db_inferred)}")
         print(f"Database stats: {db_inferred.get_database_stats()}")
         print(f"Is 'AAAA' valid length? {db_inferred.validate_kmer_length(b'AAAA')}")
         print(f"Is 'AAA' valid length? {db_inferred.validate_kmer_length(b'AAA')}")
 
-
         print("\n--- Testing with expected_kmer_length provided ---")
         db_expected_len = StrainKmerDb(dummy_db_path_str, expected_kmer_length=4)
-        counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG") # Was "TACG"
+        counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG")  # Was "TACG"
         print(f"Counts for b'GGGG': {counts_2}")
-
 
     except Exception as e:
         print(f"An error occurred during database testing: {e}")
@@ -345,8 +368,6 @@ if __name__ == "__main__":
         if dummy_db_path_str.exists():
             dummy_db_path_str.unlink()
         if dummy_db_output_dir.exists() and not any(dummy_db_output_dir.iterdir()):
-             dummy_db_output_dir.rmdir()
+            dummy_db_output_dir.rmdir()
 
         print("\nCleaned up dummy database files and directory (if empty).")
-
-```

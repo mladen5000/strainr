@@ -6,20 +6,23 @@ Output formatting and abundance calculation functionality.
 """
 
 from collections import Counter
-from typing import Dict, Union, List, Any # Any for potential complex dicts, though striving for specifics
+from typing import (
+    Dict,
+    Union,
+    List,
+)  # Any for potential complex dicts, though striving for specifics
 
 # Assuming these types are available from a central genomic_types module
-# from strainr.genomic_types import ReadId, StrainIndex 
+# from strainr.genomic_types import ReadId, StrainIndex
 # For now, defining them locally if not, or assuming basic types.
 ReadId = str
 StrainIndex = int
 
 
-
 class AbundanceCalculator:
     """
     Calculator for strain abundance analysis and reporting.
-    
+
     Handles conversion of read assignments to relative abundances,
 
     normalization, thresholding, and output formatting.
@@ -38,7 +41,9 @@ class AbundanceCalculator:
             ValueError: If `strain_names` is empty, contains duplicates, or has empty strings.
                         If `abundance_threshold` is not in the range [0.0, 1.0).
         """
-        if not isinstance(strain_names, list) or not all(isinstance(s, str) for s in strain_names):
+        if not isinstance(strain_names, list) or not all(
+            isinstance(s, str) for s in strain_names
+        ):
             raise TypeError("strain_names must be a list of strings.")
         if not strain_names:
             raise ValueError("strain_names cannot be empty.")
@@ -46,11 +51,13 @@ class AbundanceCalculator:
             raise ValueError("strain_names must be unique.")
         if any(not s for s in strain_names):
             raise ValueError("strain_names must not contain empty strings.")
-        
+
         if not isinstance(abundance_threshold, float):
             raise TypeError("abundance_threshold must be a float.")
         if not (0.0 <= abundance_threshold < 1.0):
-            raise ValueError("abundance_threshold must be between 0.0 (inclusive) and 1.0 (exclusive).")
+            raise ValueError(
+                "abundance_threshold must be between 0.0 (inclusive) and 1.0 (exclusive)."
+            )
 
         self.strain_names: List[str] = strain_names
         self.abundance_threshold: float = abundance_threshold
@@ -58,10 +65,11 @@ class AbundanceCalculator:
 
     def convert_assignments_to_strain_names(
         self,
-        read_assignments: Dict[Union[ReadId, int], Union[StrainIndex, str]], # Keys can be int initially
-        unassigned_marker: str = "NA"
+        read_assignments: Dict[
+            Union[ReadId, int], Union[StrainIndex, str]
+        ],  # Keys can be int initially
+        unassigned_marker: str = "NA",
     ) -> Dict[ReadId, str]:
-
         """
         Converts read assignments (potentially with integer keys or strain indices)
         to a dictionary mapping string ReadIds to strain names or an unassigned marker.
@@ -91,9 +99,11 @@ class AbundanceCalculator:
         for read_id_orig, strain_id_or_idx in read_assignments.items():
             read_id_str = str(read_id_orig)
             if not read_id_str:
-                raise ValueError("ReadId keys, after string conversion, must not be empty.")
+                raise ValueError(
+                    "ReadId keys, after string conversion, must not be empty."
+                )
 
-            if isinstance(strain_id_or_idx, int): # StrainIndex
+            if isinstance(strain_id_or_idx, int):  # StrainIndex
                 if 0 <= strain_id_or_idx < self._num_strains:
                     named_assignments[read_id_str] = self.strain_names[strain_id_or_idx]
 
@@ -107,12 +117,12 @@ class AbundanceCalculator:
                     named_assignments[read_id_str] = strain_id_or_idx
                 elif strain_id_or_idx == unassigned_marker:
                     named_assignments[read_id_str] = unassigned_marker
-                else: # Unknown string assignment
+                else:  # Unknown string assignment
                     raise ValueError(
                         f"String assignment '{strain_id_or_idx}' for ReadId '{read_id_str}' is not a "
                         f"recognized strain name or the unassigned_marker ('{unassigned_marker}')."
                     )
-            else: 
+            else:
                 raise TypeError(
                     f"Invalid assignment type for ReadId '{read_id_str}': {type(strain_id_or_idx)}. "
                     "Expected int (StrainIndex) or str (strain name/unassigned_marker)."
@@ -143,17 +153,25 @@ class AbundanceCalculator:
         """
         if not isinstance(named_assignments, dict):
             raise TypeError("named_assignments must be a dictionary.")
-        if not isinstance(unassigned_marker, str) or not unassigned_marker: # Allow marker to be empty if not excluding
-             if exclude_unassigned: # Only critical if we need to compare against it
-                raise ValueError("unassigned_marker must be a non-empty string when exclude_unassigned is True.")
-             elif not unassigned_marker: # if it's empty and we are NOT excluding, it can lead to issues if "" is a strain name
-                pass # Allow empty marker if not actively used for exclusion, though risky. Best to enforce non-empty.
+        if (
+            not isinstance(unassigned_marker, str) or not unassigned_marker
+        ):  # Allow marker to be empty if not excluding
+            if exclude_unassigned:  # Only critical if we need to compare against it
+                raise ValueError(
+                    "unassigned_marker must be a non-empty string when exclude_unassigned is True."
+                )
+            elif not unassigned_marker:  # if it's empty and we are NOT excluding, it can lead to issues if "" is a strain name
+                pass  # Allow empty marker if not actively used for exclusion, though risky. Best to enforce non-empty.
 
         for read_id, name_or_marker in named_assignments.items():
             if not isinstance(read_id, str) or not read_id:
-                raise ValueError("All ReadId keys in named_assignments must be non-empty strings.")
+                raise ValueError(
+                    "All ReadId keys in named_assignments must be non-empty strings."
+                )
             if not isinstance(name_or_marker, str) or not name_or_marker:
-                raise ValueError(f"Assigned name/marker for ReadId '{read_id}' must be a non-empty string.")
+                raise ValueError(
+                    f"Assigned name/marker for ReadId '{read_id}' must be a non-empty string."
+                )
 
         if exclude_unassigned:
             return Counter(
@@ -172,14 +190,18 @@ class AbundanceCalculator:
             raise TypeError("raw_abundances must be a collections.Counter.")
         for strain_name, count in raw_abundances.items():
             if not isinstance(strain_name, str) or not strain_name:
-                raise ValueError("Strain names in raw_abundances must be non-empty strings.")
+                raise ValueError(
+                    "Strain names in raw_abundances must be non-empty strings."
+                )
             if not isinstance(count, (int, float)) or count < 0:
-                raise ValueError(f"Count for strain '{strain_name}' must be a non-negative number, got {count}.")
+                raise ValueError(
+                    f"Count for strain '{strain_name}' must be a non-negative number, got {count}."
+                )
 
-        total_reads = float(sum(raw_abundances.values())) # Ensure float for division
+        total_reads = float(sum(raw_abundances.values()))  # Ensure float for division
         if total_reads == 0:
             return {}
-        
+
         relative_abundances: Dict[str, float] = {}
         for strain, count in raw_abundances.items():
             relative_abundances[strain] = count / total_reads
@@ -194,28 +216,38 @@ class AbundanceCalculator:
         """
         if not isinstance(relative_abundances, dict):
             raise TypeError("relative_abundances must be a dictionary.")
-        
+
         filtered_abundances: Dict[str, float] = {}
         for strain, abundance in relative_abundances.items():
             if not isinstance(strain, str) or not strain:
-                raise ValueError("Strain names in relative_abundances must be non-empty strings.")
+                raise ValueError(
+                    "Strain names in relative_abundances must be non-empty strings."
+                )
             if not isinstance(abundance, float):
-                raise TypeError(f"Abundance for strain '{strain}' must be a float, got {type(abundance)}.")
-            if not (-1e-9 <= abundance <= 1.0 + 1e-9): # Allow for minor float inaccuracies
-                raise ValueError(f"Abundance for strain '{strain}' ({abundance}) must be between 0.0 and 1.0.")
-            
+                raise TypeError(
+                    f"Abundance for strain '{strain}' must be a float, got {type(abundance)}."
+                )
+            if not (
+                -1e-9 <= abundance <= 1.0 + 1e-9
+            ):  # Allow for minor float inaccuracies
+                raise ValueError(
+                    f"Abundance for strain '{strain}' ({abundance}) must be between 0.0 and 1.0."
+                )
+
             if abundance >= self.abundance_threshold:
                 filtered_abundances[strain] = abundance
-        
+
         if not filtered_abundances:
             return {}
 
-        key_sort_func = (lambda item: item[1]) if sort_by_abundance else (lambda item: item[0])
-        reverse_sort = sort_by_abundance # Descending for abundance, ascending for name (default for strings)
-        
-        return dict(sorted(filtered_abundances.items(), key=key_sort_func, reverse=reverse_sort))
+        key_sort_func = (
+            (lambda item: item[1]) if sort_by_abundance else (lambda item: item[0])
+        )
+        reverse_sort = sort_by_abundance  # Descending for abundance, ascending for name (default for strings)
 
-
+        return dict(
+            sorted(filtered_abundances.items(), key=key_sort_func, reverse=reverse_sort)
+        )
 
     def generate_report_string(self, final_abundances: Dict[str, float]) -> str:
         """
@@ -224,20 +256,21 @@ class AbundanceCalculator:
         """
         if not isinstance(final_abundances, dict):
             raise TypeError("final_abundances must be a dictionary.")
-        
+
         report_lines: List[str] = []
         if not final_abundances:
             return "No strains found above the abundance threshold."
 
         for strain, abundance in final_abundances.items():
             if not isinstance(strain, str) or not strain:
-                raise ValueError("Strain names in final_abundances must be non-empty strings.")
+                raise ValueError(
+                    "Strain names in final_abundances must be non-empty strings."
+                )
             if not isinstance(abundance, float):
-                 raise TypeError(f"Abundance for strain '{strain}' must be a float, got {type(abundance)}.")
+                raise TypeError(
+                    f"Abundance for strain '{strain}' must be a float, got {type(abundance)}."
+                )
             # Formatting as percentage with 2 decimal places
-            report_lines.append(f"{strain}: {abundance*100:.2f}%") 
-        
+            report_lines.append(f"{strain}: {abundance * 100:.2f}%")
 
         return "\n".join(report_lines)
-
-```

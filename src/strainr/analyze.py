@@ -79,7 +79,7 @@ class ClassificationAnalyzer:
             raise ValueError("strain_names cannot be empty.")
         if len(set(strain_names)) != len(strain_names):
             raise ValueError("strain_names must be unique.")
-        if any(not s for s in strain_names): # Check for empty strings
+        if any(not s for s in strain_names):  # Check for empty strings
             raise ValueError("strain_names must not contain empty strings.")
 
         if disambiguation_mode not in self.SUPPORTED_DISAMBIGUATION_MODES:
@@ -89,7 +89,9 @@ class ClassificationAnalyzer:
             )
         if not isinstance(num_processes, int) or num_processes <= 0:
             raise ValueError("num_processes must be a positive integer.")
-        if not (isinstance(abundance_threshold, float) and 0.0 <= abundance_threshold < 1.0):
+        if not (
+            isinstance(abundance_threshold, float) and 0.0 <= abundance_threshold < 1.0
+        ):
             raise ValueError(
                 "abundance_threshold must be a float between 0.0 and 1.0 (exclusive of 1.0)."
             )
@@ -99,14 +101,18 @@ class ClassificationAnalyzer:
         self.abundance_threshold: float = abundance_threshold
         self.num_processes: int = num_processes
         self.random_generator: np.random.Generator = np.random.default_rng()
-        self._num_strains = len(strain_names) # Cache for validation
+        self._num_strains = len(strain_names)  # Cache for validation
 
     def _validate_count_vector(self, cv: CountVector, context: str) -> None:
         """Helper to validate a CountVector."""
         if not isinstance(cv, np.ndarray):
-            raise TypeError(f"{context}: CountVector must be a NumPy array, got {type(cv)}.")
+            raise TypeError(
+                f"{context}: CountVector must be a NumPy array, got {type(cv)}."
+            )
         if cv.ndim != 1:
-            raise ValueError(f"{context}: CountVector must be 1-dimensional, got {cv.ndim} dimensions.")
+            raise ValueError(
+                f"{context}: CountVector must be 1-dimensional, got {cv.ndim} dimensions."
+            )
         if len(cv) != self._num_strains:
             raise ValueError(
                 f"{context}: CountVector length ({len(cv)}) must match number of strains ({self._num_strains})."
@@ -115,8 +121,9 @@ class ClassificationAnalyzer:
         # np.issubdtype checks if cv.dtype is a subtype of np.unsignedinteger.
         # For stricter check like exact np.uint8: if cv.dtype != np.uint8:
         if not np.issubdtype(cv.dtype, np.unsignedinteger):
-             raise TypeError(f"{context}: CountVector dtype must be unsigned integer, got {cv.dtype}.")
-
+            raise TypeError(
+                f"{context}: CountVector dtype must be unsigned integer, got {cv.dtype}."
+            )
 
     def separate_hit_categories(
         self, classification_results: ReadHitResults
@@ -138,8 +145,13 @@ class ClassificationAnalyzer:
         """
         if not isinstance(classification_results, list):
             raise TypeError("classification_results must be a list.")
-        if not all(isinstance(item, tuple) and len(item) == 2 for item in classification_results):
-             raise TypeError("Each item in classification_results must be a tuple of (ReadId, CountVector).")
+        if not all(
+            isinstance(item, tuple) and len(item) == 2
+            for item in classification_results
+        ):
+            raise TypeError(
+                "Each item in classification_results must be a tuple of (ReadId, CountVector)."
+            )
 
         clear_hits_dict: Dict[ReadId, CountVector] = {}
         ambiguous_hits_dict: Dict[ReadId, CountVector] = {}
@@ -147,14 +159,20 @@ class ClassificationAnalyzer:
 
         for i, (read_id, strain_count_vector) in enumerate(classification_results):
             if not isinstance(read_id, str):
-                raise TypeError(f"Item {i}: ReadId must be a string, got {type(read_id)}.")
+                raise TypeError(
+                    f"Item {i}: ReadId must be a string, got {type(read_id)}."
+                )
             self._validate_count_vector(strain_count_vector, f"Item {i} ('{read_id}')")
-            
-            if np.sum(strain_count_vector) == 0: # More direct check for no hits if counts are non-negative
+
+            if (
+                np.sum(strain_count_vector) == 0
+            ):  # More direct check for no hits if counts are non-negative
                 no_hit_read_ids.append(read_id)
             else:
                 max_value = np.max(strain_count_vector)
-                if max_value == 0: # Should be caught by sum == 0 if counts are non-negative
+                if (
+                    max_value == 0
+                ):  # Should be caught by sum == 0 if counts are non-negative
                     no_hit_read_ids.append(read_id)
                     continue
                 max_positions = np.flatnonzero(strain_count_vector == max_value)
@@ -163,7 +181,7 @@ class ClassificationAnalyzer:
                     clear_hits_dict[read_id] = strain_count_vector
                 else:
                     ambiguous_hits_dict[read_id] = strain_count_vector
-        
+
         print(
             f"Hit categorization summary:\n"
             f"  Clear assignments: {len(clear_hits_dict)}\n"
@@ -190,16 +208,15 @@ class ClassificationAnalyzer:
         """
         if not isinstance(clear_hits_dict, dict):
             raise TypeError("clear_hits_dict must be a dictionary.")
-        
+
         resolved_indices: Dict[ReadId, StrainIndex] = {}
         for read_id, strain_vector in clear_hits_dict.items():
             if not isinstance(read_id, str):
-                 raise TypeError(f"ReadId '{read_id}' must be a string.")
+                raise TypeError(f"ReadId '{read_id}' must be a string.")
             self._validate_count_vector(strain_vector, f"ReadId '{read_id}'")
             # np.argmax is fine, as for clear hits there's one max.
             resolved_indices[read_id] = int(np.argmax(strain_vector))
         return resolved_indices
-
 
     def calculate_strain_prior_from_assignments(
         self, clear_strain_assignments: Dict[ReadId, StrainIndex]
@@ -212,22 +229,24 @@ class ClassificationAnalyzer:
 
         Returns:
             Counter of StrainIndex to read counts.
-        
+
         Raises:
             TypeError: If input format or types are incorrect.
             ValueError: If StrainIndex values are invalid.
         """
         if not isinstance(clear_strain_assignments, dict):
             raise TypeError("clear_strain_assignments must be a dictionary.")
-        
+
         for read_id, strain_idx in clear_strain_assignments.items():
             if not isinstance(read_id, str):
                 raise TypeError(f"ReadId '{read_id}' must be a string.")
             if not isinstance(strain_idx, int):
-                raise TypeError(f"StrainIndex for ReadId '{read_id}' must be an int, got {type(strain_idx)}.")
+                raise TypeError(
+                    f"StrainIndex for ReadId '{read_id}' must be an int, got {type(strain_idx)}."
+                )
             if not (0 <= strain_idx < self._num_strains):
                 raise ValueError(
-                    f"StrainIndex {strain_idx} for ReadId '{read_id}' is out of range [0, {self._num_strains-1}]."
+                    f"StrainIndex {strain_idx} for ReadId '{read_id}' is out of range [0, {self._num_strains - 1}]."
                 )
         return Counter(clear_strain_assignments.values())
 
@@ -244,7 +263,7 @@ class ClassificationAnalyzer:
         Returns:
             NumPy array of prior probabilities for each strain. Sum may not be exactly 1.0
             if many strains have zero counts and epsilon is used.
-        
+
         Raises:
             TypeError: If input is not a Counter or keys are not int.
             ValueError: If StrainIndex keys are invalid.
@@ -258,13 +277,15 @@ class ClassificationAnalyzer:
         if total_clear_counts > 0:
             for strain_index, count in strain_prior_counts.items():
                 if not isinstance(strain_index, int):
-                    raise TypeError(f"StrainIndex key {strain_index} in Counter must be an int.")
+                    raise TypeError(
+                        f"StrainIndex key {strain_index} in Counter must be an int."
+                    )
                 if not (0 <= strain_index < self._num_strains):
                     raise ValueError(
-                        f"StrainIndex key {strain_index} in Counter is out of range [0, {self._num_strains-1}]."
+                        f"StrainIndex key {strain_index} in Counter is out of range [0, {self._num_strains - 1}]."
                     )
                 prior_probabilities[strain_index] = float(count) / total_clear_counts
-        
+
         # Optional: Re-normalize if strict sum-to-1 is needed after epsilon.
         # current_sum = np.sum(prior_probabilities)
         # if current_sum > 0 and not np.isclose(current_sum, 1.0):
@@ -284,13 +305,15 @@ class ClassificationAnalyzer:
 
         Returns:
             The StrainIndex of the chosen strain.
-        
+
         Raises:
             TypeError: If input types are incorrect.
             ValueError: If input properties are invalid (e.g., length mismatch, probabilities not summing to 1).
         """
-        self._validate_count_vector(strain_hit_counts, "resolve_single_ambiguous_read input")
-        
+        self._validate_count_vector(
+            strain_hit_counts, "resolve_single_ambiguous_read input"
+        )
+
         if not isinstance(prior_probabilities, np.ndarray):
             raise TypeError("prior_probabilities must be a NumPy array.")
         if prior_probabilities.ndim != 1:
@@ -300,33 +323,49 @@ class ClassificationAnalyzer:
                 f"prior_probabilities length ({len(prior_probabilities)}) must match number of strains ({self._num_strains})."
             )
         if not np.issubdtype(prior_probabilities.dtype, np.floating):
-            raise TypeError(f"prior_probabilities dtype must be float, got {prior_probabilities.dtype}.")
+            raise TypeError(
+                f"prior_probabilities dtype must be float, got {prior_probabilities.dtype}."
+            )
         if not np.all(prior_probabilities >= 0):
             raise ValueError("All prior_probabilities must be non-negative.")
-        if not np.isclose(np.sum(prior_probabilities), 1.0, atol=1e-5): # Allow for small float inaccuracies
+        if not np.isclose(
+            np.sum(prior_probabilities), 1.0, atol=1e-5
+        ):  # Allow for small float inaccuracies
             # This check might be too strict if epsilon usage means sum is not exactly 1.
             # For internal use with convert_prior_counts_to_probability_vector, this might need adjustment
             # or this check relaxed if the epsilon strategy means sum isn't always 1.
             # For now, keeping it relatively strict.
-            print(f"Warning: prior_probabilities sum ({np.sum(prior_probabilities)}) is not close to 1.0. Normalizing for choice functions.")
+            print(
+                f"Warning: prior_probabilities sum ({np.sum(prior_probabilities)}) is not close to 1.0. Normalizing for choice functions."
+            )
             # Re-normalize if used for p-values in choice functions that require sum=1
             # However, likelihood_scores * prior_probabilities does not require priors to sum to 1.
             # The normalization happens on likelihood_scores later.
             # So, this check might be more for sanity than strict necessity for the math here.
-            pass # For now, let it pass with a warning.
+            pass  # For now, let it pass with a warning.
 
         max_hit_value = np.max(strain_hit_counts)
-        if max_hit_value == 0: # All hits are zero, should not be an ambiguous read by definition
-             # This case should ideally be filtered out before calling this method.
-             # If it occurs, randomly assign to any strain based on priors if they are informative,
-             # or completely random if priors are uninformative (e.g. uniform).
-             print("Warning: _resolve_single_ambiguous_read called with zero hit vector. Assigning randomly based on priors.")
-             return int(self.random_generator.choice(np.arange(self._num_strains), p=(prior_probabilities / np.sum(prior_probabilities)) if np.sum(prior_probabilities) > 0 else None))
-
+        if (
+            max_hit_value == 0
+        ):  # All hits are zero, should not be an ambiguous read by definition
+            # This case should ideally be filtered out before calling this method.
+            # If it occurs, randomly assign to any strain based on priors if they are informative,
+            # or completely random if priors are uninformative (e.g. uniform).
+            print(
+                "Warning: _resolve_single_ambiguous_read called with zero hit vector. Assigning randomly based on priors."
+            )
+            return int(
+                self.random_generator.choice(
+                    np.arange(self._num_strains),
+                    p=(prior_probabilities / np.sum(prior_probabilities))
+                    if np.sum(prior_probabilities) > 0
+                    else None,
+                )
+            )
 
         candidate_strain_hits = strain_hit_counts.astype(float)
         candidate_strain_hits[candidate_strain_hits < max_hit_value] = 0.0
-        
+
         likelihood_scores = candidate_strain_hits * prior_probabilities
 
         if np.all(likelihood_scores == 0):
@@ -335,7 +374,7 @@ class ClassificationAnalyzer:
         sum_likelihood_scores = np.sum(likelihood_scores)
         if sum_likelihood_scores == 0:
             max_indices = np.flatnonzero(strain_hit_counts == max_hit_value)
-            if len(max_indices) == 0: # Should not happen if max_hit_value > 0
+            if len(max_indices) == 0:  # Should not happen if max_hit_value > 0
                 # Fallback to any strain if truly no max indices (e.g. all NaNs, though CountVector is uint8)
                 return int(self.random_generator.choice(self._num_strains))
             return int(self.random_generator.choice(max_indices))
@@ -345,30 +384,40 @@ class ClassificationAnalyzer:
         if not np.isclose(np.sum(normalized_scores), 1.0):
             normalized_scores /= np.sum(normalized_scores)
 
-
         strain_indices = np.arange(self._num_strains)
         if self.disambiguation_mode == "max":
             return int(np.argmax(likelihood_scores))
         elif self.disambiguation_mode == "random":
-            return int(self.random_generator.choice(strain_indices, p=normalized_scores))
+            return int(
+                self.random_generator.choice(strain_indices, p=normalized_scores)
+            )
         elif self.disambiguation_mode == "multinomial":
-            selected_index_array = self.random_generator.multinomial(1, pvals=normalized_scores)
+            selected_index_array = self.random_generator.multinomial(
+                1, pvals=normalized_scores
+            )
             return int(np.argmax(selected_index_array))
         elif self.disambiguation_mode == "dirichlet":
             dirichlet_alpha = likelihood_scores.copy()
-            dirichlet_alpha[dirichlet_alpha == 0] = 1e-10 # Ensure alpha > 0
+            dirichlet_alpha[dirichlet_alpha == 0] = 1e-10  # Ensure alpha > 0
             # Prevent dirichlet from failing if all alphas are effective zero (e.g. all 1e-10)
-            if np.all(dirichlet_alpha <= 1e-10):  
-                 dirichlet_alpha = np.ones(len(dirichlet_alpha)) # Fallback to uniform-ish if all are tiny
+            if np.all(dirichlet_alpha <= 1e-10):
+                dirichlet_alpha = np.ones(
+                    len(dirichlet_alpha)
+                )  # Fallback to uniform-ish if all are tiny
 
-            sampled_probabilities = self.random_generator.dirichlet(alpha=dirichlet_alpha)
+            sampled_probabilities = self.random_generator.dirichlet(
+                alpha=dirichlet_alpha
+            )
             # Ensure sampled_probabilities sum to 1 for choice
             if not np.isclose(np.sum(sampled_probabilities), 1.0):
-                 sampled_probabilities /= np.sum(sampled_probabilities)
-            return int(self.random_generator.choice(strain_indices, p=sampled_probabilities))
-        else: # Should be caught by __init__
-            raise ValueError(f"Internal error: Unknown disambiguation mode: {self.disambiguation_mode}")
-
+                sampled_probabilities /= np.sum(sampled_probabilities)
+            return int(
+                self.random_generator.choice(strain_indices, p=sampled_probabilities)
+            )
+        else:  # Should be caught by __init__
+            raise ValueError(
+                f"Internal error: Unknown disambiguation mode: {self.disambiguation_mode}"
+            )
 
     def resolve_ambiguous_hits_parallel(
         self,
@@ -384,7 +433,7 @@ class ClassificationAnalyzer:
 
         Returns:
             Dict mapping ReadId to resolved StrainIndex.
-        
+
         Raises:
             TypeError: If input types are incorrect.
             ValueError: If input properties are invalid.
@@ -392,17 +441,29 @@ class ClassificationAnalyzer:
         if not isinstance(ambiguous_hits_dict, dict):
             raise TypeError("ambiguous_hits_dict must be a dictionary.")
         # Validate prior_probabilities once before passing to partial function
-        if not isinstance(prior_probabilities, np.ndarray): # Duplicates check from _resolve_single_ambiguous_read for safety
+        if not isinstance(
+            prior_probabilities, np.ndarray
+        ):  # Duplicates check from _resolve_single_ambiguous_read for safety
             raise TypeError("prior_probabilities must be a NumPy array.")
-        if prior_probabilities.ndim != 1 or len(prior_probabilities) != self._num_strains or \
-           not np.issubdtype(prior_probabilities.dtype, np.floating) or np.any(prior_probabilities < 0):
-            raise ValueError("prior_probabilities must be a 1D float array of correct length with non-negative values.")
+        if (
+            prior_probabilities.ndim != 1
+            or len(prior_probabilities) != self._num_strains
+            or not np.issubdtype(prior_probabilities.dtype, np.floating)
+            or np.any(prior_probabilities < 0)
+        ):
+            raise ValueError(
+                "prior_probabilities must be a 1D float array of correct length with non-negative values."
+            )
         # Sum check for priors is complex here due to epsilon; _resolve_single_ambiguous_read handles internal normalization.
-        
+
         for read_id, cv in ambiguous_hits_dict.items():
             if not isinstance(read_id, str):
-                raise TypeError(f"ReadId '{read_id}' in ambiguous_hits_dict must be a string.")
-            self._validate_count_vector(cv, f"ReadId '{read_id}' in ambiguous_hits_dict")
+                raise TypeError(
+                    f"ReadId '{read_id}' in ambiguous_hits_dict must be a string."
+                )
+            self._validate_count_vector(
+                cv, f"ReadId '{read_id}' in ambiguous_hits_dict"
+            )
 
         if not ambiguous_hits_dict:
             return {}
@@ -411,20 +472,23 @@ class ClassificationAnalyzer:
             self._resolve_single_ambiguous_read, prior_probabilities=prior_probabilities
         )
         num_disambiguation_processes = max(1, self.num_processes // 2)
-        
+
         hit_vectors_to_process = list(ambiguous_hits_dict.values())
         read_ids_in_order = list(ambiguous_hits_dict.keys())
 
-        if not hit_vectors_to_process: return {}
+        if not hit_vectors_to_process:
+            return {}
 
         try:
             with mp.Pool(processes=num_disambiguation_processes) as pool:
                 resolved_indices_list = pool.map(
                     resolve_func_with_priors, hit_vectors_to_process
                 )
-        except Exception as e: # Catch potential mp.Pool errors
-            raise RuntimeError(f"Multiprocessing pool error during ambiguous hit resolution: {e}") from e
-            
+        except Exception as e:  # Catch potential mp.Pool errors
+            raise RuntimeError(
+                f"Multiprocessing pool error during ambiguous hit resolution: {e}"
+            ) from e
+
         resolved_assignments = dict(zip(read_ids_in_order, resolved_indices_list))
         print(f"Resolved {len(resolved_assignments)} ambiguous assignments.")
         return resolved_assignments
@@ -447,36 +511,47 @@ class ClassificationAnalyzer:
 
         Returns:
             Dict mapping ReadId to StrainIndex or unassigned_marker.
-        
+
         Raises:
             TypeError: If input types are incorrect.
         """
-        if not isinstance(clear_assignments, dict) or \
-           not isinstance(resolved_ambiguous_assignments, dict) or \
-           not isinstance(no_hit_read_ids, list) or \
-           not isinstance(unassigned_marker, str):
+        if (
+            not isinstance(clear_assignments, dict)
+            or not isinstance(resolved_ambiguous_assignments, dict)
+            or not isinstance(no_hit_read_ids, list)
+            or not isinstance(unassigned_marker, str)
+        ):
             raise TypeError("Invalid input types for combine_assignments arguments.")
-        
+
         # Basic validation of content types (can be expanded)
-        if not all(isinstance(k, str) and isinstance(v, int) for k,v in clear_assignments.items()):
-            raise TypeError("clear_assignments must map ReadId (str) to StrainIndex (int).")
-        if not all(isinstance(k, str) and isinstance(v, int) for k,v in resolved_ambiguous_assignments.items()):
-            raise TypeError("resolved_ambiguous_assignments must map ReadId (str) to StrainIndex (int).")
+        if not all(
+            isinstance(k, str) and isinstance(v, int)
+            for k, v in clear_assignments.items()
+        ):
+            raise TypeError(
+                "clear_assignments must map ReadId (str) to StrainIndex (int)."
+            )
+        if not all(
+            isinstance(k, str) and isinstance(v, int)
+            for k, v in resolved_ambiguous_assignments.items()
+        ):
+            raise TypeError(
+                "resolved_ambiguous_assignments must map ReadId (str) to StrainIndex (int)."
+            )
         if not all(isinstance(item, str) for item in no_hit_read_ids):
             raise TypeError("no_hit_read_ids must be a list of strings.")
-
 
         final_assignments: Dict[ReadId, Union[StrainIndex, str]] = {}
         final_assignments.update(clear_assignments)
         final_assignments.update(resolved_ambiguous_assignments)
         for read_id in no_hit_read_ids:
             final_assignments[read_id] = unassigned_marker
-        
+
         print(
             f"Final combined assignment summary:\n"
             f"  Total reads processed: {len(final_assignments)}\n"
             f"  Assigned (clear + resolved): {len(clear_assignments) + len(resolved_ambiguous_assignments)}\n"
-            f"  Marked '{unassigned_marker}': {len(no_hit_read_ids)}" # This count is only for no_hit_read_ids
+            f"  Marked '{unassigned_marker}': {len(no_hit_read_ids)}"  # This count is only for no_hit_read_ids
         )
         return final_assignments
 
@@ -533,4 +608,3 @@ class ClassificationAnalyzer:
 #     if clear_hits or ambiguous_hits or no_hits:
 #         # yield self._process_batch(clear_hits, ambiguous_hits, no_hits) # Call to undefined method
 #         pass
-```

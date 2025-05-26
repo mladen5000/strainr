@@ -7,11 +7,11 @@ import pandas as pd
 import numpy as np
 import pathlib
 import pickle
-from typing import List, Dict, Union, Any, Optional # Added Any for get_database_stats
+from typing import List, Union, Optional # Added Any for get_database_stats
 from unittest.mock import patch, MagicMock
 
 # Import the consolidated class
-from src.strainr.kmer_database import StrainKmerDb, Kmer, CountVector 
+from src.strainr.kmer_database import StrainKmerDb, Kmer 
 
 # --- Helper Functions & Fixtures (adapted from previous test_kmer_database.py) ---
 

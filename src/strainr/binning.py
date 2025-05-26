@@ -8,7 +8,6 @@ from typing import (
     Tuple,
     Union,
     Optional,
-    Any,
 )  # Added Any for undefined generate_table output
 import gzip # For writing gzipped example files
 import traceback # For more detailed error info in main example
@@ -20,7 +19,7 @@ from Bio import SeqIO
 
 # Local application/library specific imports
 from strainr.utils import open_file_transparently
-from strainr.genomic_types import ReadId, StrainIndex, FinalAssignmentsType # Import FinalAssignmentsType
+from strainr.genomic_types import ReadId, FinalAssignmentsType # Import FinalAssignmentsType
 
 # Type alias FinalAssignmentsType is now imported from genomic_types
 
@@ -257,7 +256,6 @@ def _extract_reads_for_strain(
             with open_file_transparently(
                 original_fastq_path, mode="rt"
             ) as original_handle:
-            with open_file_transparently(original_fastq_path, mode="rt") as original_handle:
 
                 for record in SeqIO.parse(original_handle, "fastq"):
                     # Read ID normalization might be needed if FASTQ IDs have suffixes like /1 or /2

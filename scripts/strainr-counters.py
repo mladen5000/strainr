@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Union
+from typing import ClassVar, Union
 
 import mmh3
 import numpy as np
 import pandas as pd
+
 from Bio.Seq import Seq
 from nptyping import NDArray, Shape, UInt8
 
@@ -84,9 +85,6 @@ class SimpleSeq:
                 )
                 for index in range(max_index)
             ]
-
-
-from typing import ClassVar
 
 
 @dataclass(
