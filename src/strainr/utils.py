@@ -4,14 +4,22 @@ import gzip
 import mimetypes
 import pickle
 import pathlib
-from typing import Dict, List, TextIO, Tuple, Union # Removed Any, Optional. functools is not used.
+from typing import (
+    Dict,
+    List,
+    TextIO,
+    Tuple,
+    Union,
+)  # Removed Any, Optional. functools is not used.
 
-import numpy as np # For type hinting np.ndarray
+import numpy as np  # For type hinting np.ndarray
 import pandas as pd
 from Bio.Seq import Seq
 
 
-def open_file_transparently(file_path: Union[str, pathlib.Path], mode: str = "rt") -> TextIO:
+def open_file_transparently(
+    file_path: Union[str, pathlib.Path], mode: str = "rt"
+) -> TextIO:
     """Opens a file, transparently handling gzip compression.
 
     Infers compression from file extension. Defaults to text read mode.
@@ -29,23 +37,25 @@ def open_file_transparently(file_path: Union[str, pathlib.Path], mode: str = "rt
         TypeError: If file_path is not a str or pathlib.Path.
     """
     if not isinstance(file_path, (str, pathlib.Path)):
-        raise TypeError(f"file_path must be a string or pathlib.Path, not {type(file_path)}")
-    
+        raise TypeError(
+            f"file_path must be a string or pathlib.Path, not {type(file_path)}"
+        )
+
     file_path = pathlib.Path(file_path)
 
-    if not file_path.exists(): # Explicit check before mimetypes or open
+    if not file_path.exists():  # Explicit check before mimetypes or open
         raise FileNotFoundError(f"File not found: {file_path}")
 
     guessed_type, encoding = mimetypes.guess_type(str(file_path))
-    
+
     try:
         if encoding == "gzip":
-            return gzip.open(file_path, mode=mode) # type: ignore # gzip.open can return TextIO
+            return gzip.open(file_path, mode=mode)  # type: ignore # gzip.open can return TextIO
         else:
             # For non-gzip, ensure 'b' is not in mode if we expect TextIO,
             # or ensure 't' is not in mode if we expect BinaryIO.
             # The type hint TextIO implies text mode.
-            if 'b' in mode:
+            if "b" in mode:
                 # This case would violate TextIO return if not for type: ignore.
                 # For true transparent opening, the return type might need to be Union[TextIO, BinaryIO]
                 # or the function should be split. For now, assume text mode is primary.
@@ -54,10 +64,10 @@ def open_file_transparently(file_path: Union[str, pathlib.Path], mode: str = "rt
                 # If a binary mode is passed, the user might get a BinaryIO despite TextIO hint.
                 # This is a known complexity with such transparent openers.
                 # For this refactor, we stick to the original intent of TextIO where possible.
-                if 't' not in mode : # if mode is purely binary e.g. "rb"
+                if "t" not in mode:  # if mode is purely binary e.g. "rb"
                     # This path is problematic for TextIO return hint.
                     # However, since original was TextIO, let's assume "rt" or "r" are typical.
-                    pass # Allow binary modes, but caller must be aware of return type change
+                    pass  # Allow binary modes, but caller must be aware of return type change
             return open(file_path, mode=mode)
     except (IOError, OSError) as e:
         raise IOError(f"Error opening file {file_path} with mode '{mode}': {e}") from e
@@ -82,8 +92,12 @@ def get_canonical_kmer(kmer: Seq) -> Seq:
 
 def pickle_intermediate_results(
     output_dir: pathlib.Path,
-    raw_kmer_scores: List[Tuple[str, np.ndarray]], # e.g., List[Tuple[ReadId, CountVector]]
-    final_read_assignments: Dict[str, Union[str, int]], # e.g., Dict[ReadId, Union[StrainName, StrainIndex]]
+    raw_kmer_scores: List[
+        Tuple[str, np.ndarray]
+    ],  # e.g., List[Tuple[ReadId, CountVector]]
+    final_read_assignments: Dict[
+        str, Union[str, int]
+    ],  # e.g., Dict[ReadId, Union[StrainName, StrainIndex]]
 ) -> None:
     """Pickles raw k-mer scores and final read assignments to disk.
 
@@ -100,7 +114,7 @@ def pickle_intermediate_results(
     """
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         raw_results_path = output_dir / "raw_kmer_scores.pkl"
         with open(raw_results_path, "wb") as fh_raw:
             pickle.dump(raw_kmer_scores, fh_raw)
@@ -112,14 +126,18 @@ def pickle_intermediate_results(
         print(f"Final read assignments pickled to: {final_assignments_path}")
 
     except (IOError, pickle.PicklingError) as e:
-        raise IOError(f"Error pickling intermediate results to {output_dir}: {e}") from e
+        raise IOError(
+            f"Error pickling intermediate results to {output_dir}: {e}"
+        ) from e
 
 
 def save_classification_results_to_dataframe(
     output_dir: pathlib.Path,
-    intermediate_scores: Dict[str, Union[List[float], np.ndarray]], # ReadID to scores per strain
-    final_assignments: Dict[str, str], # ReadID to assigned strain name (or "NA")
-    strain_names: List[str]
+    intermediate_scores: Dict[
+        str, Union[List[float], np.ndarray]
+    ],  # ReadID to scores per strain
+    final_assignments: Dict[str, str],  # ReadID to assigned strain name (or "NA")
+    strain_names: List[str],
 ) -> None:
     """Converts classification results to a Pandas DataFrame and pickles it.
 
@@ -143,18 +161,22 @@ def save_classification_results_to_dataframe(
         results_df = pd.DataFrame.from_dict(
             intermediate_scores, orient="index", columns=strain_names
         )
-        
+
         # Scores are often floats (probabilities, likelihoods, etc.)
         # Casting to float is safer than int if the nature of scores is not strictly integer.
         try:
-            results_df = results_df.astype(float) 
+            results_df = results_df.astype(float)
         except ValueError as e:
             # If scores cannot be cast to float (e.g., contain non-numeric strings erroneously)
-            raise ValueError(f"Intermediate scores contain non-numeric values that cannot be cast to float. Error: {e}") from e
+            raise ValueError(
+                f"Intermediate scores contain non-numeric values that cannot be cast to float. Error: {e}"
+            ) from e
 
         # Prepare series for final assignments
-        assigned_strains_series = pd.Series(final_assignments, name="final_assigned_strain")
-        
+        assigned_strains_series = pd.Series(
+            final_assignments, name="final_assigned_strain"
+        )
+
         # Join scores DataFrame with final assignments series
         # Use how='left' to keep all reads from results_df (scores table)
         # and add assignments where available. Reads in results_df but not in
@@ -165,5 +187,11 @@ def save_classification_results_to_dataframe(
         results_df.to_pickle(dataframe_pickle_path)
         print(f"Classification results DataFrame pickled to: {dataframe_pickle_path}")
 
-    except (IOError, pickle.PicklingError, ValueError) as e: # Added ValueError for DataFrame issues
-        raise IOError(f"Error saving classification results to DataFrame at {output_dir}: {e}") from e
+    except (
+        IOError,
+        pickle.PicklingError,
+        ValueError,
+    ) as e:  # Added ValueError for DataFrame issues
+        raise IOError(
+            f"Error saving classification results to DataFrame at {output_dir}: {e}"
+        ) from e

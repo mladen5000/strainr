@@ -22,15 +22,11 @@ class AbundanceCalculator:
     Handles conversion of read assignments to relative abundances,
     normalization, thresholding, and output formatting.
     """
-    
-    def __init__(
-        self, 
-        strain_names: List[str],
-        abundance_threshold: float = 0.001
-    ):
+
+    def __init__(self, strain_names: List[str], abundance_threshold: float = 0.001):
         """
         Initialize the abundance calculator.
-        
+
         Args:
             strain_names: List of unique, non-empty strain identifiers.
             abundance_threshold: Minimum relative abundance (0.0 to <1.0) for reporting.
@@ -123,7 +119,7 @@ class AbundanceCalculator:
         self,
         named_assignments: Dict[ReadId, str],
         exclude_unassigned: bool = True,
-        unassigned_marker: str = "NA"
+        unassigned_marker: str = "NA",
     ) -> Counter[str]:
         """
         Calculates raw counts of reads assigned to each strain name or marker.
@@ -162,8 +158,7 @@ class AbundanceCalculator:
             return Counter(named_assignments.values())
 
     def calculate_relative_abundances(
-        self,
-        raw_abundances: Counter[str]
+        self, raw_abundances: Counter[str]
     ) -> Dict[str, float]:
         """
         Converts raw counts to relative frequencies (0.0 to 1.0).
@@ -186,9 +181,7 @@ class AbundanceCalculator:
         return relative_abundances
 
     def apply_threshold_and_format(
-        self,
-        relative_abundances: Dict[str, float],
-        sort_by_abundance: bool = True
+        self, relative_abundances: Dict[str, float], sort_by_abundance: bool = True
     ) -> Dict[str, float]:
         """
         Filters strains below `self.abundance_threshold` and optionally sorts.
@@ -217,10 +210,7 @@ class AbundanceCalculator:
         return dict(sorted(filtered_abundances.items(), key=key_sort_func, reverse=reverse_sort))
 
 
-    def generate_report_string(
-        self,
-        final_abundances: Dict[str, float]
-    ) -> str:
+    def generate_report_string(self, final_abundances: Dict[str, float]) -> str:
         """
         Generates a formatted string reporting abundances as percentages.
         Example: "StrainA: 75.13%\nStrainB: 24.87%"

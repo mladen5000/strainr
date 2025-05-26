@@ -72,7 +72,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         self.strain_names: List[str] = []
         self.num_strains: int = 0
         self.num_kmers: int = 0
-        
+
         self._load_database(expected_kmer_length)
 
         print(
@@ -98,7 +98,9 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             raise RuntimeError(f"An unexpected error occurred while reading {self.database_filepath}: {e}") from e
 
         if not isinstance(kmer_strain_df, pd.DataFrame):
-            raise RuntimeError(f"Data loaded from {self.database_filepath} is not a pandas DataFrame (type: {type(kmer_strain_df)}).")
+            raise RuntimeError(
+                f"Data loaded from {self.database_filepath} is not a pandas DataFrame (type: {type(kmer_strain_df)})."
+            )
 
         if kmer_strain_df.empty:
             raise ValueError(f"Loaded database is empty: {self.database_filepath}")
@@ -110,9 +112,11 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
 
         if kmer_strain_df.index.empty:
             raise ValueError("Database contains no k-mers (empty index).")
-        
+
         if not kmer_strain_df.index.is_unique:
-             print(f"Warning: K-mer index in {self.database_filepath} is not unique. Duplicates will be resolved by last occurrence when creating the lookup dictionary.")
+            print(
+                f"Warning: K-mer index in {self.database_filepath} is not unique. Duplicates will be resolved by last occurrence when creating the lookup dictionary."
+            )
 
         first_kmer_obj = kmer_strain_df.index[0]
         kmer_type_is_str: bool
@@ -127,7 +131,9 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             raise TypeError(f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes.")
 
         if inferred_k_len == 0:
-            raise ValueError("First k-mer in database has zero length, which is invalid.")
+            raise ValueError(
+                "First k-mer in database has zero length, which is invalid."
+            )
 
         if expected_kmer_length is not None:
             if expected_kmer_length != inferred_k_len:
@@ -321,6 +327,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An error occurred during database testing: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         # Clean up dummy files

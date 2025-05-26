@@ -62,7 +62,7 @@ def bin_single(strain, bin_table, forward_file, reverse_file, bin_dir):
     paired_files = [forward_file, reverse_file]
 
     for fidx, input_file in enumerate(paired_files):  # (0,R1), (1,R2)
-        writefile_name = f"bin.{strain_accession}_R{fidx+1}.fastq"
+        writefile_name = f"bin.{strain_accession}_R{fidx + 1}.fastq"
         writefile = bin_dir / writefile_name
 
         if fidx == 0:
