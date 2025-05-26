@@ -3,32 +3,35 @@ Sequence handling and k-mer extraction functionality.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Set  # Added Set for type hinting
+from typing import List, Set 
+
 import mmh3
 
+# Define allowed DNA bytes at the module level for clarity and reuse
+VALID_DNA_BYTES: frozenset[int] = frozenset(b"ACGTN")
 
-@dataclass(order=True, slots=True, frozen=True) # Added frozen=True for immutability
+@dataclass(order=True, slots=True, frozen=True)
 class GenomicSequence:
     """
     Immutable genomic sequence representation optimized for k-mer analysis.
 
-    This class provides a memory-efficient, validated container for genomic sequences
-    with built-in k-mer extraction capabilities.
+    This class provides a memory-efficient, validated container for genomic sequences.
+    Sequence data is stored as bytes and validated to contain only bytes corresponding
+    to 'A', 'C', 'G', 'T', or 'N'.
 
     Attributes:
         sequence_id: Unique identifier for the sequence.
-        sequence_data: Raw sequence as bytes for memory efficiency and to ensure
-                       consistent handling of character encodings.
+        sequence_data: Raw sequence as bytes, validated to contain only valid DNA bytes.
+    
 
     Example:
-        >>> seq = GenomicSequence(
-        ...     sequence_id='read_001',
-        ...     sequence_data=b'ACTTTAAGGGGTTAAACCCCCG' * 100
-        ... )
+        >>> seq = GenomicSequence(sequence_id='read_001', sequence_data=b'ACGTN')
         >>> len(seq)
-        2200
-        >>> seq.is_valid_dna()
-        True
+        5
+        >>> seq[0] # Accesses as character
+        'A'
+        >>> str(seq)
+        'ACGTN'
     """
 
     sequence_id: str = field(compare=False)
@@ -38,58 +41,68 @@ class GenomicSequence:
         """
         Validate the byte sequence data.
 
-        Ensures the sequence is non-empty and contains only valid DNA characters
-        (A, C, G, T, N).
+        Ensures the sequence is non-empty and contains only valid DNA bytes
+        (bytes corresponding to ASCII 'A', 'C', 'G', 'T', 'N').
 
         Returns:
             The validated sequence as bytes.
 
         Raises:
-            ValueError: If sequence is empty or contains invalid characters.
-            TypeError: If sequence_data is not bytes (though type hint should prevent this).
+            TypeError: If sequence_data is not bytes.
+            ValueError: If sequence is empty or contains invalid byte values.
         """
         if not isinstance(self.sequence_data, bytes):
-            # This case should ideally be caught by type checking before instantiation
-            # or handled by a factory method if str input is allowed.
             raise TypeError(
                 f"Sequence data must be bytes, got {type(self.sequence_data).__name__}."
             )
 
-        if len(self.sequence_data) == 0:
+        if not self.sequence_data: # Check for empty bytes
             raise ValueError("Sequence data must be non-empty.")
 
-        # Validate DNA bases
-        allowed_nucleotides: Set[str] = {"A", "C", "G", "T", "N"}
+        # Direct byte-level validation
+        invalid_bytes_found: Set[int] = set()
+        for byte_val in self.sequence_data:
+            # Convert byte_val to uppercase equivalent for case-insensitivity if desired,
+            # but VALID_DNA_BYTES currently only contains uppercase.
+            # For strict ACGTN (uppercase only):
+            if byte_val not in VALID_DNA_BYTES:
+                invalid_bytes_found.add(byte_val)
+        
+        if invalid_bytes_found:
+            # Try to represent invalid bytes as characters if printable, else as numeric values
+            # for a clearer error message.
+            invalid_chars_repr = []
+            for b_val in sorted(list(invalid_bytes_found)):
+                try:
+                    char = bytes([b_val]).decode('ascii')
+                    if char.isprintable(): # Check if it's a printable character
+                        invalid_chars_repr.append(f"'{char}' (byte: {b_val})")
+                    else:
+                        invalid_chars_repr.append(f"byte {b_val}")
+                except UnicodeDecodeError:
+                    invalid_chars_repr.append(f"byte {b_val}")
+            
+            allowed_chars_str = ", ".join(f"'{chr(b)}'" for b in sorted(list(VALID_DNA_BYTES)))
 
-        # Decode for character set validation, assuming ASCII or compatible (e.g., UTF-8 subset)
-        # If other encodings are possible, this might need adjustment.
-        try:
-            sequence_str = self.sequence_data.decode("ascii")
-        except UnicodeDecodeError as error:
             raise ValueError(
-                "Sequence data cannot be decoded as ASCII. Ensure it contains valid DNA characters."
-            ) from error
-
-        found_nucleotides: Set[str] = set(sequence_str)
-
-        invalid_bases: Set[str] = found_nucleotides.difference(allowed_nucleotides)
-        if invalid_bases:
-            # Sort for consistent error messages
-            sorted_invalid_bases = ", ".join(sorted(list(invalid_bases)))
-            raise ValueError(
-                f"Sequence contains invalid nucleotides: {{{sorted_invalid_bases}}}. "
-                f"Only DNA characters {allowed_nucleotides} are allowed."
+                f"Sequence contains invalid DNA bytes: {{{', '.join(invalid_chars_repr)}}}. "
+                f"Allowed bytes correspond to characters: {allowed_chars_str}."
             )
 
         return self.sequence_data
 
     def __post_init__(self) -> None:
         """Validate sequence data after initialization."""
-        # The validation method returns the data, but since it operates on
-        # self.sequence_data directly and we expect bytes from the start,
-        # direct assignment isn't strictly needed here but is kept for consistency
-        # with the original structure.
-        self.sequence_data = self._validate_sequence_data()
+        # Re-assigning to self.sequence_data is not strictly necessary due to
+        # frozen=True (original object won't change), but _validate_sequence_data
+        # must be called. If it were not frozen, this would be crucial.
+        # For frozen dataclasses, __post_init__ can't modify fields directly
+        # if they are part of the hash/eq. However, validation that raises errors
+        # is the primary goal here.
+        # The direct assignment `self.sequence_data = self._validate_sequence_data()`
+        # would fail for frozen=True. Instead, just call for validation.
+        self._validate_sequence_data()
+
 
     def __hash__(self) -> int:
         """Generate hash using MurmurHash3 for consistency and performance."""
@@ -100,38 +113,44 @@ class GenomicSequence:
         return len(self.sequence_data)
 
     def __getitem__(self, index: int) -> str:
-        """Get nucleotide at a specific position as a string.
+        """Get nucleotide at a specific position as a string character.
 
         Args:
-            index: The integer index of the nucleotide.
+            index: The integer index of the nucleotide byte.
 
         Returns:
-            The nucleotide at the specified position, decoded as an ASCII character.
+            The nucleotide character at the specified position, decoded as ASCII.
         
         Raises:
             IndexError: If the index is out of bounds.
-            UnicodeDecodeError: If the byte at the index is not valid ASCII (should not happen if validation passed).
+            UnicodeDecodeError: If the byte at the index is not valid ASCII
+                                (should not happen if validation passed ensuring ASCII chars).
         """
-        # More efficient than decoding the whole sequence for a single character
         return bytes([self.sequence_data[index]]).decode('ascii')
 
     def __str__(self) -> str:
         """Return the sequence as an ASCII string."""
-        # Validation ensures ASCII compatibility, so direct decode is fine.
-        # errors='replace' could be used for more lenient string conversion if desired,
-        # but strict 'ascii' aligns with validation.
+        # Validation ensures all bytes correspond to 'A', 'C', 'G', 'T', 'N',
+        # which are ASCII characters.
         return self.sequence_data.decode(encoding="ascii")
 
     def is_valid_dna(self) -> bool:
-        """Check if the sequence contains only valid DNA nucleotides (A, C, G, T, N).
+        """
+        Checks if the sequence contains only valid DNA bytes (A, C, G, T, N).
+        
+        Note: For a successfully initialized GenomicSequence object (due to `frozen=True`
+        and `__post_init__` validation), this method will always return True.
+        It primarily serves as a way to re-trigger validation logic if needed,
+        or for consistency if the immutability constraint were different.
 
         Returns:
-            True if the sequence is valid DNA, False otherwise.
+            True if the sequence is valid DNA, False otherwise (though False is
+            unreachable for successfully constructed frozen instances).
         """
         try:
-            self._validate_sequence_data()
+            self._validate_sequence_data() # Re-run validation
             return True
-        except (ValueError, TypeError):
+        except (ValueError, TypeError): # Catch errors from _validate_sequence_data
             return False
 
 
@@ -145,38 +164,45 @@ def extract_kmers_from_sequence(
 
     Args:
         sequence: The `GenomicSequence` object containing the DNA sequence.
+                  Its `sequence_data` attribute (bytes) is used.
         kmer_length: The length of k-mers to extract. Defaults to 31.
 
     Returns:
         A list of k-mers, where each k-mer is represented as a bytes object.
 
     Raises:
-        ValueError: If the specified `kmer_length` is greater than the
-                    length of the sequence.
-
-    Example:
-        >>> seq_data = b'ATCGATCG'
-        >>> gen_seq = GenomicSequence(sequence_id='test_seq', sequence_data=seq_data)
-        >>> kmers = extract_kmers_from_sequence(gen_seq, kmer_length=3)
-        >>> kmers
-        [b'ATC', b'TCG', b'CGA', b'GAT', b'ATC', b'TCG']
+        TypeError: If `sequence` is not a `GenomicSequence` instance.
+        ValueError: If `kmer_length` is not positive, or if `kmer_length`
+                    is greater than the length of the sequence.
     """
+    if not isinstance(sequence, GenomicSequence):
+        raise TypeError(f"Input 'sequence' must be a GenomicSequence object, got {type(sequence)}.")
+    if not isinstance(kmer_length, int):
+        raise TypeError(f"kmer_length must be an integer, got {type(kmer_length)}.")
     if kmer_length <= 0:
-        raise ValueError(f"K-mer length must be positive, got {kmer_length}.")
-    if kmer_length > len(sequence):
+        raise ValueError(f"kmer_length must be positive, got {kmer_length}.")
+    
+    sequence_len = len(sequence.sequence_data) # Use len(sequence.sequence_data) for clarity
+    if kmer_length > sequence_len:
         raise ValueError(
-            f"K-mer length ({kmer_length}) cannot exceed sequence length ({len(sequence)})."
+            f"K-mer length ({kmer_length}) cannot exceed sequence length ({sequence_len})."
         )
 
-    # The sequence_data is already bytes due to GenomicSequence validation
     raw_sequence_data = sequence.sequence_data
-    max_start_position = len(raw_sequence_data) - kmer_length + 1
-
+    
     kmer_list: List[bytes] = []
-    # Use memory view for efficient k-mer extraction
-    with memoryview(raw_sequence_data) as sequence_view:
-        for position in range(max_start_position):
-            kmer_list.append(sequence_view[position : position + kmer_length].tobytes())
+    # Using memoryview for efficient slicing of bytes
+    # The number of k-mers is sequence_len - kmer_length + 1
+    num_kmers = sequence_len - kmer_length + 1
+    
+    # Pre-allocate list if performance is critical for very many k-mers,
+    # but simple append is usually fine and readable.
+    # kmer_list = [None] * num_kmers # type: ignore 
+
+    sequence_view = memoryview(raw_sequence_data)
+    for i in range(num_kmers):
+        kmer_list.append(sequence_view[i : i + kmer_length].tobytes())
+        # kmer_list[i] = sequence_view[i : i + kmer_length].tobytes() # If pre-allocated
 
     return kmer_list
 
@@ -189,11 +215,21 @@ def extract_kmers_from_sequence(
 #     This alternative implementation uses a generator to avoid storing all k-mers
 #     in memory simultaneously, which is beneficial for very long sequences.
 #     """
-#     if kmer_length > len(sequence):
-#         raise ValueError(f"K-mer length ({kmer_length}) cannot exceed sequence length ({len(sequence)})")
+#     if not isinstance(sequence, GenomicSequence):
+#         raise TypeError(f"Input 'sequence' must be a GenomicSequence object, got {type(sequence)}.")
+#     if not isinstance(kmer_length, int):
+#         raise TypeError(f"kmer_length must be an integer, got {type(kmer_length)}.")
+#     if kmer_length <= 0:
+#         raise ValueError(f"K-mer length must be positive, got {kmer_length}.")
 #
-#     max_start_position = len(sequence.sequence_data) - kmer_length + 1
+#     sequence_len = len(sequence.sequence_data)
+#     if kmer_length > sequence_len:
+#         raise ValueError(f"K-mer length ({kmer_length}) cannot exceed sequence length ({sequence_len})")
 #
-#     with memoryview(sequence.sequence_data) as sequence_view:
-#         for position in range(max_start_position):
-#             yield sequence_view[position:position + kmer_length].tobytes()
+#     num_kmers = sequence_len - kmer_length + 1
+#     sequence_view = memoryview(sequence.sequence_data)
+#
+#     for i in range(num_kmers):
+#         yield sequence_view[i:i + kmer_length].tobytes()
+
+```

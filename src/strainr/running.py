@@ -3,8 +3,8 @@ import pathlib
 import argparse  # For type hinting args
 from typing import Union, Any  # Removed List, Added Any
 
-# Assuming KmerStrainDatabase is correctly importable from this location
-from strainr.kmer_database import KmerStrainDatabase
+# Assuming StrainKmerDb is correctly importable from this location
+from strainr.kmer_database import StrainKmerDb # Updated to consolidated class name
 
 # Assuming process_arguments is correctly importable
 import src.strainr.parameter_config as parameter_config
@@ -99,11 +99,9 @@ def main() -> None:
     # If a specific k-mer length is expected from CLI for DB, it should be added to process_arguments.
     # For now, let's assume we want the DB to use its intrinsic k-mer length.
     try:
-        kmer_db = KmerStrainDatabase(
-            database_filepath=database_file_path, expected_kmer_length=None
-        )
+        kmer_db = StrainKmerDb(database_filepath=database_file_path, expected_kmer_length=None) # Updated class nam
     except Exception as e:
-        print(f"Error initializing KmerStrainDatabase: {e}")
+        print(f"Error initializing StrainKmerDb: {e}") # Updated class name
         return
 
     # Runner's k parameter (default 31) can be used for k-mer extraction logic within Runner.
@@ -140,7 +138,8 @@ class Runner:
     """
 
     fasta: pathlib.Path  # Path to the input FASTA/FASTQ file
-    kmer_database: KmerStrainDatabase  # Instance of the k-mer database
-    k: int = 31  # k-mer length to use for analysis (e.g., k-mer extraction)
+    kmer_database: StrainKmerDb # Instance of the k-mer database, updated class name
+    k: int = 31 # k-mer length to use for analysis (e.g., k-mer extraction)
+
 
     # Removed commented-out block
