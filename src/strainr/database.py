@@ -4,7 +4,7 @@ K-mer database management for strain classification.
 
 import pickle  # For more specific error handling
 from pathlib import Path
-from typing import Dict, List, Optional, Union  # Removed Any, Tuple
+from typing import Dict, List, Optional, Union, Any # Added Any and Tuple back
 
 import numpy as np
 import pandas as pd  # For pd.errors.EmptyDataError
