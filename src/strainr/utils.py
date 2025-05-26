@@ -2,15 +2,15 @@
 
 import gzip
 import mimetypes
-import pickle
 import pathlib
+import pickle
 from typing import (
-    Dict,
+    Dict,  # Removed Any, Optional. functools is not used.
     List,
     TextIO,
     Tuple,
     Union,
-)  # Removed Any, Optional. functools is not used.
+)
 
 import numpy as np  # For type hinting np.ndarray
 import pandas as pd

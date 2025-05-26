@@ -3,14 +3,16 @@ K-mer database management for strain classification.
 """
 
 import pickle  # For more specific error handling
-from typing import Optional, Dict, List, Union  # Removed Any, Tuple
 from pathlib import Path
+from typing import Dict, List, Optional, Union  # Removed Any, Tuple
+
 import numpy as np
 import pandas as pd  # For pd.errors.EmptyDataError
-from strainr.genomic_types import (
-    KmerCountDict,
+
+from strainr.genomic_types import (  # KmerCountDict is Dict[bytes, CountVector]
     CountVector,
-)  # KmerCountDict is Dict[bytes, CountVector]
+    KmerCountDict,
+)
 
 
 class StrainKmerDatabase:

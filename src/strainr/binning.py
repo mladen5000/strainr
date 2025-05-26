@@ -8,7 +8,6 @@ from typing import (
     Tuple,
     Union,
     Optional,
-    Any,
 )  # Added Any for undefined generate_table output
 import gzip # For writing gzipped example files
 import traceback # For more detailed error info in main example
@@ -20,7 +19,7 @@ from Bio import SeqIO
 
 # Local application/library specific imports
 from strainr.utils import open_file_transparently
-from strainr.genomic_types import ReadId, StrainIndex, FinalAssignmentsType # Import FinalAssignmentsType
+from strainr.genomic_types import ReadId, FinalAssignmentsType # Import FinalAssignmentsType
 
 # Type alias FinalAssignmentsType is now imported from genomic_types
 

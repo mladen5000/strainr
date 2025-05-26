@@ -16,29 +16,29 @@ def process_arguments() -> argparse.Namespace:
                             as attributes.
     """
 
-    parser: argparse.ArgumentParser = argparse.ArgumentParser( # Renamed for clarity
-        description="Strainr: A tool for strain analysis using k-mer based methods." # More descriptive
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(  # Renamed for clarity
+        description="Strainr: A tool for strain analysis using k-mer based methods."  # More descriptive
     )
     parser.add_argument(
         "input",
-        help="One or more forward/unpaired FASTQ input file(s).", # Clarified help
+        help="One or more forward/unpaired FASTQ input file(s).",  # Clarified help
         nargs="+",
-        type=pathlib.Path, # Changed to pathlib.Path
+        type=pathlib.Path,  # Changed to pathlib.Path
     )
     parser.add_argument(
         "-r",
         "--reverse",
-        help="Optional: One or more reverse FASTQ input file(s), corresponding to 'input'. (Feature: todo)", # Clarified help
-        nargs="+", # Should match number of input files if provided, or be single for all
-        type=pathlib.Path, # Changed to pathlib.Path
-        default=[], # Provide a default empty list
+        help="Optional: One or more reverse FASTQ input file(s), corresponding to 'input'. (Feature: todo)",  # Clarified help
+        nargs="+",  # Should match number of input files if provided, or be single for all
+        type=pathlib.Path,  # Changed to pathlib.Path
+        default=[],  # Provide a default empty list
     )
     parser.add_argument(
         "-d",
         "--db",
-        help="Path to the KmerStrainDatabase file (pickled).", # Clarified help
-        type=pathlib.Path, # Changed to pathlib.Path
-        required=True, # Assuming database is essential for most operations
+        help="Path to the KmerStrainDatabase file (pickled).",  # Clarified help
+        type=pathlib.Path,  # Changed to pathlib.Path
+        required=True,  # Assuming database is essential for most operations
     )
     parser.add_argument(
         "-p",
@@ -47,7 +47,7 @@ def process_arguments() -> argparse.Namespace:
         default=4,
         help="Number of cores to use (default: 4)",
     )
-    parser.add_argument( # Standardized to parser
+    parser.add_argument(  # Standardized to parser
         "-o",
         "--out",
         type=pathlib.Path,
@@ -68,24 +68,24 @@ def process_arguments() -> argparse.Namespace:
         type=str,
         default="max",
     )
-    parser.add_argument( # Standardized to parser
+    parser.add_argument(  # Standardized to parser
         "-a",
         "--thresh",
-        help="Abundance threshold for reporting strains (default: 0.001).", # Improved help
+        help="Abundance threshold for reporting strains (default: 0.001).",  # Improved help
         type=float,
         default=0.001,
     )
-    parser.add_argument( # Changed from args to parser
+    parser.add_argument(  # Changed from args to parser
         "--bin",
         action="store_true",
         required=False,
         help=" Perform binning.  ",
     )
-    parser.add_argument( # Standardized to parser
+    parser.add_argument(  # Standardized to parser
         "--save-raw-hits",
         action="store_true",
-        required=False, # Default is False if not specified
-        help="Save intermediate k-mer hit scores and final assignments as pickle files.", # Clarified help
+        required=False,  # Default is False if not specified
+        help="Save intermediate k-mer hit scores and final assignments as pickle files.",  # Clarified help
     )
     # Ensure all calls are to 'parser', not 'args'
     config_space = parser.parse_args()

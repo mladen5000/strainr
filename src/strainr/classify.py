@@ -14,17 +14,7 @@ import multiprocessing as mp
 import pathlib
 import sys
 from collections import Counter
-from typing import (
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Tuple,
-    Union,
-    TextIO,
-    Callable,
-    Set,
-)
+from typing import Callable, Dict, Generator, List, Optional, Set, TextIO, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -33,13 +23,9 @@ from Bio.SeqIO.QualityIO import FastqGeneralIterator
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from strainr.kmer_database import KmerStrainDatabase
 from strainr.analyze import ClassificationAnalyzer
-from strainr.genomic_types import (
-    ReadId,
-    CountVector,
-    StrainIndex,
-)
+from strainr.genomic_types import CountVector, ReadId, StrainIndex
+from strainr.kmer_database import KmerStrainDatabase
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
@@ -374,14 +360,12 @@ class AbundanceCalculator:
                 if sum_hits_passing > 0:
                     intra_relab = raw_hits / sum_hits_passing
 
-            table_data.append(
-                {
-                    "strain_name": strain_name,
-                    "sample_hits": raw_hits,
-                    "sample_relab": sample_relab,
-                    "intra_relab": intra_relab if strain_name != "NA" else 0.0,
-                }
-            )
+            table_data.append({
+                "strain_name": strain_name,
+                "sample_hits": raw_hits,
+                "sample_relab": sample_relab,
+                "intra_relab": intra_relab if strain_name != "NA" else 0.0,
+            })
 
         abundance_df = pd.DataFrame(table_data).set_index("strain_name")
         abundance_df = abundance_df.sort_values(by="sample_hits", ascending=False)
