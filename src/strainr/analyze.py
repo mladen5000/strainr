@@ -11,12 +11,12 @@ Different disambiguation strategies are supported.
 
 import functools
 import multiprocessing as mp
-import random
+# import random # No direct use of 'random' module, np.random.default_rng() is used.
 from collections import Counter
-from typing import Dict, List, Tuple, Any, Optional, Union, Set  # Added Set
+from typing import Dict, List, Tuple, Any, Union, Set # Removed Optional, pd is removed
 
 import numpy as np
-import pandas as pd  # Not directly used in this snippet, but often useful in analysis pipelines
+# import pandas as pd  # Not directly used in this file
 
 # Assuming genomic_types.py is in the same package or accessible in PYTHONPATH
 # Adjust import path as necessary (e.g., from strainr.genomic_types import ...)
@@ -234,6 +234,9 @@ class ClassificationAnalyzer:
         Returns:
             A NumPy array of floats representing the prior probability for each
             strain. The length of the array matches `len(self.strain_names)`.
+            Probabilities for strains with zero clear assignments are set to a small
+            epsilon (1e-20) to prevent issues like zero probabilities in products
+            during downstream calculations.
         """
         if not isinstance(strain_prior_counts, Counter):
             raise TypeError("strain_prior_counts must be a Counter.")
@@ -269,13 +272,17 @@ class ClassificationAnalyzer:
         Resolves a single ambiguously assigned read to one strain.
 
         This internal method applies a chosen disambiguation strategy based on
-        `self.disambiguation_mode`. It first filters the `strain_hit_counts` to
-        consider only those strains that share the maximum hit count, then applies
-        the `prior_probabilities` to these, and finally selects one strain.
+        `self.disambiguation_mode`. It first identifies strains sharing the maximum
+        hit count for the read. These hits are then weighted by the `prior_probabilities`
+        to calculate likelihood scores. Finally, a single strain is selected based
+        on these scores and the chosen disambiguation mode.
 
         Args:
-            strain_hit_counts: The `CountVector` for the ambiguous read.
-            prior_probabilities: The pre-calculated prior probability vector for all strains.
+            strain_hit_counts: The `CountVector` (NumPy array of k-mer hit counts)
+                               for the ambiguous read.
+            prior_probabilities: The pre-calculated prior probability vector for all
+                                 strains, used to weight the likelihood of each
+                                 potential strain assignment.
 
         Returns:
             The `StrainIndex` (int) of the strain chosen to resolve the ambiguity.
@@ -317,10 +324,11 @@ class ClassificationAnalyzer:
         normalized_scores = likelihood_scores / sum_likelihood_scores
 
         if self.disambiguation_mode == "max":
-            # Np.argmax will return the first index in case of ties in likelihood_scores
-            return int(np.argmax(likelihood_scores))  # Argmax on non-normalized is fine
+        # Np.argmax will return the first index in case of ties in likelihood_scores.
+        # Uses non-normalized likelihood_scores as only the maximum matters.
+        return int(np.argmax(likelihood_scores))
 
-        # For probabilistic modes, use normalized_scores
+        # For probabilistic modes, use normalized_scores to make a weighted choice.
         strain_indices = np.arange(len(self.strain_names))
 
         if self.disambiguation_mode == "random":

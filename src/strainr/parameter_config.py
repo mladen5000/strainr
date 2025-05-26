@@ -1,49 +1,53 @@
 import argparse
 import pathlib
+# from typing import List # List is not used in type hints in this file
 
 
-def process_arguments() -> argparse.ArgumentParser:
+def process_arguments() -> argparse.Namespace:
     """
-    Get the arguments from the command line, and return them to the main function.
+    Parses command-line arguments for the Strainr application.
 
-    Examples:
-        args.add_argument('--source_file', type=open)
-        args.add_argument('--dest_file',
-        type=argparse.FileType('w', encoding='latin-1'))
-        args.add_argument('--datapath', type=pathlib.Path)
+    Defines and parses arguments related to input files (forward, reverse),
+    database path, output directory, processing options (cores, mode, threshold),
+    and optional flags for binning and saving raw hits.
+
+    Returns:
+        argparse.Namespace: An object containing the parsed command-line arguments
+                            as attributes.
     """
 
-    args: argparse.ArgumentParser = argparse.ArgumentParser(
-        description="Strainr: A tool for strain analysis"
+    parser: argparse.ArgumentParser = argparse.ArgumentParser( # Renamed for clarity
+        description="Strainr: A tool for strain analysis using k-mer based methods." # More descriptive
     )
-    args.add_argument(
+    parser.add_argument(
         "input",
-        help="input file",
+        help="One or more forward/unpaired FASTQ input file(s).", # Clarified help
         nargs="+",
-        type=str,
+        type=pathlib.Path, # Changed to pathlib.Path
     )
-    args.add_argument(
+    parser.add_argument(
         "-r",
         "--reverse",
-        help="reverse fastq file, todo",
-        nargs="+",
-        type=str,
+        help="Optional: One or more reverse FASTQ input file(s), corresponding to 'input'. (Feature: todo)", # Clarified help
+        nargs="+", # Should match number of input files if provided, or be single for all
+        type=pathlib.Path, # Changed to pathlib.Path
+        default=[], # Provide a default empty list
     )
-    args.add_argument(
+    parser.add_argument(
         "-d",
         "--db",
-        # required=True,
-        help="Database file",
-        type=str,
+        help="Path to the KmerStrainDatabase file (pickled).", # Clarified help
+        type=pathlib.Path, # Changed to pathlib.Path
+        required=True, # Assuming database is essential for most operations
     )
-    args.add_argument(
+    parser.add_argument(
         "-p",
         "--procs",
         type=int,
         default=4,
         help="Number of cores to use (default: 4)",
     )
-    args.add_argument(
+    parser.add_argument( # Standardized to parser
         "-o",
         "--out",
         type=pathlib.Path,
@@ -64,24 +68,25 @@ def process_arguments() -> argparse.ArgumentParser:
         type=str,
         default="max",
     )
-    args.add_argument(
+    parser.add_argument( # Standardized to parser
         "-a",
         "--thresh",
-        help="",
+        help="Abundance threshold for reporting strains (default: 0.001).", # Improved help
         type=float,
         default=0.001,
     )
-    args.add_argument(
+    parser.add_argument( # Changed from args to parser
         "--bin",
         action="store_true",
         required=False,
         help=" Perform binning.  ",
     )
-    args.add_argument(
+    parser.add_argument( # Standardized to parser
         "--save-raw-hits",
         action="store_true",
-        required=False,
-        help=" Save the intermediate results as a csv file containing each read's strain information.",
+        required=False, # Default is False if not specified
+        help="Save intermediate k-mer hit scores and final assignments as pickle files.", # Clarified help
     )
-    config_space = args.parse_args()
+    # Ensure all calls are to 'parser', not 'args'
+    config_space = parser.parse_args()
     return config_space
