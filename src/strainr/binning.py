@@ -425,4 +425,3 @@ if __name__ == "__main__":
         traceback.print_exc() 
     
     print(f"--- Example Run Finished. Check '{example_output_directory_path.resolve() / 'bins'}' for binned FASTQ files. ---")
-```
