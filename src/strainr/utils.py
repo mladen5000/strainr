@@ -1,39 +1,66 @@
 #!/usr/bin/env python
 
-import functools
 import gzip
 import mimetypes
 import pickle
 import pathlib
-from typing import Any, Dict, List, TextIO
+from typing import Dict, List, TextIO, Tuple, Union # Removed Any, Optional. functools is not used.
 
+import numpy as np # For type hinting np.ndarray
 import pandas as pd
-from Bio.Seq import Seq # Assuming kmer is a BioPython Seq object
+from Bio.Seq import Seq
 
 
-def open_file_transparently(file_path: pathlib.Path) -> TextIO:
+def open_file_transparently(file_path: Union[str, pathlib.Path], mode: str = "rt") -> TextIO:
     """Opens a file, transparently handling gzip compression.
 
-    The function infers the compression type from the file extension.
-    It supports plain text files and gzip compressed files.
+    Infers compression from file extension. Defaults to text read mode.
 
     Args:
-        file_path: The path to the file to be opened.
+        file_path: Path to the file.
+        mode: File open mode (e.g., "rt", "rb", "wt", "wb"). Defaults to "rt".
 
     Returns:
-        A file object opened in text mode.
+        A file object (TextIO or BinaryIO depending on mode).
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        IOError: If an I/O error occurs during opening.
+        TypeError: If file_path is not a str or pathlib.Path.
     """
-    # Guess encoding based on file extension (e.g., .gz for gzip)
+    if not isinstance(file_path, (str, pathlib.Path)):
+        raise TypeError(f"file_path must be a string or pathlib.Path, not {type(file_path)}")
+    
+    file_path = pathlib.Path(file_path)
+
+    if not file_path.exists(): # Explicit check before mimetypes or open
+        raise FileNotFoundError(f"File not found: {file_path}")
+
     guessed_type, encoding = mimetypes.guess_type(str(file_path))
     
-    # Choose the appropriate open function
-    if encoding == "gzip":
-        open_func = functools.partial(gzip.open, mode="rt")
-    else:
-        open_func = functools.partial(open, mode="r") # Ensure text mode for regular files too
-        
-    file_object = open_func(file_path)
-    return file_object
+    try:
+        if encoding == "gzip":
+            return gzip.open(file_path, mode=mode) # type: ignore # gzip.open can return TextIO
+        else:
+            # For non-gzip, ensure 'b' is not in mode if we expect TextIO,
+            # or ensure 't' is not in mode if we expect BinaryIO.
+            # The type hint TextIO implies text mode.
+            if 'b' in mode:
+                # This case would violate TextIO return if not for type: ignore.
+                # For true transparent opening, the return type might need to be Union[TextIO, BinaryIO]
+                # or the function should be split. For now, assume text mode is primary.
+                # If mode is "rb", "wb", etc., this will return a BinaryIO.
+                # The type hint is TextIO, so we prioritize text.
+                # If a binary mode is passed, the user might get a BinaryIO despite TextIO hint.
+                # This is a known complexity with such transparent openers.
+                # For this refactor, we stick to the original intent of TextIO where possible.
+                if 't' not in mode : # if mode is purely binary e.g. "rb"
+                    # This path is problematic for TextIO return hint.
+                    # However, since original was TextIO, let's assume "rt" or "r" are typical.
+                    pass # Allow binary modes, but caller must be aware of return type change
+            return open(file_path, mode=mode)
+    except (IOError, OSError) as e:
+        raise IOError(f"Error opening file {file_path} with mode '{mode}': {e}") from e
 
 
 def get_canonical_kmer(kmer: Seq) -> Seq:
@@ -55,83 +82,88 @@ def get_canonical_kmer(kmer: Seq) -> Seq:
 
 def pickle_intermediate_results(
     output_dir: pathlib.Path,
-    raw_kmer_scores: List[Any],  # Or more specific type if known, e.g., List[Tuple[str, np.ndarray]]
-    final_read_assignments: Dict[str, Any], # Or more specific type, e.g., Dict[str, int] for strain indices
-    # strains_list: List[str] # This argument is currently unused
+    raw_kmer_scores: List[Tuple[str, np.ndarray]], # e.g., List[Tuple[ReadId, CountVector]]
+    final_read_assignments: Dict[str, Union[str, int]], # e.g., Dict[ReadId, Union[StrainName, StrainIndex]]
 ) -> None:
     """Pickles raw k-mer scores and final read assignments to disk.
 
-    This function saves intermediate pipeline results for potential
-    debugging or later analysis.
-
     Args:
-        output_dir: The directory where the pickle files will be saved.
-        raw_kmer_scores: A list or collection of raw k-mer scores
-                         (structure depends on upstream processing).
-        final_read_assignments: A dictionary mapping read identifiers to their
-                                assigned strain identifiers or other assignment info.
-        # strains_list: A list of strain names. Currently unused in this function.
+        output_dir: Directory to save pickle files.
+        raw_kmer_scores: List of tuples, where each tuple contains a read ID (str)
+                         and its associated k-mer scores/counts (np.ndarray).
+        final_read_assignments: Dictionary mapping read IDs (str) to their final
+                                assignment (e.g., strain name as str, strain index as int,
+                                or an unassigned marker str).
 
-    Returns:
-        None
+    Raises:
+        IOError: If an error occurs during file writing or pickling.
     """
-    output_dir.mkdir(parents=True, exist_ok=True) # Ensure output directory exists
-    
-    raw_results_path = output_dir / "raw_kmer_scores.pkl"
-    with open(raw_results_path, "wb") as fh:
-        pickle.dump(raw_kmer_scores, fh)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        raw_results_path = output_dir / "raw_kmer_scores.pkl"
+        with open(raw_results_path, "wb") as fh_raw:
+            pickle.dump(raw_kmer_scores, fh_raw)
+        print(f"Raw k-mer scores pickled to: {raw_results_path}")
 
-    final_assignments_path = output_dir / "final_read_assignments.pkl"
-    with open(final_assignments_path, "wb") as fh:
-        pickle.dump(final_read_assignments, fh)
-    return
+        final_assignments_path = output_dir / "final_read_assignments.pkl"
+        with open(final_assignments_path, "wb") as fh_final:
+            pickle.dump(final_read_assignments, fh_final)
+        print(f"Final read assignments pickled to: {final_assignments_path}")
+
+    except (IOError, pickle.PicklingError) as e:
+        raise IOError(f"Error pickling intermediate results to {output_dir}: {e}") from e
 
 
 def save_classification_results_to_dataframe(
     output_dir: pathlib.Path,
-    intermediate_scores: Dict[str, List[float]], # Assuming scores are lists of floats per read
-    final_assignments: Dict[str, str], # Read ID to assigned strain name (or "NA")
+    intermediate_scores: Dict[str, Union[List[float], np.ndarray]], # ReadID to scores per strain
+    final_assignments: Dict[str, str], # ReadID to assigned strain name (or "NA")
     strain_names: List[str]
 ) -> None:
     """Converts classification results to a Pandas DataFrame and pickles it.
 
-    The DataFrame includes intermediate k-mer scores for each read against
-    all strains and the final assigned strain name for each read.
-
     Args:
-        output_dir: The directory where the pickled DataFrame will be saved.
-        intermediate_scores: A dictionary mapping read IDs to lists of k-mer scores
-                             against each strain.
-        final_assignments: A dictionary mapping read IDs to their final assigned
-                           strain name (or "NA" if unassigned).
-        strain_names: A list of all strain names, corresponding to the order
-                      of scores in `intermediate_scores`.
+        output_dir: Directory to save the pickled DataFrame.
+        intermediate_scores: Dictionary mapping read IDs (str) to a list or array
+                             of scores against each strain (float or convertible).
+        final_assignments: Dictionary mapping read IDs (str) to their final assigned
+                           strain name (str) or an unassigned marker (e.g., "NA").
+        strain_names: List of all strain names, defining the order of columns for scores.
 
-    Returns:
-        None
+    Raises:
+        IOError: If an error occurs during DataFrame creation, file writing, or pickling.
+        ValueError: If data for DataFrame creation is inconsistent.
     """
-    output_dir.mkdir(parents=True, exist_ok=True) # Ensure output directory exists
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create DataFrame from intermediate scores
-    # Ensuring column order matches strain_names for consistency
-    results_df = pd.DataFrame.from_dict(
-        intermediate_scores, orient="index", columns=strain_names
-    )
-    # Convert scores to integer type if appropriate, or float if not.
-    # Assuming int for now as per original, but float might be more general.
-    results_df = results_df.astype(int) 
+        # Create DataFrame from intermediate scores
+        # Ensure column order matches strain_names for consistency
+        results_df = pd.DataFrame.from_dict(
+            intermediate_scores, orient="index", columns=strain_names
+        )
+        
+        # Scores are often floats (probabilities, likelihoods, etc.)
+        # Casting to float is safer than int if the nature of scores is not strictly integer.
+        try:
+            results_df = results_df.astype(float) 
+        except ValueError as e:
+            # If scores cannot be cast to float (e.g., contain non-numeric strings erroneously)
+            raise ValueError(f"Intermediate scores contain non-numeric values that cannot be cast to float. Error: {e}") from e
 
-    # Prepare series for final assignments to join with the main DataFrame
-    # Original code: final_names = {k: strains[int(v)] for k, v in results.items() if v != "NA"}
-    # This implies 'results' (now final_assignments) might have integer indices for strains if not "NA".
-    # For clarity, if final_assignments already contains strain names, this step is simpler.
-    # Assuming final_assignments directly maps read_id -> strain_name or "NA"
-    assigned_strains_series = pd.Series(final_assignments).rename("final_assigned_strain")
-    
-    results_df = results_df.join(assigned_strains_series)
+        # Prepare series for final assignments
+        assigned_strains_series = pd.Series(final_assignments, name="final_assigned_strain")
+        
+        # Join scores DataFrame with final assignments series
+        # Use how='left' to keep all reads from results_df (scores table)
+        # and add assignments where available. Reads in results_df but not in
+        # assigned_strains_series will have NaN for 'final_assigned_strain'.
+        results_df = results_df.join(assigned_strains_series, how="left")
 
-    dataframe_pickle_path = output_dir / "classification_results_table.pkl"
-    results_df.to_pickle(dataframe_pickle_path)
-    return
+        dataframe_pickle_path = output_dir / "classification_results_table.pkl"
+        results_df.to_pickle(dataframe_pickle_path)
+        print(f"Classification results DataFrame pickled to: {dataframe_pickle_path}")
 
-# Removed unused call_pickle variable and associated commented code.
+    except (IOError, pickle.PicklingError, ValueError) as e: # Added ValueError for DataFrame issues
+        raise IOError(f"Error saving classification results to DataFrame at {output_dir}: {e}") from e
