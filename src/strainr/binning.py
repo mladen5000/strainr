@@ -256,7 +256,6 @@ def _extract_reads_for_strain(
             with open_file_transparently(
                 original_fastq_path, mode="rt"
             ) as original_handle:
-            with open_file_transparently(original_fastq_path, mode="rt") as original_handle:
 
                 for record in SeqIO.parse(original_handle, "fastq"):
                     # Read ID normalization might be needed if FASTQ IDs have suffixes like /1 or /2

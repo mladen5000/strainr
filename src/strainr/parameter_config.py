@@ -55,7 +55,7 @@ def process_arguments() -> argparse.Namespace:
         help="Output folder",
         default="strainr_out",
     )
-    args.add_argument(
+    parser.add_argument(
         "-m",
         "--mode",
         help=" Selection mode for diambiguation ",

@@ -18,14 +18,25 @@ from typing import Callable, Dict, Generator, List, Optional, Set, TextIO, Tuple
 
 import numpy as np
 import pandas as pd
-from Bio import SeqIO
-from Bio.SeqIO.QualityIO import FastqGeneralIterator
-from pydantic import BaseModel, Field, field_validator, model_validator
+
+try:
+    from Bio import SeqIO
+    from Bio.SeqIO.QualityIO import FastqGeneralIterator
+except ImportError as e:
+    raise ImportError(
+        "Biopython is required for this script. Please install it with 'pip install biopython'."
+    ) from e
+try:
+    from pydantic import BaseModel, Field, field_validator, model_validator
+except ImportError as e:
+    raise ImportError(
+        "Pydantic is required for this script. Please install it with 'pip install pydantic'."
+    ) from e
 
 # Assuming these local modules are structured correctly within the 'strainr' package
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import CountVector, ReadId, StrainIndex
-from strainr.kmer_database import KmerStrainDatabase
+from strainr.kmer_database import StrainKmerDb
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
@@ -170,46 +181,57 @@ class SequenceFileProcessor:
 
         with SequenceFileProcessor.open_file_handle(fwd_reads_path) as fwd_fh:
             rev_fh: Optional[TextIO] = None
+            if rev_reads_path:
+                rev_fh = SequenceFileProcessor.open_file_handle(rev_reads_path)
             try:
-                if rev_reads_path:
-                    rev_fh = SequenceFileProcessor.open_file_handle(rev_reads_path)
-
-                # Create appropriate iterators based on format
                 if fwd_format == "fasta":
                     fwd_iter = SeqIO.parse(fwd_fh, "fasta")
                     rev_iter = SeqIO.parse(rev_fh, "fasta") if rev_fh else None
+                    for fwd_record in fwd_iter:
+                        if fwd_record is None:
+                            continue
+                        fwd_id = getattr(fwd_record, "id", "")
+                        if not isinstance(fwd_id, str):
+                            fwd_id = str(fwd_id)
+                        fwd_seq_str = str(getattr(fwd_record, "seq", ""))
+                        fwd_seq_bytes = fwd_seq_str.encode("utf-8")
+                        rev_seq_bytes = b""
+                        if rev_iter:
+                            try:
+                                rev_record = next(rev_iter)
+                                rev_seq_str = str(getattr(rev_record, "seq", ""))
+                                rev_seq_bytes = rev_seq_str.encode("utf-8")
+                            except StopIteration:
+                                logger.warning(
+                                    f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
+                                )
+                                rev_iter = None
+                        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
                 else:  # fastq
                     fwd_iter = FastqGeneralIterator(fwd_fh)
                     rev_iter = FastqGeneralIterator(rev_fh) if rev_fh else None
-
-                for fwd_record in fwd_iter:
-                    # Extract ID and sequence based on format
-                    if fwd_format == "fasta":
-                        fwd_id = fwd_record.id
-                        fwd_seq_str = str(fwd_record.seq)
-                    else:  # fastq
-                        fwd_id, fwd_seq_str, _ = fwd_record
-
-                    fwd_seq_bytes = fwd_seq_str.encode("utf-8")
-                    rev_seq_bytes = b""
-
-                    # Process reverse read if available
-                    if rev_iter:
+                    for fwd_record in fwd_iter:
+                        if fwd_record is None:
+                            continue
                         try:
-                            rev_record = next(rev_iter)
-                            if rev_format == "fasta":
-                                rev_seq_str = str(rev_record.seq)
-                            else:  # fastq
+                            fwd_id, fwd_seq_str, _ = fwd_record
+                        except Exception:
+                            continue
+                        if not isinstance(fwd_id, str):
+                            fwd_id = str(fwd_id)
+                        fwd_seq_bytes = fwd_seq_str.encode("utf-8")
+                        rev_seq_bytes = b""
+                        if rev_iter:
+                            try:
+                                rev_record = next(rev_iter)
                                 _, rev_seq_str, _ = rev_record
-                            rev_seq_bytes = rev_seq_str.encode("utf-8")
-                        except StopIteration:
-                            logger.warning(
-                                f"Reverse file ended before forward file at read {fwd_id}. "
-                                "Treating remaining as single-end."
-                            )
-                            rev_iter = None
-
-                    yield fwd_id, fwd_seq_bytes, rev_seq_bytes
+                                rev_seq_bytes = rev_seq_str.encode("utf-8")
+                            except StopIteration:
+                                logger.warning(
+                                    f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
+                                )
+                                rev_iter = None
+                        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
             finally:
                 if rev_fh:
                     rev_fh.close()
@@ -230,7 +252,6 @@ class CliArgs(BaseModel):
     )
     num_processes: int = Field(
         default=DEFAULT_NUM_PROCESSES,
-        ge=1,
         description="Number of processor cores to use.",
     )
     output_dir: pathlib.Path = Field(
@@ -243,8 +264,6 @@ class CliArgs(BaseModel):
     )
     abundance_threshold: float = Field(
         default=DEFAULT_ABUNDANCE_THRESHOLD,
-        ge=0.0,
-        lt=1.0,
         description="Threshold for relative abundance filtering.",
     )
     perform_binning: bool = Field(
@@ -254,7 +273,7 @@ class CliArgs(BaseModel):
         default=False, description="Save raw k-mer hit counts per read to a CSV file."
     )
     chunk_size: int = Field(
-        default=DEFAULT_CHUNK_SIZE, ge=1, description="Chunk size for multiprocessing."
+        default=DEFAULT_CHUNK_SIZE, description="Chunk size for multiprocessing."
     )
 
     @field_validator("input_forward", "input_reverse", "db_path", mode="before")
@@ -293,11 +312,18 @@ class CliArgs(BaseModel):
                 )
 
             if fwd_is_list and rev_is_list:
-                if len(self.input_forward) != len(self.input_reverse):
+                if (
+                    isinstance(self.input_forward, list)
+                    and isinstance(self.input_reverse, list)
+                    and len(self.input_forward) != len(self.input_reverse)
+                ):
                     raise ValueError(
                         "Number of forward and reverse read files must match."
                     )
         return self
+
+    def __init__(self, **data):
+        super().__init__()
 
 
 class AbundanceCalculator:
@@ -410,15 +436,15 @@ class KmerClassificationWorkflow:
     def __init__(self, args: CliArgs) -> None:
         """Initialize the workflow with validated arguments."""
         self.args = args
-        self.database: Optional[KmerStrainDatabase] = None
+        self.database: Optional[StrainKmerDb] = None
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
 
     def _initialize_database(self) -> None:
-        """Loads and initializes the KmerStrainDatabase."""
+        """Loads and initializes the StrainKmerDb."""
         self.logger.info(f"Loading k-mer database from: {self.args.db_path}")
         try:
-            self.database = KmerStrainDatabase(self.args.db_path)
+            self.database = StrainKmerDb(self.args.db_path)
             self.logger.info(
                 f"Database loaded: {self.database.num_kmers} k-mers, "
                 f"{self.database.num_strains} strains, "
@@ -437,30 +463,34 @@ class KmerClassificationWorkflow:
 
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
 
+        if self.database is None:
+            raise RuntimeError("Database not initialized.")
         all_kmers: Set[bytes] = set()
-
         # Process forward sequence
         if fwd_seq_bytes:
             kmers_fwd = KMER_EXTRACTOR.extract_kmers(
                 fwd_seq_bytes, self.database.kmer_length
             )
             all_kmers.update(kmers_fwd)
-
         # Process reverse sequence
         if rev_seq_bytes:
             kmers_rev = KMER_EXTRACTOR.extract_kmers(
                 rev_seq_bytes, self.database.kmer_length
             )
             all_kmers.update(kmers_rev)
-
         # Count strain hits
         strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
-
+        if self.database is None:
+            raise RuntimeError(
+                "Database is not initialized before accessing its attributes."
+            )
         for kmer_bytes in all_kmers:
             kmer_strain_counts = self.database.get_strain_counts_for_kmer(kmer_bytes)
             if kmer_strain_counts is not None:
                 strain_counts += kmer_strain_counts
-
+        # Ensure read_id is str
+        if not isinstance(read_id, str):
+            read_id = str(read_id)
         return read_id, strain_counts
 
     def _classify_reads_parallel(
@@ -492,23 +522,22 @@ class KmerClassificationWorkflow:
         if not raw_hit_results or self.database is None:
             self.logger.warning(f"No raw hit results to save for sample: {sample_name}")
             return
-
         self.logger.info(f"Saving raw k-mer hit counts for sample: {sample_name}")
-
         # Prepare data for DataFrame
         df_data = []
+        if self.database is None:
+            raise RuntimeError(
+                "Database is not initialized before accessing its attributes."
+            )
         for read_id, count_vector in raw_hit_results:
             row = {"read_id": read_id}
             for i, strain_name in enumerate(self.database.strain_names):
                 row[strain_name] = count_vector[i]
             df_data.append(row)
-
         df = pd.DataFrame(df_data)
-
         # Save to CSV
         raw_hits_dir = self.args.output_dir / "raw_kmer_hits"
         raw_hits_dir.mkdir(parents=True, exist_ok=True)
-
         output_path = raw_hits_dir / f"{sample_name}_raw_hits.csv"
         df.to_csv(output_path, index=False)
         self.logger.info(f"Raw k-mer hit counts saved to: {output_path}")
@@ -720,7 +749,7 @@ def parse_cli_arguments() -> CliArgs:
     )
     parser.add_argument(
         "--verbose",
-        help="Enable conda install pydanticverbose logging",
+        help="Enable verbose logging",
         action="store_true",
         default=False,
     )
@@ -733,9 +762,20 @@ def parse_cli_arguments() -> CliArgs:
     logger.info("Parsing command-line arguments")
 
     try:
+        # Map CLI args to CliArgs model, handling lists and optionals
+        input_forward = args.input_forward
+        if isinstance(input_forward, list) and len(input_forward) == 1:
+            input_forward = input_forward[0]
+        input_reverse = args.input_reverse
+        if input_reverse is not None:
+            if len(input_reverse) == 0:
+                input_reverse = None
+            elif len(input_reverse) == 1:
+                input_reverse = input_reverse[0]
+
         cli_args = CliArgs(
-            input_forward=args.input_forward,
-            input_reverse=args.input_reverse,
+            input_forward=input_forward,
+            input_reverse=input_reverse,
             db_path=args.db,
             num_processes=args.procs,
             output_dir=args.out,
