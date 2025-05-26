@@ -1,5 +1,4 @@
-from dataclasses import InitVar, dataclass, field
-import 
+from dataclasses import dataclass, field
 from typing import Union
 
 import mmh3
@@ -13,9 +12,6 @@ Kmer = Union[memoryview, bytes]
 KmerDict = dict[Kmer, CountVector]
 
 
-from Bio.SeqIO.FastaIO import SimpleFastaParser
-from Bio.SeqIO.QualityIO import FastqGeneralIterator
-
 @dataclass(order=True, slots=True)
 class SimpleSeq:
     """
@@ -28,9 +24,12 @@ class SimpleSeq:
     name: str = field(compare=False)
     seq: bytes
     kmers: list[bytes] = field(default_factory=list, compare=False, init=False)
-    strain_counts: CountVector = field( init=False, compare=False,)
+    strain_counts: CountVector = field(
+        init=False,
+        compare=False,
+    )
 
-    def parse_seq(self) -> bytes: 
+    def parse_seq(self) -> bytes:
         # Check for minimum length
         if len(self.seq) == 0:
             raise ValueError("self.seq must be non-empty")
@@ -50,18 +49,16 @@ class SimpleSeq:
             raise ValueError(
                 f"self.seq contains invalid characters: {found_bases.difference(allowed_bases)}"
             )
-        
+
         return self.seq
 
     def __post_init__(self) -> None:
-        """ 1. Validate the self.seq data type [parse_seq]
-            2. initialize the strain_counts array
+        """1. Validate the self.seq data type [parse_seq]
+        2. initialize the strain_counts array
         """
 
         self.seq = self.parse_seq()
         self.strain_counts = np.zeros(len(num_strains), dtype=np.uint8)
-
-
 
     def __hash__(self) -> int:
         return mmh3.hash_bytes(self.seq)
@@ -75,19 +72,26 @@ class SimpleSeq:
     def __str__(self) -> str:
         return self.seq.decode(encoding="ascii")
 
-    def get_kmers(self,StrainDatabase) -> tuple[str, np.ndarray]:
+    def get_kmers(self, StrainDatabase) -> tuple[str, np.ndarray]:
         """Main function to assign strain hits to reads"""
         na_zeros: CountVector = np.zeros(StrainDatabase.num_strains, dtype=np.uint8)
         max_index: int = len(self.seq) - StrainDatabase.k + 1
 
         with memoryview(self.seq) as kmer_view:
-            return [ StrainDatabase.db.get(kmer_view[index : index + StrainDatabase.k], na_zeros) for index in range(max_index)]
+            return [
+                StrainDatabase.db.get(
+                    kmer_view[index : index + StrainDatabase.k], na_zeros
+                )
+                for index in range(max_index)
+            ]
 
-            
 
 from typing import ClassVar
 
-@dataclass(slots=True,)
+
+@dataclass(
+    slots=True,
+)
 class StrainDatabase:
     """Class to hold the strain database"""
 
@@ -97,7 +101,7 @@ class StrainDatabase:
     num_strains: ClassVar[int] = field(init=False)
     db: ClassVar[KmerDict] = field(init=False, repr=False)
 
-    filepath: .Path
+    filepath: pathlib.Path = field(init=False)
     kmer_len: ClassVar[int] = 31
 
     def __post_init__(self) -> None:
@@ -115,16 +119,15 @@ class StrainDatabase:
         self.kmer_len = len(df.index[0])
         self.db = dict(zip(df.index, df.to_numpy()))
 
+
 getattr(StrainDatabase, "__slots__")
 
 
-elenta_path = .Path("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
+elenta_path = pathlib.Path("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
 db = StrainDatabase(elenta_path)
 
-for k,v in StrainDatabase.__dict__.items():
-    print(k, v,sep="\t")
-
-
+for k, v in StrainDatabase.__dict__.items():
+    print(k, v, sep="\t")
 
 
 def get_kmers(read: SimpleSeq, db: StrainDatabase, k=31) -> tuple[str, np.ndarray]:
@@ -133,7 +136,7 @@ def get_kmers(read: SimpleSeq, db: StrainDatabase, k=31) -> tuple[str, np.ndarra
     na_zeros: CountVector = np.zeros(db.num_strains, dtype=np.uint8)
     max_index: int = len(read.seq) - k + 1
     with memoryview(read.seq) as kmer_view:
-        SimpleSeq.strain_counts= np.sum(
+        SimpleSeq.strain_counts = np.sum(
             db.db.get(kmer_view[index : index + k], na_zeros)
             for index in range(max_index)
         )
@@ -160,17 +163,17 @@ def hash_kmer(DNA_read: Seq):
     # calculate murmurhash using a hash seed of 42
     hash: int = mmh3.hash64(canonical_read, 42)[0]
     if hash < 0:
-        hash += 2 ** 64
+        hash += 2**64
 
     # done
     return hash
 
 
 def main() -> None:
-myseq2 = SimpleSeq(name='s1', seq='ATCGATCGATCG')
-CountVector = NDArray[Shape["*"], UInt8]
-elenta = StrainDatabase("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
-x = get_kmers(myseq2, elenta)
+    myseq2 = SimpleSeq(name="s1", seq="ATCGATCGATCG")
+    NDArray[Shape["*"], UInt8]
+    elenta = StrainDatabase("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
+    get_kmers(myseq2, elenta)
 
 
 if __name__ == "__main__":
