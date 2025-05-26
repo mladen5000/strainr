@@ -15,7 +15,6 @@ import pathlib
 import sys
 from collections import Counter
 from typing import (
-    Any,
     Dict,
     Generator,
     List,
@@ -352,9 +351,7 @@ class AbundanceCalculator:
         hit_counts.setdefault("NA", 0)
 
         total_reads = sum(hit_counts.values())
-        total_assigned = sum(
-            count for strain, count in hit_counts.items() if strain != "NA"
-        )
+        sum(count for strain, count in hit_counts.items() if strain != "NA")
 
         table_data = []
         for strain_name in self.strain_names + ["NA"]:
