@@ -2,7 +2,6 @@
 K-mer database management for strain classification.
 """
 
-import pathlib
 import pickle  # For more specific error handling
 from typing import Optional, Dict, List, Union  # Removed Any, Tuple
 from pathlib import Path

@@ -108,7 +108,7 @@ def main() -> None:
     # If this 'k' needs to come from CLI, it should be added to parameter_config.py
     runner_k_value = getattr(args, "k", 31)  # Use 31 if no 'k' arg (which there isn't)
 
-    print(f"Initializing Strainr run with: ")
+    print("Initializing Strainr run with: ")
     print(f"  Input FASTQ: {input_fasta_path}")
     print(f"  Output Directory: {results_output_dir}")
     print(f"  K-mer Database: {kmer_db.database_filepath} (k={kmer_db.kmer_length})")
