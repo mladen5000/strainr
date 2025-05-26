@@ -2,6 +2,7 @@ import pathlib
 import pickle
 from typing import Dict, List, Optional, Union, Any # Added Any for get_database_stats
 
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -11,6 +12,7 @@ import pandas as pd
 CountVector = npt.NDArray[np.uint8]
 Kmer = bytes 
 KmerDatabaseDict = Dict[Kmer, CountVector]
+
 
 
 class StrainKmerDb: # Renamed from KmerStrainDatabase
@@ -68,6 +70,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
 
         # Initialize attributes
         self.kmer_length: int = 0 
+
         self.kmer_to_counts_map: KmerDatabaseDict = {}
         self.strain_names: List[str] = []
         self.num_strains: int = 0
@@ -97,6 +100,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         except Exception as e: 
             raise RuntimeError(f"An unexpected error occurred while reading {self.database_filepath}: {e}") from e
 
+
         if not isinstance(kmer_strain_df, pd.DataFrame):
             raise RuntimeError(
                 f"Data loaded from {self.database_filepath} is not a pandas DataFrame (type: {type(kmer_strain_df)})."
@@ -106,6 +110,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             raise ValueError(f"Loaded database is empty: {self.database_filepath}")
 
         self.strain_names = list(kmer_strain_df.columns.astype(str))
+
         self.num_strains = len(self.strain_names)
         if self.num_strains == 0:
             raise ValueError("Database contains no strain information (no columns).")
@@ -130,6 +135,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         else:
             raise TypeError(f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes.")
 
+
         if inferred_k_len == 0:
             raise ValueError(
                 "First k-mer in database has zero length, which is invalid."
@@ -153,12 +159,14 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
         try:
             count_matrix = kmer_strain_df.to_numpy(dtype=np.uint8)
         except ValueError as e: 
+
             raise TypeError(
                 f"Could not convert database values to count matrix (np.uint8). "
                 f"Ensure all values are numeric and within 0-255. Error: {e}"
             ) from e
         
         skipped_kmers_count = 0
+
         for i, kmer_obj in enumerate(kmer_strain_df.index):
             kmer_bytes: Kmer
             current_obj_len: int
@@ -196,6 +204,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
                 skipped_kmers_count +=1
                 continue
             
+
             temp_kmer_map[kmer_bytes] = count_matrix[i]
 
         self.kmer_to_counts_map = temp_kmer_map
@@ -209,6 +218,7 @@ class StrainKmerDb: # Renamed from KmerStrainDatabase
             )
         if skipped_kmers_count > 0:
             print(f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues.")
+
 
 
     def get_strain_counts_for_kmer(self, kmer: Kmer) -> Optional[CountVector]:
@@ -324,6 +334,7 @@ if __name__ == "__main__":
         counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG") # Was "TACG"
         print(f"Counts for b'GGGG': {counts_2}")
 
+
     except Exception as e:
         print(f"An error occurred during database testing: {e}")
         import traceback
@@ -335,6 +346,7 @@ if __name__ == "__main__":
             dummy_db_path_str.unlink()
         if dummy_db_output_dir.exists() and not any(dummy_db_output_dir.iterdir()):
              dummy_db_output_dir.rmdir()
+
         print("\nCleaned up dummy database files and directory (if empty).")
 
 ```

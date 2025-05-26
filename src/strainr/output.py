@@ -15,11 +15,13 @@ ReadId = str
 StrainIndex = int
 
 
+
 class AbundanceCalculator:
     """
     Calculator for strain abundance analysis and reporting.
     
     Handles conversion of read assignments to relative abundances,
+
     normalization, thresholding, and output formatting.
     """
 
@@ -59,6 +61,7 @@ class AbundanceCalculator:
         read_assignments: Dict[Union[ReadId, int], Union[StrainIndex, str]], # Keys can be int initially
         unassigned_marker: str = "NA"
     ) -> Dict[ReadId, str]:
+
         """
         Converts read assignments (potentially with integer keys or strain indices)
         to a dictionary mapping string ReadIds to strain names or an unassigned marker.
@@ -93,6 +96,7 @@ class AbundanceCalculator:
             if isinstance(strain_id_or_idx, int): # StrainIndex
                 if 0 <= strain_id_or_idx < self._num_strains:
                     named_assignments[read_id_str] = self.strain_names[strain_id_or_idx]
+
                 else:
                     raise ValueError(
                         f"StrainIndex {strain_id_or_idx} for ReadId '{read_id_str}' is out of bounds "
@@ -113,6 +117,7 @@ class AbundanceCalculator:
                     f"Invalid assignment type for ReadId '{read_id_str}': {type(strain_id_or_idx)}. "
                     "Expected int (StrainIndex) or str (strain name/unassigned_marker)."
                 )
+
         return named_assignments
 
     def calculate_raw_abundances(
@@ -178,6 +183,7 @@ class AbundanceCalculator:
         relative_abundances: Dict[str, float] = {}
         for strain, count in raw_abundances.items():
             relative_abundances[strain] = count / total_reads
+
         return relative_abundances
 
     def apply_threshold_and_format(
@@ -210,6 +216,7 @@ class AbundanceCalculator:
         return dict(sorted(filtered_abundances.items(), key=key_sort_func, reverse=reverse_sort))
 
 
+
     def generate_report_string(self, final_abundances: Dict[str, float]) -> str:
         """
         Generates a formatted string reporting abundances as percentages.
@@ -230,6 +237,7 @@ class AbundanceCalculator:
             # Formatting as percentage with 2 decimal places
             report_lines.append(f"{strain}: {abundance*100:.2f}%") 
         
+
         return "\n".join(report_lines)
 
 ```

@@ -4,6 +4,7 @@ Sequence handling and k-mer extraction functionality.
 
 from dataclasses import dataclass, field
 from typing import List, Set 
+
 import mmh3
 
 # Define allowed DNA bytes at the module level for clarity and reuse
@@ -22,6 +23,7 @@ class GenomicSequence:
         sequence_id: Unique identifier for the sequence.
         sequence_data: Raw sequence as bytes, validated to contain only valid DNA bytes.
     
+
     Example:
         >>> seq = GenomicSequence(sequence_id='read_001', sequence_data=b'ACGTN')
         >>> len(seq)
@@ -81,6 +83,7 @@ class GenomicSequence:
                     invalid_chars_repr.append(f"byte {b_val}")
             
             allowed_chars_str = ", ".join(f"'{chr(b)}'" for b in sorted(list(VALID_DNA_BYTES)))
+
             raise ValueError(
                 f"Sequence contains invalid DNA bytes: {{{', '.join(invalid_chars_repr)}}}. "
                 f"Allowed bytes correspond to characters: {allowed_chars_str}."

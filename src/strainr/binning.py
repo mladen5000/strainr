@@ -54,6 +54,7 @@ def generate_table(
     if len(set(all_strain_names)) != len(all_strain_names):
         raise ValueError("all_strain_names must contain unique names.")
     
+
     read_ids = list(final_assignments.keys())
     if not all_strain_names:
         # Return empty DataFrame with read_ids as index if there are no strains to form columns
@@ -67,6 +68,7 @@ def generate_table(
                 "assignments. Strain names are required to interpret indices."
             )
         print("Warning: all_strain_names is empty. Returning DataFrame with no columns.")
+
         return pd.DataFrame(index=read_ids)
 
     df = pd.DataFrame(0, index=read_ids, columns=all_strain_names, dtype=np.uint8)
@@ -81,6 +83,7 @@ def generate_table(
                     f"Warning: Invalid StrainIndex {assignment} for read_id {read_id}. Max index is {len(all_strain_names)-1}. Read will not be assigned to any strain in table."
                 )
                 print(f"Warning: Invalid StrainIndex {assignment} for read_id '{read_id}'. Max index is {len(all_strain_names)-1}. Read will not be assigned in table.")
+
     return df
 
 
@@ -123,6 +126,7 @@ def get_top_strain_names(
 
     if not strain_list and any(isinstance(val, int) for val in read_assignments.values()):
         print("Warning: get_top_strain_names received an empty strain_list but read_assignments contain integer indices. Cannot map indices to names. Returning empty list.")
+
         return []
 
     assignment_values = list(read_assignments.values())
@@ -254,6 +258,7 @@ def _extract_reads_for_strain(
                 original_fastq_path, mode="rt"
             ) as original_handle:
             with open_file_transparently(original_fastq_path, mode="rt") as original_handle:
+
                 for record in SeqIO.parse(original_handle, "fastq"):
                     # Read ID normalization might be needed if FASTQ IDs have suffixes like /1 or /2
                     # and read_ids_for_strain does not.
@@ -262,6 +267,7 @@ def _extract_reads_for_strain(
                         record.id in read_ids_for_strain
                     ):  # or normalized_id in read_ids_for_strain:
                     if record.id in read_ids_for_strain:
+
                         records_to_write.append(record)
 
             if records_to_write:
@@ -272,12 +278,14 @@ def _extract_reads_for_strain(
                 # This is a bit more involved, can check os.access(output_bin_dir, os.W_OK)
                 # For now, rely on open() raising error if not writable.
                 with open(binned_fastq_filepath, "w") as binned_handle:
+
                     count = SeqIO.write(records_to_write, binned_handle, "fastq")
                 print(f"Saved {count} records for strain '{strain_name}' ({read_suffix}) to {binned_fastq_filepath.name}")
             else:
                 print(
                     f"No reads matching strain '{strain_name}' (read suffix {read_suffix}) found in {original_fastq_path.name}."
                 )
+
 
         except FileNotFoundError:
             print(
@@ -294,6 +302,7 @@ def _extract_reads_for_strain(
             print(f"I/O Error processing file {original_fastq_path} or writing to {binned_fastq_filepath} for strain '{strain_name}': {e}.")
         except Exception as e: 
             print(f"Unexpected error processing file {original_fastq_path} for strain '{strain_name}': {e}. Records may not have been written.")
+
 
 
 def create_binned_fastq_files(
@@ -336,11 +345,13 @@ def create_binned_fastq_files(
 
         strains_to_process = [s for s in top_strain_names if s and s != unassigned_marker][:num_bins_to_create]
     
+
     if not strains_to_process:
         print(
             f"No strains selected for binning (num_bins_to_create={num_bins_to_create}, top_strain_names has {len(top_strain_names)} entries)."
         )
         print(f"No strains selected for binning (num_bins_to_create={num_bins_to_create}, filtered top_strain_names has {len(strains_to_process)} entries).")
+
         return set(), []
 
     print(
@@ -358,6 +369,7 @@ def create_binned_fastq_files(
         # Redundant check if strains_to_process is already filtered, but safe.
         if not strain_name or (strain_name == unassigned_marker and unassigned_marker): # Ensure unassigned_marker itself is not empty if used in check
             print(f"Skipping binning for '{strain_name}' as it's an unassigned marker or empty.")
+
             continue
 
         print(f"Preparing to bin reads for strain: {strain_name}...")
@@ -374,6 +386,7 @@ def create_binned_fastq_files(
         if read_to_strain_assignment_table[strain_name].dtype not in [np.uint8, np.int8, np.int16, np.int32, np.int64, int, bool]:
              print(f"Warning: Column '{strain_name}' in assignment table has non-integer/boolean type ({read_to_strain_assignment_table[strain_name].dtype}). Skipping, expecting 0 or 1.")
              continue
+
 
         strain_assigned_reads_series = read_to_strain_assignment_table[strain_name]
         strain_specific_read_ids: Set[ReadId] = set(
@@ -475,6 +488,7 @@ def run_binning_pipeline(
     read_to_strain_assignment_table = generate_table(final_assignments, all_strain_names)
     
     has_actual_assignments = any(isinstance(val, int) for val in final_assignments.values())
+
     if read_to_strain_assignment_table.empty and num_top_strains_to_bin > 0:
         if not all_strain_names and has_actual_assignments:
             print(
@@ -510,6 +524,7 @@ def run_binning_pipeline(
     # 3. Create binned FASTQ files
         print(f"Info: No top strains identified (excluding '{unassigned_marker}'). Binning will be skipped.")
     
+
     binned_strains_set, processes = create_binned_fastq_files(
         top_strain_names=top_strains,
         read_to_strain_assignment_table=read_to_strain_assignment_table,
@@ -552,6 +567,7 @@ if __name__ == "__main__":
     mock_all_strains_list: List[str] = ["StrainX", "StrainY", "StrainZ_complex name with_various-chars"]
     example_unassigned_marker_val: str = "UNASSIGNED_READ" 
 
+
     mock_pipeline_assignments_data: FinalAssignmentsType = {
         f"read{i:03d}": (
             (i % len(mock_all_strains_list))
@@ -582,7 +598,7 @@ if __name__ == "__main__":
     try:
         current_file_path = pathlib.Path(__file__).parent
     except NameError:  # __file__ is not defined (e.g. in an interactive session)
-    except NameError: 
+
         current_file_path = pathlib.Path.cwd()
 
     example_output_directory_path = (
@@ -608,6 +624,7 @@ if __name__ == "__main__":
             seq_r1 = 'N' * 50 
             seq_r2 = 'N' * 50
         
+
         fastq_r1_content_list.append(f"@{read_id_key}/1\n{seq_r1}\n+\n{'I'*50}\n")
         fastq_r2_content_list.append(f"@{read_id_key}/2\n{seq_r2}\n+\n{'I'*50}\n")
 
