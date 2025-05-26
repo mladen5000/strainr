@@ -9,7 +9,7 @@ abundances, and performing sequence manipulation related to k-mers.
 __version__ = "0.1.0"
 
 # Core classes and functions for easier access
-from .kmer_database import KmerStrainDatabase
+from .kmer_database import StrainKmerDb # Updated to consolidated class name
 from .analyze import ClassificationAnalyzer
 from .output import AbundanceCalculator
 from .sequence import GenomicSequence, extract_kmers_from_sequence
@@ -18,7 +18,7 @@ from .parameter_config import process_arguments
 from .running import main
 
 __all__ = [
-    "KmerStrainDatabase",
+    "StrainKmerDb", # Updated to consolidated class name
     "ClassificationAnalyzer",
     "AbundanceCalculator",
     "GenomicSequence",
