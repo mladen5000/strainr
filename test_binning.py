@@ -254,4 +254,3 @@ def test_run_binning_pipeline_subprocess_fails_exitcode(
     mock_process_instance.join.assert_called_once()
     captured = capsys.readouterr()
     assert "Warning: Binning process for a strain (PID 1234) finished with exit code 1." in captured.out
-```

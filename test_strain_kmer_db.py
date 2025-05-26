@@ -294,4 +294,3 @@ def test_skdb_validate_kmer_length(pickled_skdb_path: pathlib.Path, default_kmer
     
     assert db.validate_kmer_length(12345) is False 
     assert db.validate_kmer_length(["A"] * default_kmer_length_skdb) is False
-```

@@ -208,4 +208,3 @@ def test_convert_assignments_custom_unassigned_marker_strict(calculator_fixture:
     with pytest.raises(ValueError, match="StrainIndex 99 for ReadId 'read_invalid' is out of bounds"):
         calculator_fixture.convert_assignments_to_strain_names(assignments_invalid_idx, unassigned_marker=unassigned_marker_fixture)
 
-```
