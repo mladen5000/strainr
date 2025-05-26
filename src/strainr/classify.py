@@ -152,6 +152,43 @@ class SequenceFileProcessor:
                 raise ValueError(f"Unknown file format for file: {file_path}")
 
     @staticmethod
+    def _process_read_pair(
+        fwd_record, rev_iter, logger
+    ) -> Generator[Tuple[str, bytes, bytes], None, None]:
+        """Processes a forward read and its corresponding reverse read."""
+        if fwd_record is None:
+            return
+        fwd_id = (
+            getattr(fwd_record, "id", "")
+            if hasattr(fwd_record, "id")
+            else fwd_record[0]
+        )
+        if not isinstance(fwd_id, str):
+            fwd_id = str(fwd_id)
+        fwd_seq_str = (
+            str(getattr(fwd_record, "seq", ""))
+            if hasattr(fwd_record, "seq")
+            else fwd_record[1]
+        )
+        fwd_seq_bytes = fwd_seq_str.encode("utf-8")
+        rev_seq_bytes = b""
+        if rev_iter:
+            try:
+                rev_record = next(rev_iter)
+                rev_seq_str = (
+                    str(getattr(rev_record, "seq", ""))
+                    if hasattr(rev_record, "seq")
+                    else rev_record[1]
+                )
+                rev_seq_bytes = rev_seq_str.encode("utf-8")
+            except StopIteration:
+                logger.warning(
+                    f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
+                )
+                rev_iter = None
+        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
+
+    @staticmethod
     def parse_sequence_files(
         fwd_reads_path: pathlib.Path,
         rev_reads_path: Optional[pathlib.Path] = None,
@@ -188,50 +225,16 @@ class SequenceFileProcessor:
                     fwd_iter = SeqIO.parse(fwd_fh, "fasta")
                     rev_iter = SeqIO.parse(rev_fh, "fasta") if rev_fh else None
                     for fwd_record in fwd_iter:
-                        if fwd_record is None:
-                            continue
-                        fwd_id = getattr(fwd_record, "id", "")
-                        if not isinstance(fwd_id, str):
-                            fwd_id = str(fwd_id)
-                        fwd_seq_str = str(getattr(fwd_record, "seq", ""))
-                        fwd_seq_bytes = fwd_seq_str.encode("utf-8")
-                        rev_seq_bytes = b""
-                        if rev_iter:
-                            try:
-                                rev_record = next(rev_iter)
-                                rev_seq_str = str(getattr(rev_record, "seq", ""))
-                                rev_seq_bytes = rev_seq_str.encode("utf-8")
-                            except StopIteration:
-                                logger.warning(
-                                    f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
-                                )
-                                rev_iter = None
-                        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
+                        yield from SequenceFileProcessor._process_read_pair(
+                            fwd_record, rev_iter, logger
+                        )
                 else:  # fastq
                     fwd_iter = FastqGeneralIterator(fwd_fh)
                     rev_iter = FastqGeneralIterator(rev_fh) if rev_fh else None
                     for fwd_record in fwd_iter:
-                        if fwd_record is None:
-                            continue
-                        try:
-                            fwd_id, fwd_seq_str, _ = fwd_record
-                        except Exception:
-                            continue
-                        if not isinstance(fwd_id, str):
-                            fwd_id = str(fwd_id)
-                        fwd_seq_bytes = fwd_seq_str.encode("utf-8")
-                        rev_seq_bytes = b""
-                        if rev_iter:
-                            try:
-                                rev_record = next(rev_iter)
-                                _, rev_seq_str, _ = rev_record
-                                rev_seq_bytes = rev_seq_str.encode("utf-8")
-                            except StopIteration:
-                                logger.warning(
-                                    f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
-                                )
-                                rev_iter = None
-                        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
+                        yield from SequenceFileProcessor._process_read_pair(
+                            fwd_record, rev_iter, logger
+                        )
             finally:
                 if rev_fh:
                     rev_fh.close()
@@ -462,9 +465,6 @@ class KmerClassificationWorkflow:
             raise RuntimeError("Database not initialized.")
 
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
-
-        if self.database is None:
-            raise RuntimeError("Database not initialized.")
         all_kmers: Set[bytes] = set()
         # Process forward sequence
         if fwd_seq_bytes:

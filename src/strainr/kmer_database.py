@@ -216,12 +216,7 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
                     skipped_kmers_count += 1
                     continue
 
-            if len(kmer_bytes) != self.kmer_length:  # Final byte length check
-                print(
-                    f"Warning: Post-encoding/cast k-mer byte length validation failed at index {i}. Expected {self.kmer_length}, k-mer '{kmer_obj}' (bytes: {kmer_bytes!r}) has byte length {len(kmer_bytes)}. Skipping."
-                )
-                skipped_kmers_count += 1
-                continue
+            # Removed redundant final byte length check as current_obj_len already validates k-mer length
 
             temp_kmer_map[kmer_bytes] = count_matrix[i]
 
@@ -243,7 +238,7 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
                 f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues."
             )
 
-    def get_strain_counts_for_kmer(self, kmer):
+    def get_strain_counts_for_kmer(self, kmer: bytes) -> Optional[np.ndarray]:
         """
         Retrieves the strain count vector for a given k-mer. (Equivalent to lookup_kmer)
 
