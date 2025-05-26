@@ -3,7 +3,7 @@ Sequence handling and k-mer extraction functionality.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Set # Added Set for type hinting
+from typing import List, Set  # Added Set for type hinting
 import mmh3
 
 
@@ -19,7 +19,7 @@ class GenomicSequence:
         sequence_id: Unique identifier for the sequence.
         sequence_data: Raw sequence as bytes for memory efficiency and to ensure
                        consistent handling of character encodings.
-    
+
     Example:
         >>> seq = GenomicSequence(
         ...     sequence_id='read_001',
@@ -60,7 +60,7 @@ class GenomicSequence:
 
         # Validate DNA bases
         allowed_nucleotides: Set[str] = {"A", "C", "G", "T", "N"}
-        
+
         # Decode for character set validation, assuming ASCII or compatible (e.g., UTF-8 subset)
         # If other encodings are possible, this might need adjustment.
         try:

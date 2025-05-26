@@ -196,18 +196,18 @@ def parse_ngd_keywords(args, assembly_level):
     """
     if args.taxid:
         dbtype = "species"
-        keywords = { "species_taxids": args.taxid }
-        outdir =  f"species_{args.taxid}_{assembly_level}"
+        keywords = {"species_taxids": args.taxid}
+        outdir = f"species_{args.taxid}_{assembly_level}"
 
     elif args.assembly_accessions:
         dbtype = "custom"
-        keywords = { "assembly_accessions": args.assembly_accessions}
-        outdir =  "custom_accessions"
+        keywords = {"assembly_accessions": args.assembly_accessions}
+        outdir = "custom_accessions"
 
     elif args.genus:
         dbtype = "genus"
-        keywords = {"genera": args.genus} 
-        outdir  = f"genus_{args.genus}"
+        keywords = {"genera": args.genus}
+        outdir = f"genus_{args.genus}"
     else:
         raise ValueError(
             """
@@ -356,7 +356,10 @@ def log_clusters2(out2_path, clust):
     """Write tsv where each row starts with cluster genome, followed by each member genome within cluster"""
     df_clusters = pd.DataFrame.from_dict(clust, orient="index")
     df_clusters.index.name = "genome_rep"
-    most_members = lambda gi: df_clusters.count(axis=1)[gi]
+
+    def most_members(gi):
+        return df_clusters.count(axis=1)[gi]
+
     df_clusters = df_clusters.sort_index(key=most_members, ascending=False)
     df_clusters.to_csv(out2_path, sep="\t")
 
@@ -504,7 +507,6 @@ def pickle_db(database, fout):
 
 
 def pickle_df(df, filename, method="pickle"):
-
     outfile = args.out + ".db"
     if method == "pickle":
         df.to_pickle(outfile)
@@ -533,7 +535,9 @@ def get_mash_dist(genome_files: list[pathlib.Path]):
         from sourmash import MinHash, signature
         from sourmash.compare import compare_all
     except ImportError:
-        raise ImportError("sourmash is required for get_mash_dist. Install with 'pip install sourmash'.")
+        raise ImportError(
+            "sourmash is required for get_mash_dist. Install with 'pip install sourmash'."
+        )
 
     ksize = 21  # Mash default is 21, can be parameterized
     n_hashes = 1000  # Number of hashes for sketching
@@ -584,19 +588,17 @@ def call_ngd(ngd_args):
 
 
 def get_genome_files(ngd_args: argparse.ArgumentParser) -> list[pathlib.Path]:
-    """ Returns list of genome paths after NGD successfully downloads them"""
-    genomes_folder = ngd_args['output']
+    """Returns list of genome paths after NGD successfully downloads them"""
+    genomes_folder = ngd_args["output"]
     return list(genomes_folder.glob("*fna.gz"))
 
 
 def main(args: argparse.ArgumentParser):
-
     if args.custom is None:
         ngd_args = download_strains(args)
         genome_files = get_genome_files(ngd_args)
         call_ngd(ngd_args)
-        summary_table = ngd_args['metadata_table']
-
+        summary_table = ngd_args["metadata_table"]
 
         if args.unique_taxid:
             # Filter genome list if only unique taxids desired
@@ -635,8 +637,8 @@ def main(args: argparse.ArgumentParser):
     df = build_df(database, genome_names)
 
     logger.debug(f"{len(database)} kmers in database")
-    logger.debug(f"{sys.getsizeof(database)//1e6} MB")
-    logger.debug(f"Kmer-building complete, saving db as {args.out+'.db'}.")
+    logger.debug(f"{sys.getsizeof(database) // 1e6} MB")
+    logger.debug(f"Kmer-building complete, saving db as {args.out + '.db'}.")
 
     ## 3. Save the results
     pickle_df(df, args.out)
