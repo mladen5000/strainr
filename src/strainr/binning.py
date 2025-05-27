@@ -230,28 +230,8 @@ def _extract_reads_for_strain(
             f"Warning: Forward FASTQ file not found or is not a file: {forward_fastq_path}. Skipping R1 for strain {strain_name}."
         )
 
-    """Extracts reads for a specific strain to new FASTQ files."""
-    if not isinstance(strain_name, str) or not strain_name:
-        raise ValueError("strain_name must be a non-empty string.")
-    if not isinstance(read_ids_for_strain, set) or not all(isinstance(rid, str) and rid for rid in read_ids_for_strain):
-        raise TypeError("read_ids_for_strain must be a set of non-empty strings.")
-    if not isinstance(forward_fastq_path, pathlib.Path):
-        raise TypeError("forward_fastq_path must be a pathlib.Path object.")
-    if reverse_fastq_path and not isinstance(reverse_fastq_path, pathlib.Path):
-        raise TypeError("reverse_fastq_path must be a pathlib.Path object or None.")
-    if not isinstance(output_bin_dir, pathlib.Path):
-        raise TypeError("output_bin_dir must be a pathlib.Path object.")
-
-    if not forward_fastq_path.is_file():
-        raise FileNotFoundError(f"Forward FASTQ file not found: {forward_fastq_path}")
-    if reverse_fastq_path and not reverse_fastq_path.is_file():
-        raise FileNotFoundError(f"Reverse FASTQ file specified but not found: {reverse_fastq_path}")
-    if not output_bin_dir.is_dir(): # Assume it should exist before calling this worker
-        # This check might be redundant if create_binned_fastq_files always creates it.
-        # However, for robustness of the worker, it's a good check.
-        # To be fully robust, it could try to create it, but that might be unexpected for a worker.
-        raise FileNotFoundError(f"Output bin directory does not exist or is not a directory: {output_bin_dir}")
-
+    # The minimal docstring and the first parameter/path validation block have been removed as requested.
+    # The more complete docstring and validation block below are retained.
 
     safe_strain_filename = strain_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     fastq_files_to_process: List[Tuple[pathlib.Path, str]] = [(forward_fastq_path, "R1")]

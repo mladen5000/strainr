@@ -9,6 +9,8 @@ from a pickle file and save it to a Parquet file, ensuring the index
 import argparse
 import pandas as pd
 from pathlib import Path
+import pickle # Added import
+
 
 def convert_pickle_to_parquet(pickle_path: Path, parquet_path: Path) -> None:
     """
@@ -41,7 +43,7 @@ def convert_pickle_to_parquet(pickle_path: Path, parquet_path: Path) -> None:
         print(f"Error: Input pickle file not found at {pickle_path}")
     except pd.errors.EmptyDataError:
         print(f"Error: The pickle file {pickle_path} is empty or does not contain a valid DataFrame.")
-    except pickle.UnpicklingError: # Assuming pickle is imported if this error is specific
+    except pickle.UnpicklingError: 
         print(f"Error: Failed to unpickle data from {pickle_path}. The file may be corrupted or not a pickle file.")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")

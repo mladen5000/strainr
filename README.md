@@ -34,7 +34,7 @@ The k-mer database, a crucial component for StrainR, is built using the `strainr
 *   **Filtering:** Optionally filters downloaded genomes, for instance, to include only those with unique strain-level taxonomic IDs.
 *   **K-mer Extraction:** Processes FASTA files to extract k-mers of a specified length.
 *   **Database Construction:** Creates a presence/absence matrix where rows are unique k-mers and columns represent different strains/genomes.
-*   **Output:** Saves the final k-mer matrix as a pickled Pandas DataFrame (e.g., `mydatabase.db.pkl`).
+*   **Output:** Saves the final k-mer matrix as a Parquet file (e.g., `mydatabase.db.parquet`).
 
 **Example Usage:**
 ```bash
@@ -71,7 +71,7 @@ Sequence classification is primarily handled by the `strainr-classify-clean.py` 
 ```bash
 # Classifying single-end reads
 python strainr/strainr-classify-clean.py \
-    --db my_database.db.pkl \
+    --db my_database.db.parquet \
     --input_forward reads.fastq.gz \
     --out classification_output_dir \
     --procs 8 \
@@ -80,7 +80,7 @@ python strainr/strainr-classify-clean.py \
 
 # Classifying paired-end reads (example, assuming two lists of files)
 # python strainr/strainr-classify-clean.py \
-#    --db my_database.db.pkl \
+#    --db my_database.db.parquet \
 #    --input_forward r1_file1.fastq.gz r1_file2.fastq.gz \
 #    --input_reverse r2_file1.fastq.gz r2_file2.fastq.gz \
 #    --out paired_classification_out \
@@ -96,6 +96,7 @@ python strainr/strainr-classify-clean.py \
 *   Pydantic (for `strainr-classify-clean.py` argument parsing)
 *   `ncbi-genome-download` (for `strainr-db.py` NCBI download functionality)
 *   `tqdm` (for progress bars in `strainr-db.py`)
+*   `pyarrow` or a similar Parquet engine (e.g., `fastparquet`) for reading/writing Parquet files with pandas.
 
 (Ensure that `jellyfish` is **not** listed as a dependency.)
 ```
