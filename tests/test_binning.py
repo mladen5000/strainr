@@ -33,20 +33,23 @@ from src.strainr.binning import (
     _extract_reads_for_strain,
     create_binned_fastq_files,
     run_binning_pipeline,
+    FinalAssignmentsType,  # Assuming this is defined in binning.py or imported there
 )
 
-
 # --- Fixtures ---
+
 
 @pytest.fixture
 def strain_names_fixture() -> List[str]:
     """Provides a default list of strain names."""
     return ["StrainA", "StrainB", "StrainC"]
 
+
 @pytest.fixture
 def unassigned_marker_fixture() -> str:
     """Provides a default unassigned marker string."""
     return "NA_TEST"
+
 
 @pytest.fixture
 def simple_final_assignments(
@@ -63,12 +66,14 @@ def simple_final_assignments(
         "read6": 2,  # StrainC
     }
 
+
 @pytest.fixture
 def tmp_output_dir(tmp_path: pathlib.Path) -> pathlib.Path:
     """Creates a temporary output directory for binning tests."""
     output_dir = tmp_path / "binning_test_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
 
 @pytest.fixture
 def mock_fastq_paths(tmp_path: pathlib.Path) -> Dict[str, pathlib.Path]:
@@ -82,6 +87,7 @@ def mock_fastq_paths(tmp_path: pathlib.Path) -> Dict[str, pathlib.Path]:
 
 # --- Tests for generate_table ---
 
+
 def test_generate_table_basic(
     simple_final_assignments: FinalAssignmentsType, strain_names_fixture: List[str]
 ):
@@ -93,6 +99,7 @@ def test_generate_table_basic(
     assert df.loc["read2", "StrainB"] == 1
     assert df.loc["read4", "StrainA"] == 0
 
+
 def test_generate_table_empty_input():
     df = generate_table({}, [])
     assert df.empty
@@ -100,14 +107,16 @@ def test_generate_table_empty_input():
     assert df_no_strains.index.tolist() == ["read1"]
     assert df_no_strains.columns.empty
 
+
 def test_generate_table_empty_strain_names(
     simple_final_assignments: FinalAssignmentsType,
 ):
     with pytest.raises(
         ValueError,
-        match="all_strain_names is empty, but final_assignments contains integer .* assignments."
+        match="all_strain_names is empty, but final_assignments contains integer .* assignments.",
     ):
         generate_table(simple_final_assignments, [])
+
 
 def test_generate_table_all_unassigned(
     strain_names_fixture: List[str], unassigned_marker_fixture: str
@@ -122,7 +131,9 @@ def test_generate_table_all_unassigned(
     )
     pd.testing.assert_frame_equal(df, expected_df)
 
+
 # --- Tests for get_top_strain_names ---
+
 
 def test_get_top_strain_names_basic(
     simple_final_assignments: FinalAssignmentsType, strain_names_fixture: List[str]
@@ -131,6 +142,7 @@ def test_get_top_strain_names_basic(
         simple_final_assignments, strain_names_fixture, exclude_unassigned=True
     )
     assert top_strains == ["StrainA", "StrainB", "StrainC"]
+
 
 def test_get_top_strain_names_include_unassigned(
     simple_final_assignments: FinalAssignmentsType,
@@ -144,10 +156,16 @@ def test_get_top_strain_names_include_unassigned(
         exclude_unassigned=False,
     )
     assert len(top_strains) == 4
-    assert set(top_strains) == {"StrainA", "StrainB", "StrainC", unassigned_marker_fixture}
+    assert set(top_strains) == {
+        "StrainA",
+        "StrainB",
+        "StrainC",
+        unassigned_marker_fixture,
+    }
 
 
 # --- Tests for _extract_reads_for_strain ---
+
 
 @patch("src.strainr.binning.open_file_transparently", new_callable=mock_open)
 @patch("src.strainr.binning.SeqIO.parse")
@@ -160,7 +178,9 @@ def test_extract_reads_for_strain_r1_only(
     mock_fastq_paths: Dict[str, pathlib.Path],
 ):
     r1_path = mock_fastq_paths["r1"]
-    with patch.object(pathlib.Path, 'is_file', return_value=True): # Ensure is_file() passes for the dummy path
+    with patch.object(
+        pathlib.Path, "is_file", return_value=True
+    ):  # Ensure is_file() passes for the dummy path
         read_ids_for_strain = {"read_A1", "read_A2"}
         all_seq_records = [
             SeqRecord(Seq("ATGC"), id="read_A1"),
@@ -185,7 +205,9 @@ def test_extract_reads_for_strain_r1_only(
         assert written_records[0].id == "read_A1"
         assert written_records[1].id == "read_A2"
 
+
 # --- Tests for create_binned_fastq_files ---
+
 
 @patch("src.strainr.binning.mp.Process")
 @patch("pathlib.Path.mkdir")
@@ -222,16 +244,35 @@ def test_create_binned_fastq_files_basic(
 
     mock_process_class.assert_has_calls(
         [
-            call(target=_extract_reads_for_strain, args=("StrainA", {"read1_A", "read2_A"}, mock_fastq_paths["r1"], mock_fastq_paths["r2"], tmp_output_dir / "bins")),
-            call(target=_extract_reads_for_strain, args=("StrainB", {"read1_B"}, mock_fastq_paths["r1"], mock_fastq_paths["r2"], tmp_output_dir / "bins")),
+            call(
+                target=_extract_reads_for_strain,
+                args=(
+                    "StrainA",
+                    {"read1_A", "read2_A"},
+                    mock_fastq_paths["r1"],
+                    mock_fastq_paths["r2"],
+                    tmp_output_dir / "bins",
+                ),
+            ),
+            call(
+                target=_extract_reads_for_strain,
+                args=(
+                    "StrainB",
+                    {"read1_B"},
+                    mock_fastq_paths["r1"],
+                    mock_fastq_paths["r2"],
+                    tmp_output_dir / "bins",
+                ),
+            ),
         ],
-        any_order=True
+        any_order=True,
     )
     mock_process_instance1.start.assert_called_once()
     mock_process_instance2.start.assert_called_once()
 
 
 # --- Tests for run_binning_pipeline ---
+
 
 @patch("src.strainr.binning.create_binned_fastq_files", return_value=(set(), []))
 @patch("src.strainr.binning.get_top_strain_names")
