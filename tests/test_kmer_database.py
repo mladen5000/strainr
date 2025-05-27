@@ -2,6 +2,7 @@
 Pytest unit tests for the KmerStrainDatabase class from src.strainr.kmer_database.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -11,16 +12,22 @@ from typing import List, Dict, Union, Any, Optional
 from unittest.mock import patch, MagicMock
 
 # Assuming src.strainr.* is in PYTHONPATH or tests are run from a suitable root
-from src.strainr.kmer_database import KmerStrainDatabase, Kmer, CountVector 
+from strainr.kmer_database import StrainKmerDb
+from strainr.genomic_types import CountVector
+
+Kmer = Union[str, bytes]  # Kmer can be either str or bytes, depending on context
 
 # --- Helper Functions & Fixtures ---
 
-KMER_LEN_FOR_TESTS_KDB = 4 # Using a different constant name to avoid potential conflicts
+KMER_LEN_FOR_TESTS_KDB = (
+    4  # Using a different constant name to avoid potential conflicts
+)
 
-def create_dummy_dataframe_for_kdb( # Renamed to avoid conflict
-    kmer_list: List[Union[str, bytes]], 
-    strain_names: List[str], 
-    counts: Optional[np.ndarray] = None
+
+def create_dummy_dataframe_for_kdb(  # Renamed to avoid conflict
+    kmer_list: List[Union[str, bytes]],
+    strain_names: List[str],
+    counts: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """Creates a DataFrame suitable for KmerStrainDatabase."""
     if not kmer_list and not strain_names:
@@ -29,33 +36,47 @@ def create_dummy_dataframe_for_kdb( # Renamed to avoid conflict
         return pd.DataFrame(columns=strain_names)
     if not strain_names:
         # DataFrame with index but no columns
-        return pd.DataFrame(index=pd.Index(kmer_list, name="kmer_idx")) # Use a name for index
-        
+        return pd.DataFrame(
+            index=pd.Index(kmer_list, name="kmer_idx")
+        )  # Use a name for index
+
     if counts is None:
         counts_shape = (len(kmer_list), len(strain_names))
-        if 0 in counts_shape :
-             return pd.DataFrame(index=pd.Index(kmer_list, name="kmer_idx"), columns=strain_names)
-        counts = np.random.randint(0, 256, size=counts_shape, dtype=np.uint8) # KmerStrainDatabase uses uint8
-    
-    return pd.DataFrame(counts, index=pd.Index(kmer_list, name="kmer_idx"), columns=strain_names)
+        if 0 in counts_shape:
+            return pd.DataFrame(
+                index=pd.Index(kmer_list, name="kmer_idx"), columns=strain_names
+            )
+        counts = np.random.randint(
+            0, 256, size=counts_shape, dtype=np.uint8
+        )  # KmerStrainDatabase uses uint8
+
+    return pd.DataFrame(
+        counts, index=pd.Index(kmer_list, name="kmer_idx"), columns=strain_names
+    )
+
 
 @pytest.fixture
-def strain_names_fixture_kdb() -> List[str]: # Renamed
+def strain_names_fixture_kdb() -> List[str]:  # Renamed
     return ["StrainKDB_1", "StrainKDB_2"]
 
+
 @pytest.fixture
-def default_kmer_length_kdb() -> int: # Renamed
+def default_kmer_length_kdb() -> int:  # Renamed
     return KMER_LEN_FOR_TESTS_KDB
 
-@pytest.fixture
-def sample_kmers_str_kdb(default_kmer_length_kdb: int) -> List[str]: # Renamed
-    return [
-        "AAAA", "CCCC", "GGGG" # Ensure these are length default_kmer_length_kdb
-    ][:3] # Take first 3, ensure they match length
 
 @pytest.fixture
-def sample_kmers_bytes_kdb(sample_kmers_str_kdb: List[str]) -> List[Kmer]: # Renamed
-    return [k.encode('utf-8') for k in sample_kmers_str_kdb]
+def sample_kmers_str_kdb(default_kmer_length_kdb: int) -> List[str]:  # Renamed
+    return [
+        "AAAA",
+        "CCCC",
+        "GGGG",  # Ensure these are length default_kmer_length_kdb
+    ][:3]  # Take first 3, ensure they match length
+
+
+@pytest.fixture
+def sample_kmers_bytes_kdb(sample_kmers_str_kdb: List[str]) -> List[Kmer]:  # Renamed
+    return [k.encode("utf-8") for k in sample_kmers_str_kdb]
 
 
 @pytest.fixture
@@ -78,9 +99,9 @@ def parquet_kdb_path( # Renamed fixture
         kmers_for_df = params["custom_kmers"]
     elif kmer_type == "str":
         kmers_for_df = sample_kmers_str_kdb
-    else: # bytes
+    else:  # bytes
         kmers_for_df = sample_kmers_bytes_kdb
-    
+
     counts_data = params.get("custom_counts")
     strains = params.get("custom_strains", strain_names_fixture_kdb)
 
@@ -110,6 +131,7 @@ def parquet_kdb_path( # Renamed fixture
         
     df_to_save.to_parquet(db_file, index=True) # Changed saving method
     return db_file
+
 
 # --- Tests for __init__ and _load_database ---
 
@@ -145,7 +167,11 @@ def test_kdb_init_kmer_length_inferred(parquet_kdb_path: pathlib.Path, default_k
     db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=None) # Use renamed fixture
     assert db.kmer_length == default_kmer_length_kdb
     captured = capsys.readouterr()
-    assert f"K-mer length inferred from first k-mer: {default_kmer_length_kdb}" in captured.out
+    assert (
+        f"K-mer length inferred from first k-mer: {default_kmer_length_kdb}"
+        in captured.out
+    )
+
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"kmer_type": "str"}], indirect=True) # Renamed fixture
 def test_kdb_init_kmer_length_mismatch_error(parquet_kdb_path: pathlib.Path, default_kmer_length_kdb: int): # Renamed fixture
@@ -170,8 +196,11 @@ def test_kdb_init_parquet_not_dataframe_error(mock_read_parquet: MagicMock, tmp_
     mock_read_parquet.return_value = "this is not a dataframe"
     db_file = tmp_path / "not_df_kdb.parquet" # Updated extension
     db_file.touch()
-    with pytest.raises(RuntimeError, match="Data loaded from .* is not a pandas DataFrame"):
-        KmerStrainDatabase(db_file)
+    with pytest.raises(
+        RuntimeError, match="Data loaded from .* is not a pandas DataFrame"
+    ):
+        StrainKmerDb(db_file)
+
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"empty_df": True}], indirect=True) # Renamed fixture
 def test_kdb_init_empty_dataframe_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
@@ -232,7 +261,7 @@ def test_kdb_get_strain_counts_for_kmer(
     assert counts.dtype == np.uint8
     assert len(counts) == len(strain_names_fixture_kdb)
 
-    unknown_kmer = ("Z" * default_kmer_length_kdb).encode('utf-8')
+    unknown_kmer = ("Z" * default_kmer_length_kdb).encode("utf-8")
     assert db.get_strain_counts_for_kmer(unknown_kmer) is None
 
     wrong_length_kmer = (sample_kmers_str_kdb[0][:-1]).encode('utf-8') 
@@ -259,7 +288,7 @@ def test_kdb_contains_method(parquet_kdb_path: pathlib.Path, sample_kmers_str_kd
     known_kmer_bytes = sample_kmers_str_kdb[0].encode('utf-8')
     assert known_kmer_bytes in db
 
-    unknown_kmer = ("Z" * default_kmer_length_kdb).encode('utf-8')
+    unknown_kmer = ("Z" * default_kmer_length_kdb).encode("utf-8")
     assert unknown_kmer not in db
     
     known_kmer_as_str = sample_kmers_str_kdb[0]
