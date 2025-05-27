@@ -676,19 +676,18 @@ if __name__ == "__main__":
     fastq_r1_content_list = []
     fastq_r2_content_list = []
     for read_id_key in mock_pipeline_assignments_data.keys():
-        # Removed duplicate sequence assignments
-        seq_r1 = "A" * 50
-        seq_r2 = "C" * 50
         # Check if the assignment is the unassigned marker or an invalid index (int but out of bounds)
         assignment = mock_pipeline_assignments_data[read_id_key]
-        if assignment == example_unassigned_marker_val or (
-            isinstance(assignment, int)
-            and not (0 <= assignment < len(mock_all_strains_list))
+        if assignment == example_unassigned_marker_val or not (
+            0 <= int(assignment) < len(mock_all_strains_list)
         ):
             seq_r1 = (
                 "N" * 50
             )  # Different sequence for unassigned or invalid for visual check
             seq_r2 = "N" * 50
+        else:
+            seq_r1 = "A" * 50
+            seq_r2 = "C" * 50
 
         fastq_r1_content_list.append(f"@{read_id_key}/1\n{seq_r1}\n+\n{'I' * 50}\n")
         fastq_r2_content_list.append(f"@{read_id_key}/2\n{seq_r2}\n+\n{'I' * 50}\n")
