@@ -6,7 +6,6 @@ and 'src' is a subdirectory.
 
 import pytest
 import dataclasses  # For FrozenInstanceError
-from typing import List
 
 # Assuming src.strainr.* is in PYTHONPATH or tests are run from a suitable root
 from src.strainr.sequence import GenomicSequence, extract_kmers_from_sequence

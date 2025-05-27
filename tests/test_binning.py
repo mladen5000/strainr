@@ -5,11 +5,9 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 
 import pytest
 import pandas as pd
-import numpy as np
 import pathlib
-import multiprocessing as mp
-from typing import List, Dict, Set, Tuple, Union, Optional  # Added Optional
-from unittest.mock import patch, MagicMock, call, mock_open  # Added mock_open
+from typing import List, Dict  # Added Optional
+from unittest.mock import patch, MagicMock, mock_open  # Added mock_open
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -23,13 +21,6 @@ from src.strainr.binning import (
     run_binning_pipeline,
     FinalAssignmentsType,  # Assuming this is defined in binning.py or imported there
 )
-from src.strainr.genomic_types import (
-    ReadId,
-    StrainIndex,
-)  # If FinalAssignmentsType uses these
-from src.strainr.utils import (
-    open_file_transparently,
-)  # If used by _extract_reads_for_strain
 
 # --- Fixtures ---
 

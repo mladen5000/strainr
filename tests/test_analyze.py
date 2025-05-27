@@ -7,7 +7,7 @@ import pytest
 import numpy as np
 from collections import Counter
 from typing import Dict, List, Union  # Removed Generator as streaming not tested here
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 from src.strainr.analyze import ClassificationAnalyzer
 from src.strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults

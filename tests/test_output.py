@@ -5,7 +5,7 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 
 import pytest
 from collections import Counter
-from typing import List, Dict, Union, Any  # Any can be removed if not used
+from typing import List, Dict, Union  # Any can be removed if not used
 
 from src.strainr.output import AbundanceCalculator
 # Assuming StrainIndex and ReadId might be used if FinalAssignmentsType was more specific
