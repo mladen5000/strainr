@@ -4,8 +4,7 @@ import argparse
 import gzip
 import logging
 import pathlib
-import pickle
-
+# import pickle # Will be removed if pickle_db function is removed or no longer uses it.
 import sys
 import csv
 import shutil
@@ -96,7 +95,7 @@ def get_args():
         type=str,
         required=False,
         default="database",
-        help="Custom name for output containing genomes and database",
+        help="Custom name for output prefix. Final database will be <prefix>.db.parquet.",
     )
     parser.add_argument(
         "--custom",
@@ -506,14 +505,18 @@ def pickle_db(database, fout):
     return
 
 
-def pickle_df(df, filename, method="pickle"):
-    outfile = args.out + ".db"
-    if method == "pickle":
-        df.to_pickle(outfile)
-    elif method == "hdf":
-        outfile = args.out + ".sdb"
-        df.to_hdf(outfile)
-        pd.DataFrame().to_hdf
+def save_dataframe_db(df, filename_prefix: str): # Renamed function, removed method argument
+    """Saves the DataFrame to a Parquet file."""
+    # outfile = filename_prefix + ".db.parquet" # Assuming filename_prefix is args.out
+    # The global `args` is used here, which is not ideal but follows existing pattern.
+    outfile = args.out + ".db.parquet" 
+    logger.info(f"Saving DataFrame database to (Parquet format): {outfile}")
+    try:
+        df.to_parquet(outfile, index=True)
+        logger.info("DataFrame database saved successfully to Parquet.")
+    except Exception as e:
+        logger.error(f"Failed to save DataFrame database to {outfile} (Parquet format): {e}")
+        raise
     return
 
 
@@ -638,10 +641,10 @@ def main(args: argparse.ArgumentParser):
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database) // 1e6} MB")
-    logger.debug(f"Kmer-building complete, saving db as {args.out + '.db'}.")
+    logger.debug(f"Kmer-building complete, saving db as {args.out + '.db.parquet'}.") # Updated log
 
     ## 3. Save the results
-    pickle_df(df, args.out)
+    save_dataframe_db(df, args.out) # Call renamed function
 
     return
 

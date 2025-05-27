@@ -105,11 +105,11 @@ class StrainDatabase:
     def __post_init__(self) -> None:
         """
         Calculate the data attributes and load the database
-        Args: filepath (str): Location of the pickle file containing the database
+        Args: filepath (str): Location of the Parquet file containing the database
         # global self.num_strain, self.strains_names, self.db
         """
-        # load pickle
-        df = pd.read_pickle(self.filepath)
+        # load parquet
+        df = pd.read_parquet(self.filepath)
 
         # assign data attributes
         self.strain_names = list(df.columns)
@@ -121,7 +121,7 @@ class StrainDatabase:
 getattr(StrainDatabase, "__slots__")
 
 
-elenta_path = pathlib.Path("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
+elenta_path = pathlib.Path("~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet") # Updated extension
 db = StrainDatabase(elenta_path)
 
 for k, v in StrainDatabase.__dict__.items():
@@ -170,7 +170,7 @@ def hash_kmer(DNA_read: Seq):
 def main() -> None:
     myseq2 = SimpleSeq(name="s1", seq="ATCGATCGATCG")
     NDArray[Shape["*"], UInt8]
-    elenta = StrainDatabase("~/Strainr_Extra/databases_idk/elenta_10genomes.db")
+    elenta = StrainDatabase("~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet") # Updated extension
     get_kmers(myseq2, elenta)
 
 

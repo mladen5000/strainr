@@ -12,7 +12,7 @@ This script automates the process of:
 4. Constructing a presence/absence matrix where rows are unique k-mers,
    columns are strains (genomes), and values indicate if a k-mer is present
    in a strain.
-5. Saving this matrix as a pickled Pandas DataFrame, which serves as the
+5. Saving this matrix as a Parquet file, which serves as the
    k-mer database for StrainR classification tools.
 """
 
@@ -577,17 +577,17 @@ class DatabaseBuilder:
 
         return kmer_matrix_df
 
-    def _save_database_to_pickle(self, database_df: pd.DataFrame) -> None:
-        """Saves the k-mer database DataFrame to a pickle file."""
+    def _save_database_to_parquet(self, database_df: pd.DataFrame) -> None:
+        """Saves the k-mer database DataFrame to a Parquet file."""
         output_path = self.base_path / (
-            self.output_db_name + ".db.pkl"
-        )  # Changed extension for clarity
-        logger.info(f"Saving k-mer database to: {output_path}")
+            self.output_db_name + ".db.parquet"
+        ) 
+        logger.info(f"Saving k-mer database to (Parquet format): {output_path}")
         try:
-            database_df.to_pickle(output_path)
-            logger.info("Database saved successfully.")
+            database_df.to_parquet(output_path, index=True)
+            logger.info("Database saved successfully to Parquet.")
         except Exception as e:
-            logger.error(f"Failed to save database to {output_path}: {e}")
+            logger.error(f"Failed to save database to {output_path} (Parquet format): {e}")
             raise
 
     def create_database(self) -> None:
@@ -628,7 +628,7 @@ class DatabaseBuilder:
             )
 
         # 4. Save the database
-        self._save_database_to_pickle(kmer_database_df)
+        self._save_database_to_parquet(kmer_database_df)
 
         logger.info("K-mer database creation workflow finished.")
 
@@ -701,7 +701,7 @@ def get_cli_parser() -> argparse.ArgumentParser:
         "--out",
         type=str,
         default="strainr_kmer_database",  # More descriptive default
-        help="Output name prefix for the database file (e.g., 'my_db' -> 'my_db.db.pkl').",
+        help="Output name prefix for the database file (e.g., 'my_db' -> 'my_db.db.parquet').",
     )
     parser.add_argument(
         "--unique-taxid",
