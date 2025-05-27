@@ -11,6 +11,7 @@ import pandas as pd
 from pathlib import Path
 import pickle # Added import
 
+
 def convert_pickle_to_parquet(pickle_path: Path, parquet_path: Path) -> None:
     """
     Loads a DataFrame from a pickle file and saves it to a Parquet file.
@@ -70,5 +71,10 @@ if __name__ == "__main__":
 
     input_path = Path(args.input)
     output_path = Path(args.output)
+
+    # It's good practice to avoid overwriting unintentionally, 
+    # but for this script, we'll assume overwrite is fine or user manages it.
+    # if output_path.exists():
+    #     print(f"Warning: Output file {output_path} already exists. It will be overwritten.")
 
     convert_pickle_to_parquet(input_path, output_path)
