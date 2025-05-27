@@ -34,7 +34,7 @@ from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 # StrainR module imports
 from strainr.utils import open_file_transparently  # Corrected import
-from strainr.kmer_database import KmerStrainDatabase
+from strainr.database import StrainKmerDatabase # Corrected import
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
 from typing import Callable  # Added Callable, Set
@@ -141,7 +141,7 @@ class PangenomeAnalysisWorkflow:
         """
         logger.info("Initializing PangenomeAnalysisWorkflow.")
         self.args = args
-        self.database: Optional[KmerStrainDatabase] = None
+        self.database: Optional[StrainKmerDatabase] = None
         self.analyzer: Optional[ClassificationAnalyzer] = None
 
         # Ensure output directory exists
@@ -154,9 +154,9 @@ class PangenomeAnalysisWorkflow:
         self.rng = np.random.default_rng()
 
     def _initialize_database(self) -> None:
-        """Loads the k-mer database using KmerStrainDatabase."""
+        """Loads the k-mer database using StrainKmerDatabase."""
         logger.info(f"Loading k-mer database from: {self.args.db}")
-        self.database = KmerStrainDatabase(database_filepath=self.args.db)
+        self.database = StrainKmerDatabase(database_filepath=self.args.db)
         logger.info(
             f"Database loaded: {self.database.num_kmers} k-mers, "
             f"{self.database.num_strains} strains, k-mer length {self.database.kmer_length}."

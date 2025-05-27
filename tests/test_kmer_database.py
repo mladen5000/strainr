@@ -12,7 +12,7 @@ from typing import List, Dict, Union, Any, Optional
 from unittest.mock import patch, MagicMock
 
 # Assuming src.strainr.* is in PYTHONPATH or tests are run from a suitable root
-from strainr.kmer_database import StrainKmerDb
+from strainr.database import StrainKmerDatabase # Updated import
 from strainr.genomic_types import CountVector
 
 Kmer = Union[str, bytes]  # Kmer can be either str or bytes, depending on context
@@ -142,7 +142,7 @@ def test_kdb_init_success_str_kmers(
     strain_names_fixture_kdb: List[str], 
     sample_kmers_str_kdb: List[str]
 ):
-    db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
     assert db.kmer_length == default_kmer_length_kdb
     assert db.num_strains == len(strain_names_fixture_kdb)
     assert db.num_kmers == len(sample_kmers_str_kdb)
@@ -156,7 +156,7 @@ def test_kdb_init_success_bytes_kmers(
     strain_names_fixture_kdb: List[str], 
     sample_kmers_bytes_kdb: List[Kmer]
 ):
-    db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
     assert db.kmer_length == default_kmer_length_kdb
     assert db.num_strains == len(strain_names_fixture_kdb)
     assert db.num_kmers == len(sample_kmers_bytes_kdb)
@@ -164,7 +164,7 @@ def test_kdb_init_success_bytes_kmers(
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"kmer_type": "str"}], indirect=True) # Renamed fixture
 def test_kdb_init_kmer_length_inferred(parquet_kdb_path: pathlib.Path, default_kmer_length_kdb: int, capsys: pytest.CaptureFixture): # Renamed fixture
-    db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=None) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=None) # Use renamed fixture
     assert db.kmer_length == default_kmer_length_kdb
     captured = capsys.readouterr()
     assert (
@@ -176,20 +176,20 @@ def test_kdb_init_kmer_length_inferred(parquet_kdb_path: pathlib.Path, default_k
 @pytest.mark.parametrize("parquet_kdb_path", [{"kmer_type": "str"}], indirect=True) # Renamed fixture
 def test_kdb_init_kmer_length_mismatch_error(parquet_kdb_path: pathlib.Path, default_kmer_length_kdb: int): # Renamed fixture
     with pytest.raises(ValueError, match="does not match length of first k-mer"):
-        KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb + 1) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb + 1) # Use renamed fixture
 
 def test_kdb_init_file_not_found_error():
     with pytest.raises(FileNotFoundError, match="Database file not found or is not a file:"):
-        KmerStrainDatabase("nonexistent_kdb.parquet") # Updated extension
+        StrainKmerDatabase("nonexistent_kdb.parquet") # Updated extension
 
 @patch("pandas.read_parquet") # Patched to read_parquet
 def test_kdb_init_parquet_read_error(mock_read_parquet: MagicMock, tmp_path: pathlib.Path): # Renamed test and mock
     mock_read_parquet.side_effect = ValueError("Simulated Parquet read error") # Simulate Parquet error
     db_file = tmp_path / "bad_parquet_kdb.parquet" # Updated extension
     db_file.touch()
-    # Adjusted error message to match potential Parquet loading issues in KmerStrainDatabase
+    # Adjusted error message to match potential Parquet loading issues in StrainKmerDatabase
     with pytest.raises(RuntimeError, match="Failed to read or process Parquet database file"): 
-        KmerStrainDatabase(db_file)
+        StrainKmerDatabase(db_file)
 
 @patch("pandas.read_parquet") # Patched to read_parquet
 def test_kdb_init_parquet_not_dataframe_error(mock_read_parquet: MagicMock, tmp_path: pathlib.Path): # Renamed test and mock
@@ -199,47 +199,47 @@ def test_kdb_init_parquet_not_dataframe_error(mock_read_parquet: MagicMock, tmp_
     with pytest.raises(
         RuntimeError, match="Data loaded from .* is not a pandas DataFrame"
     ):
-        StrainKmerDb(db_file)
+        StrainKmerDatabase(db_file) # Updated class name
 
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"empty_df": True}], indirect=True) # Renamed fixture
 def test_kdb_init_empty_dataframe_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
     with pytest.raises(ValueError, match="Loaded database is empty"):
-        KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"no_kmers": True}], indirect=True) # Renamed fixture
 def test_kdb_init_no_kmers_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
     with pytest.raises(ValueError, match="Database contains no k-mers"):
-        KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"no_strains": True}], indirect=True) # Renamed fixture
 def test_kdb_init_no_strains_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
     with pytest.raises(ValueError, match="Database contains no strain information"):
-        KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"inconsistent_kmer_len": True}], indirect=True) # Renamed fixture
 def test_kdb_init_inconsistent_kmer_length_error(parquet_kdb_path: pathlib.Path, default_kmer_length_kdb: int): # Renamed fixture
     with pytest.raises(ValueError, match=f"Inconsistent k-mer string length at index 1. Expected {default_kmer_length_kdb}"):
-        KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=None) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=None) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"unsupported_kmer_type": True}], indirect=True) # Renamed fixture
 def test_kdb_init_unsupported_kmer_type_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
     with pytest.raises(TypeError, match="Unsupported k-mer type in index: <class 'int'>"):
-        KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"custom_kmers": ["AA", "ÄA"], "kmer_type":"str"}], indirect=True) # Renamed fixture
 def test_kdb_init_inconsistent_byte_len_after_encoding_error(parquet_kdb_path: pathlib.Path, capsys): # Renamed fixture
     with pytest.raises(ValueError, match="Post-encoding/cast k-mer byte length validation failed"):
-         KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=2) # Use renamed fixture
+         StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=2) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"non_numeric_counts": True}], indirect=True) # Renamed fixture
 def test_kdb_init_non_numeric_counts_error(parquet_kdb_path: pathlib.Path): # Renamed fixture
     with pytest.raises(TypeError, match="Could not convert database values to count matrix"):
-        KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+        StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"non_unique_kmers": True}], indirect=True) # Renamed fixture
 def test_kdb_init_non_unique_kmers_warning(parquet_kdb_path: pathlib.Path, capsys: pytest.CaptureFixture): # Renamed fixture
-    KmerStrainDatabase(parquet_kdb_path) 
+    StrainKmerDatabase(parquet_kdb_path) 
     captured = capsys.readouterr()
     assert "Warning: K-mer index in .* is not unique." in captured.out
 
@@ -252,7 +252,7 @@ def test_kdb_get_strain_counts_for_kmer(
     strain_names_fixture_kdb: List[str], 
     sample_kmers_str_kdb: List[str]
 ):
-    db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=default_kmer_length_kdb) # Use renamed fixture
     
     known_kmer_bytes = sample_kmers_str_kdb[0].encode('utf-8')
     counts = db.get_strain_counts_for_kmer(known_kmer_bytes)
@@ -271,19 +271,19 @@ def test_kdb_get_strain_counts_for_kmer(
 # --- Tests for __len__ ---
 @pytest.mark.parametrize("parquet_kdb_path", [{"kmer_type": "str", "valid_data": True}], indirect=True) # Renamed fixture
 def test_kdb_len_method(parquet_kdb_path: pathlib.Path, sample_kmers_str_kdb: List[str]): # Renamed fixture
-    db = KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
     assert len(db) == len(sample_kmers_str_kdb)
 
 @pytest.mark.parametrize("parquet_kdb_path", [{"non_unique_kmers": True, "custom_kmers": ["AAAA", "AAAA", "CCCC", "GGGG"], "kmer_type":"str"}], indirect=True) # Renamed fixture
 def test_kdb_len_method_non_unique_kmers(parquet_kdb_path: pathlib.Path, default_kmer_length_kdb: int): # Renamed fixture
-    db = KmerStrainDatabase(parquet_kdb_path, expected_kmer_length=4) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path, expected_kmer_length=4) # Use renamed fixture
     assert len(db) == 3 
 
 
 # --- Tests for __contains__ ---
 @pytest.mark.parametrize("parquet_kdb_path", [{"kmer_type": "str", "valid_data": True}], indirect=True) # Renamed fixture
 def test_kdb_contains_method(parquet_kdb_path: pathlib.Path, sample_kmers_str_kdb: List[str], default_kmer_length_kdb: int): # Renamed fixture
-    db = KmerStrainDatabase(parquet_kdb_path) # Use renamed fixture
+    db = StrainKmerDatabase(parquet_kdb_path) # Use renamed fixture
     
     known_kmer_bytes = sample_kmers_str_kdb[0].encode('utf-8')
     assert known_kmer_bytes in db
