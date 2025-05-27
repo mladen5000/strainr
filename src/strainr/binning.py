@@ -264,9 +264,9 @@ def _extract_reads_for_strain(
                     if (
                         record.id in read_ids_for_strain
                     ):  # or normalized_id in read_ids_for_strain:
-                    if record.id in read_ids_for_strain:
+                        if record.id in read_ids_for_strain:
 
-                        records_to_write.append(record)
+                            records_to_write.append(record)
 
             if records_to_write:
                 with open(
