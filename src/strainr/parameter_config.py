@@ -36,7 +36,7 @@ def process_arguments() -> argparse.Namespace:
     parser.add_argument(
         "-d",
         "--db",
-        help="Path to the KmerStrainDatabase file (pickled).",  # Clarified help
+        help="Path to the StrainKmerDatabase file (Parquet format).",  # Clarified help
         type=pathlib.Path,  # Changed to pathlib.Path
         required=True,  # Assuming database is essential for most operations
     )
