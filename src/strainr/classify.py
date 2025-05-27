@@ -34,9 +34,9 @@ except ImportError as e:
     ) from e
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from .analyze import ClassificationAnalyzer # Changed to relative import
-from .genomic_types import CountVector, ReadId, StrainIndex # Changed to relative import
-from .database import StrainKmerDatabase # Changed to relative import
+from strainr.analyze import ClassificationAnalyzer
+from strainr.genomic_types import CountVector, ReadId, StrainIndex
+from strainr.database import StrainKmerDatabase # Updated import
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
@@ -441,13 +441,16 @@ class KmerClassificationWorkflow:
         """Initialize the workflow with validated arguments."""
         self.args = args
         self.database: Optional[StrainKmerDatabase] = None
+        self.database: Optional[StrainKmerDatabase] = None
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
 
     def _initialize_database(self) -> None:
         """Loads and initializes the StrainKmerDatabase."""
+        """Loads and initializes the StrainKmerDatabase."""
         self.logger.info(f"Loading k-mer database from: {self.args.db_path}")
         try:
+            self.database = StrainKmerDatabase(self.args.db_path)
             self.database = StrainKmerDatabase(self.args.db_path)
             self.logger.info(
                 f"Database loaded: {self.database.num_kmers} k-mers, "
