@@ -232,4 +232,3 @@ def extract_kmers_from_sequence(
 #     for i in range(num_kmers):
 #         yield sequence_view[i:i + kmer_length].tobytes()
 
-```

@@ -1,8 +1,7 @@
 import pathlib
-import pickle
-
-from typing import Optional, Any  # Only keep what is not in genomic_types
-from typing import List, Dict, Union  # Needed for type annotations from genomic_types
+# import pickle # No longer directly needed for db loading
+from typing import Optional, Any, Tuple # Added Tuple, Any was already there
+from typing import List, Dict, Union
 
 
 import numpy as np
@@ -13,7 +12,7 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
     """
     Represents a database of k-mers and their corresponding strain frequency vectors.
 
-    This class loads a k-mer database from a pickled Pandas DataFrame. The DataFrame
+    This class loads a k-mer database from a Parquet file. The DataFrame stored in Parquet
     is expected to have k-mers as its index (typically strings or bytes) and strain names
     as its columns. The values should be counts or frequencies (convertible to uint8).
 
@@ -37,10 +36,10 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
         Initializes and loads the StrainKmerDb from a file.
 
         Args:
-            database_filepath: Path to the pickled Pandas DataFrame.
-                               The DataFrame should have k-mers (strings or bytes) as its index
-                               and strain names (strings) as its columns. Cell values should be
-                               numeric and convertible to `np.uint8`.
+            database_filepath: Path to the Parquet file containing the k-mer database.
+                               The DataFrame stored in Parquet should have k-mers (strings or bytes)
+                               as its index and strain names (strings) as its columns.
+                               Cell values should be numeric and convertible to `np.uint8`.
             expected_kmer_length: Optional. If provided, this length is enforced. K-mers in the
                                   database must match this length. If None, the k-mer length is
                                   inferred from the first k-mer in the database and then
@@ -54,9 +53,9 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
             TypeError: If the data in the DataFrame is not of the expected type (e.g., k-mer
                        index contains types other than str/bytes, or counts are not
                        convertible to uint8).
-            RuntimeError: For lower-level issues during file reading or unpickling, often
-                          wrapping underlying exceptions like `pickle.UnpicklingError` or
-                          `pd.errors.EmptyDataError`.
+            RuntimeError: For lower-level issues during file reading (e.g., corrupted Parquet file),
+                          often wrapping underlying exceptions like `IOError`, `ValueError`,
+                          or specific PyArrow errors.
         """
         self.database_filepath = pathlib.Path(
             database_filepath
@@ -86,22 +85,23 @@ class StrainKmerDb:  # Renamed from KmerStrainDatabase
 
     def _load_database(self, expected_kmer_length: Optional[int]) -> None:
         """
-        Internal method to load data from the pickled DataFrame file.
-        (Logic primarily from KmerStrainDatabase)
+        Internal method to load data from the Parquet database file.
         """
+        print(f"Loading k-mer database from {self.database_filepath} (Parquet format)...")
         try:
-            kmer_strain_df: pd.DataFrame = pd.read_pickle(self.database_filepath)
-        except (pickle.UnpicklingError, pd.errors.EmptyDataError, EOFError) as e:
+            kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_filepath)
+        # Catching more general exceptions suitable for Parquet; specific PyArrow errors could be added if needed.
+        except (IOError, ValueError, pd.errors.EmptyDataError) as e: 
             raise RuntimeError(
-                f"Could not read or unpickle database file: {self.database_filepath}. File may be corrupted or empty. Original error: {e}"
+                f"Failed to read or process Parquet database file: {self.database_filepath}. File may be corrupted, empty, or not a valid Parquet file. Original error: {e}"
             ) from e
-        except FileNotFoundError:
+        except FileNotFoundError: # Should be caught by __init__ pre-check, but good for safety
             raise RuntimeError(
                 f"Database file {self.database_filepath} vanished after initial check."
             ) from None
-        except Exception as e:
+        except Exception as e: # Catch-all for other unexpected errors
             raise RuntimeError(
-                f"An unexpected error occurred while reading {self.database_filepath}: {e}"
+                f"An unexpected error occurred while reading Parquet file {self.database_filepath}: {e}"
             ) from e
 
         if not isinstance(kmer_strain_df, pd.DataFrame):
@@ -327,19 +327,18 @@ if __name__ == "__main__":
     dummy_db_output_dir = script_dir / "test_db_output_consolidated"
     dummy_db_output_dir.mkdir(exist_ok=True)
 
-    dummy_db_path_str = dummy_db_output_dir / "dummy_strain_kmer_db_str_idx.pkl"
-    dummy_df_str_idx.to_pickle(dummy_db_path_str)
-    print(f"Created dummy database (string k-mers) at {dummy_db_path_str.resolve()}")
+    dummy_db_path_str_parquet = dummy_db_output_dir / "dummy_strain_kmer_db_str_idx.parquet" # Changed extension
+    dummy_df_str_idx.to_parquet(dummy_db_path_str_parquet, index=True) # Save as Parquet
+    print(f"Created dummy Parquet database (string k-mers) at {dummy_db_path_str_parquet.resolve()}")
 
     try:
-        print("\n--- Testing consolidated StrainKmerDb (inferred length) ---")
-        # kmer_length inferred as 4 from data
-        db_inferred = StrainKmerDb(dummy_db_path_str)
-        kmer_to_find_bytes = b"AAAA"  # Was "ATGC"
+        print("\n--- Testing consolidated StrainKmerDb (inferred length) from Parquet ---")
+        db_inferred = StrainKmerDb(dummy_db_path_str_parquet) # Load from Parquet
+        kmer_to_find_bytes = b"AAAA"
         counts = db_inferred.get_strain_counts_for_kmer(kmer_to_find_bytes)
         print(f"Counts for {kmer_to_find_bytes.decode('utf-8', 'replace')}: {counts}")
 
-        known_kmer_bytes = b"CCCC"  # Was "GTAC"
+        known_kmer_bytes = b"CCCC"
         if known_kmer_bytes in db_inferred:
             print(f"K-mer {known_kmer_bytes.decode()} is in the database.")
 
@@ -348,21 +347,21 @@ if __name__ == "__main__":
         print(f"Is 'AAAA' valid length? {db_inferred.validate_kmer_length(b'AAAA')}")
         print(f"Is 'AAA' valid length? {db_inferred.validate_kmer_length(b'AAA')}")
 
-        print("\n--- Testing with expected_kmer_length provided ---")
-        db_expected_len = StrainKmerDb(dummy_db_path_str, expected_kmer_length=4)
-        counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG")  # Was "TACG"
+        print("\n--- Testing with expected_kmer_length provided (from Parquet) ---")
+        db_expected_len = StrainKmerDb(dummy_db_path_str_parquet, expected_kmer_length=4) # Load from Parquet
+        counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG")
         print(f"Counts for b'GGGG': {counts_2}")
 
     except Exception as e:
-        print(f"An error occurred during database testing: {e}")
+        print(f"An error occurred during Parquet database testing: {e}")
         import traceback
 
         traceback.print_exc()
     finally:
-        # Clean up dummy files
-        if dummy_db_path_str.exists():
-            dummy_db_path_str.unlink()
+        # Clean up dummy Parquet files
+        if dummy_db_path_str_parquet.exists():
+            dummy_db_path_str_parquet.unlink()
         if dummy_db_output_dir.exists() and not any(dummy_db_output_dir.iterdir()):
             dummy_db_output_dir.rmdir()
 
-        print("\nCleaned up dummy database files and directory (if empty).")
+        print("\nCleaned up dummy Parquet database files and directory (if empty).")
