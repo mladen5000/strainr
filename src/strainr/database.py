@@ -23,7 +23,7 @@ class StrainKmerDatabase:
     enabling efficient lookup of strain-specific k-mer signatures.
 
     Attributes:
-        database_path: Path to the pickled database file
+        database_path: Path to the Parquet database file
         kmer_length: Length of k-mers in the database
         strain_names: List of strain identifiers
         kmer_lookup_dict: Dictionary mapping k-mers to strain frequency vectors
@@ -33,10 +33,10 @@ class StrainKmerDatabase:
 
     def __init__(self, database_path: Union[str, Path], kmer_length: int = 31) -> None:
         """
-        Initialize strain database from pickled DataFrame.
+        Initialize strain database from a Parquet file.
 
         Args:
-            database_path: Path to the pickled pandas DataFrame. The DataFrame
+            database_path: Path to the Parquet file. The DataFrame stored in Parquet
                            is expected to have k-mers (typically strings or bytes)
                            as its index and strain names (strings) as its columns.
                            Cell values should be k-mer counts (numeric, convertible to np.uint8).
@@ -47,12 +47,12 @@ class StrainKmerDatabase:
         Raises:
             FileNotFoundError: If the database_path does not point to a valid file.
             RuntimeError: If loading or processing the database fails due to issues
-                          like unpickling errors, empty data, or unexpected data types.
+                          like file corruption, incorrect format, empty data, or unexpected data types.
             ValueError: If the loaded database is empty or if k-mer length validation
                         reveals issues (though currently it warns and updates self.kmer_length).
 
         Example:
-            >>> # db = StrainKmerDatabase("path/to/your/database.pkl", kmer_length=31)
+            >>> # db = StrainKmerDatabase("path/to/your/database.parquet", kmer_length=31)
             >>> # print(f"Loaded {db.num_strains} strains with {db.num_kmers} k-mers of length {db.kmer_length}")
         """
         self.database_path = (
@@ -77,30 +77,35 @@ class StrainKmerDatabase:
             )
 
     def _load_database(self) -> None:
-        """Load and validate the k-mer database from pickle file.
+        """Load and validate the k-mer database from Parquet file.
 
         Raises:
             RuntimeError: For errors during file reading or DataFrame processing.
             ValueError: If the database DataFrame is empty or structure is invalid.
         """
-        print(f"Loading k-mer database from {self.database_path}...")
+        print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
 
         try:
             # It's common for k-mers to be strings in DataFrames from bioinformatics tools
-            kmer_frequency_dataframe: pd.DataFrame = pd.read_pickle(self.database_path)
+            kmer_frequency_dataframe: pd.DataFrame = pd.read_parquet(self.database_path)
         except (
             FileNotFoundError
         ):  # Should be caught by _validate_database_file, but good practice
             raise RuntimeError(
                 f"Database file disappeared after validation: {self.database_path}"
             )
-        except (pd.errors.EmptyDataError, pickle.UnpicklingError, EOFError) as e:
+        # Updated exception handling for Parquet. 
+        # pyarrow.lib.ArrowInvalid is a common exception for corrupted Parquet files,
+        # but pandas might wrap it or raise its own errors like ValueError or IOError.
+        # Using a broader catch for now and more specific error messages.
+        except (IOError, ValueError, pd.errors.EmptyDataError) as e: # pd.errors.EmptyDataError can still occur if Parquet file contains no data
             raise RuntimeError(
-                f"Failed to unpickle or read empty database from {self.database_path}: {e}"
+                f"Failed to read or process Parquet database from {self.database_path}: {e}"
             ) from e
         except Exception as e:  # Catch other potential pandas or general errors
+            # Consider if pyarrow is used, import pyarrow and catch pyarrow.lib.ArrowInvalid too for more specific error.
             raise RuntimeError(
-                f"Failed to load database from {self.database_path} due to an unexpected error: {e}"
+                f"Failed to load Parquet database from {self.database_path} due to an unexpected error: {e}"
             ) from e
 
         if not isinstance(kmer_frequency_dataframe, pd.DataFrame):
