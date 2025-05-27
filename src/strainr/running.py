@@ -4,10 +4,12 @@ import argparse  # For type hinting args
 from typing import Union, Any  # Removed List, Added Any
 
 # Assuming StrainKmerDatabase is correctly importable from this location
-from .database import StrainKmerDatabase # Changed to relative import
+from strainr.database import StrainKmerDatabase  # Updated to consolidated class name
 
 # Assuming process_arguments is correctly importable
-from .parameter_config import process_arguments # Changed to relative and specific import
+from .parameter_config import (
+    process_arguments,
+)  # Changed to relative and specific import
 
 
 class SequenceFile(pathlib.Path):
@@ -53,7 +55,7 @@ def main() -> None:
     processes only the first input file if multiple are provided.
     Further development is needed for full functionality.
     """
-    args: argparse.Namespace = process_arguments() # Use directly imported function
+    args: argparse.Namespace = process_arguments()  # Use directly imported function
 
     # Corrected argument access and assumptions
     # args.input is List[pathlib.Path], args.db is pathlib.Path, args.out is pathlib.Path
@@ -100,11 +102,11 @@ def main() -> None:
     # If a specific k-mer length is expected from CLI for DB, it should be added to process_arguments.
     # For now, let's assume we want the DB to use its intrinsic k-mer length.
     try:
-        kmer_db = StrainKmerDatabase( # Updated class name
+        kmer_db = StrainKmerDatabase(
             database_filepath=database_file_path, expected_kmer_length=None
-        )
+        )  # Updated class name
     except Exception as e:
-        print(f"Error initializing StrainKmerDatabase: {e}") # Updated class name
+        print(f"Error initializing StrainKmerDatabase: {e}")  # Updated class name
         return
 
     # Runner's k parameter (default 31) can be used for k-mer extraction logic within Runner.
@@ -141,7 +143,12 @@ class Runner:
     """
 
     fasta: pathlib.Path  # Path to the input FASTA/FASTQ file
-    kmer_database: StrainKmerDatabase  # Instance of the k-mer database, updated class name
+    kmer_database: (
+        StrainKmerDatabase  # Instance of the k-mer database, updated class name
+    )
+    kmer_database: (
+        StrainKmerDatabase  # Instance of the k-mer database, updated class name
+    )
     k: int = 31  # k-mer length to use for analysis (e.g., k-mer extraction)
 
     # Removed commented-out block

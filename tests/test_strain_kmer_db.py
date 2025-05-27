@@ -10,12 +10,14 @@ import pathlib
 from typing import List, Union, Optional
 from unittest.mock import patch, MagicMock
 
-from src.strainr.database import StrainKmerDatabase # Updated import
+from src.strainr.database import StrainKmerDatabase  # Updated import
 
 # Define Kmer type alias locally as it's no longer exported by the database module
 Kmer = Union[str, bytes]
 
 # --- Helper Functions & Fixtures (adapted from previous test_kmer_database.py) ---
+# Define Kmer type alias locally as it's no longer exported by the database module
+Kmer = Union[str, bytes]
 
 KMER_LEN_FOR_TESTS_SKDB = 4  # Using a distinct constant name
 
@@ -67,7 +69,9 @@ def sample_kmers_str_skdb(default_kmer_length_skdb: int) -> List[str]:
 
 
 @pytest.fixture
-def sample_kmers_bytes_skdb(sample_kmers_str_skdb: List[str]) -> List[Kmer]: # Kmer type hint is now locally defined
+def sample_kmers_bytes_skdb(
+    sample_kmers_str_skdb: List[str],
+) -> List[Kmer]:  # Kmer type hint is now locally defined
     return [k.encode("utf-8") for k in sample_kmers_str_skdb]
 
 
@@ -122,28 +126,35 @@ def parquet_skdb_path(
     elif params.get("non_numeric_counts", False):
         target_kmer_list = kmers_for_df
         if len(kmers_for_df) < 2 and len(kmers_for_df) > 0:
-            target_kmer_list = [kmers_for_df[0], kmers_for_df[0]] 
+            target_kmer_list = [kmers_for_df[0], kmers_for_df[0]]
         elif not kmers_for_df:
-            target_kmer_list = sample_kmers_str_skdb[:2] if kmer_type == "str" else sample_kmers_bytes_skdb[:2]
-            if len(target_kmer_list) < 2 :
-                 target_kmer_list = ["A"*default_kmer_length_skdb, "C"*default_kmer_length_skdb]
+            target_kmer_list = (
+                sample_kmers_str_skdb[:2]
+                if kmer_type == "str"
+                else sample_kmers_bytes_skdb[:2]
+            )
+            if len(target_kmer_list) < 2:
+                target_kmer_list = [
+                    "A" * default_kmer_length_skdb,
+                    "C" * default_kmer_length_skdb,
+                ]
         counts_data = np.array([["val1", "val2"], ["val3", "val4"]], dtype=object)
         df_to_save = create_dummy_dataframe_for_skdb(
             target_kmer_list[:2], strains, counts_data
         )
     elif params.get("non_unique_kmers", False):
         if not kmers_for_df:
-            kmers_for_df = sample_kmers_str_skdb if kmer_type == "str" else sample_kmers_bytes_skdb
+            kmers_for_df = (
+                sample_kmers_str_skdb if kmer_type == "str" else sample_kmers_bytes_skdb
+            )
             if not kmers_for_df:
-                 kmers_for_df = ["A"*default_kmer_length_skdb]
+                kmers_for_df = ["A" * default_kmer_length_skdb]
         kmers_for_df_updated = [kmers_for_df[0], kmers_for_df[0]] + (
             kmers_for_df[1:] if len(kmers_for_df) > 1 else []
         )
         df_to_save = create_dummy_dataframe_for_skdb(kmers_for_df_updated, strains)
     else:
-        df_to_save = create_dummy_dataframe_for_skdb(
-            kmers_for_df, strains, counts_data
-        )
+        df_to_save = create_dummy_dataframe_for_skdb(kmers_for_df, strains, counts_data)
 
     df_to_save.to_parquet(db_file, index=True)
     return db_file
@@ -159,7 +170,9 @@ def test_skdb_init_success_str_kmers(
     strain_names_fixture_skdb: List[str],
     sample_kmers_str_skdb: List[str],
 ):
-    db = StrainKmerDatabase(parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb)
+    db = StrainKmerDatabase(
+        parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb
+    )
     assert db.kmer_length == default_kmer_length_skdb
     assert db.num_strains == len(strain_names_fixture_skdb)
     assert db.num_kmers == len(sample_kmers_str_skdb)
@@ -174,7 +187,9 @@ def test_skdb_init_success_bytes_kmers(
     strain_names_fixture_skdb: List[str],
     sample_kmers_bytes_skdb: List[Kmer],
 ):
-    db = StrainKmerDatabase(parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb)
+    db = StrainKmerDatabase(
+        parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb
+    )
     assert db.kmer_length == default_kmer_length_skdb
     assert db.num_strains == len(strain_names_fixture_skdb)
     assert db.num_kmers == len(sample_kmers_bytes_skdb)
@@ -217,10 +232,12 @@ def test_skdb_init_file_not_found_error():
 def test_skdb_init_parquet_read_error(
     mock_read_parquet: MagicMock, tmp_path: pathlib.Path
 ):
-    mock_read_parquet.side_effect = ValueError("Simulated Parquet read error") 
+    mock_read_parquet.side_effect = ValueError("Simulated Parquet read error")
     db_file = tmp_path / "bad_parquet_skdb.parquet"
     db_file.touch()
-    with pytest.raises(RuntimeError, match="Failed to read or process Parquet database file"): 
+    with pytest.raises(
+        RuntimeError, match="Failed to read or process Parquet database file"
+    ):
         StrainKmerDatabase(db_file)
 
 
@@ -248,21 +265,29 @@ def test_skdb_init_no_strains_error(parquet_skdb_path: pathlib.Path):
     indirect=True,
 )
 def test_skdb_init_inconsistent_str_kmer_length_warning(
-    parquet_skdb_path: pathlib.Path, default_kmer_length_skdb: int, capsys: pytest.CaptureFixture
+    parquet_skdb_path: pathlib.Path,
+    default_kmer_length_skdb: int,
+    capsys: pytest.CaptureFixture,
 ):
     db = StrainKmerDatabase(parquet_skdb_path, expected_kmer_length=None)
     captured = capsys.readouterr()
-    assert f"Warning: Inconsistent k-mer string length at index 1. Expected {default_kmer_length_skdb}" in captured.out
+    assert (
+        f"Warning: Inconsistent k-mer string length at index 1. Expected {default_kmer_length_skdb}"
+        in captured.out
+    )
     assert "Skipping." in captured.out
     assert db.num_kmers == 1
 
 
 @pytest.mark.parametrize(
-    "parquet_skdb_path", [{"kmer_data": [12345], "kmer_type": "int_special_unsupported"}], indirect=True
+    "parquet_skdb_path",
+    [{"kmer_data": [12345], "kmer_type": "int_special_unsupported"}],
+    indirect=True,
 )
 def test_skdb_init_unsupported_kmer_type_error(parquet_skdb_path: pathlib.Path):
     with pytest.raises(
-        TypeError, match=r"Unsupported k-mer type in DataFrame index: <class 'numpy.int64'>. Expected str or bytes."
+        TypeError,
+        match=r"Unsupported k-mer type in DataFrame index: <class 'numpy.int64'>. Expected str or bytes.",
     ):
         StrainKmerDatabase(parquet_skdb_path)
 
@@ -285,7 +310,10 @@ def test_skdb_init_non_unique_kmers_warning(
 ):
     StrainKmerDatabase(parquet_skdb_path)
     captured = capsys.readouterr()
-    assert any("Warning: K-mer index in" in line and "is not unique." in line for line in captured.out.splitlines())
+    assert any(
+        "Warning: K-mer index in" in line and "is not unique." in line
+        for line in captured.out.splitlines()
+    )
 
 
 # --- Tests for get_strain_counts_for_kmer (adapted from lookup_kmer) ---
@@ -356,14 +384,16 @@ def test_skdb_contains_method(
 )
 def test_skdb_get_database_stats(
     parquet_skdb_path: pathlib.Path,
-    default_kmer_length_skdb: int, 
+    default_kmer_length_skdb: int,
     strain_names_fixture_skdb: List[str],
 ):
-    db = StrainKmerDatabase(parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb)
+    db = StrainKmerDatabase(
+        parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb
+    )
     stats = db.get_database_stats()
 
     assert stats["num_strains"] == len(strain_names_fixture_skdb)
-    assert stats["num_kmers"] == 6 
+    assert stats["num_kmers"] == 6
     assert stats["kmer_length"] == default_kmer_length_skdb
     assert stats["database_filepath"] == str(parquet_skdb_path.resolve())
     assert len(stats["strain_names_preview"]) <= 5
@@ -376,7 +406,9 @@ def test_skdb_get_database_stats(
 def test_skdb_validate_kmer_length(
     parquet_skdb_path: pathlib.Path, default_kmer_length_skdb: int
 ):
-    db = StrainKmerDatabase(parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb)
+    db = StrainKmerDatabase(
+        parquet_skdb_path, expected_kmer_length=default_kmer_length_skdb
+    )
 
     correct_len_str = "X" * default_kmer_length_skdb
     incorrect_len_str = "X" * (default_kmer_length_skdb - 1)
