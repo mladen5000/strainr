@@ -132,7 +132,7 @@ def parquet_skdb_path(
         # kmers_for_df is already set (e.g. [12345] by "int_special_unsupported" kmer_type)
         df_to_save = create_dummy_dataframe_for_skdb(kmers_for_df, strains)
     elif params.get("non_numeric_counts", False):
-        target_kmer_list = kmers_for_df
+        target_kmer_list: list[bytes | str] | Any | Unknown = kmers_for_df
         if len(kmers_for_df) < 2 and len(kmers_for_df) > 0:
             target_kmer_list = [kmers_for_df[0], kmers_for_df[0]]
         elif not kmers_for_df:
