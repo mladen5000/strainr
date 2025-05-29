@@ -21,6 +21,7 @@ Kmer = Union[str, bytes]
 
 
 KMER_LEN_FOR_TESTS_SKDB = 4  # Using a distinct constant name
+Kmer = Union[str, bytes]  # Define Kmer type for clarity
 
 
 def create_dummy_dataframe_for_skdb(

@@ -1,5 +1,5 @@
 """
-Pytest unit tests for the ClassificationAnalyzer class from src.strainr.analyze.
+Pytest unit tests for the ClassificationAnalyzer class from analyze.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
@@ -9,8 +9,8 @@ from collections import Counter
 from typing import Dict, List, Union
 from unittest.mock import patch, MagicMock, call # Added call
 
-from src.strainr.analyze import ClassificationAnalyzer
-from src.strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
+from strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
+from strainr.analyze import ClassificationAnalyzer, ReadHitResults
 
 # --- Fixtures ---
 

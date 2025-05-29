@@ -6,7 +6,9 @@ from typing import Union, Any  # Removed List, Added Any
 # Assuming StrainKmerDatabase is correctly importable from this location
 from .database import StrainKmerDatabase  # Updated to consolidated class name
 
+
 # Assuming process_arguments is correctly importable
+from .parameter_config import process_arguments  # Changed to specific import
 from .parameter_config import process_arguments  # Changed to specific import
 
 
@@ -141,9 +143,6 @@ class Runner:
     """
 
     fasta: pathlib.Path  # Path to the input FASTA/FASTQ file
-    kmer_database: (
-        StrainKmerDatabase  # Instance of the k-mer database, updated class name
-    )
     kmer_database: (
         StrainKmerDatabase  # Instance of the k-mer database, updated class name
     )

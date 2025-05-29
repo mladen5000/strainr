@@ -1,4 +1,8 @@
-# Standard library imports
+"""
+Pytest unit tests for the binning module (strainr.binning).
+These tests assume the file is in the root directory, and 'src' is a subdirectory.
+"""
+
 import pytest
 import multiprocessing as mp
 import pathlib
@@ -21,13 +25,8 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-# Local application/library specific imports
-from src.strainr.utils import open_file_transparently
-from src.strainr.genomic_types import (
-    ReadId,
-    FinalAssignmentsType,
-)
-from src.strainr.binning import (
+# Functions and types to test
+from strainr.binning import (
     generate_table,
     get_top_strain_names,
     _extract_reads_for_strain,
@@ -167,9 +166,10 @@ def test_get_top_strain_names_include_unassigned(
 # --- Tests for _extract_reads_for_strain ---
 
 
-@patch("src.strainr.binning.open_file_transparently", new_callable=mock_open)
-@patch("src.strainr.binning.SeqIO.parse")
-@patch("src.strainr.binning.SeqIO.write")
+@patch("strainr.utils.open_file_transparently", new_callable=mock_open)
+@patch("strainr.binning.SeqIO.parse")
+@patch("strainr.binning.SeqIO.write")
+@patch("pathlib.Path.is_file")
 def test_extract_reads_for_strain_r1_only(
     mock_seqio_write: MagicMock,
     mock_seqio_parse: MagicMock,
@@ -209,8 +209,8 @@ def test_extract_reads_for_strain_r1_only(
 # --- Tests for create_binned_fastq_files ---
 
 
-@patch("src.strainr.binning.mp.Process")
-@patch("pathlib.Path.mkdir")
+@patch("strainr.binning.mp.Process")
+@patch("pathlib.Path.mkdir")  # Mock mkdir to avoid actual directory creation
 def test_create_binned_fastq_files_basic(
     mock_mkdir: MagicMock,
     mock_process_class: MagicMock,
@@ -274,9 +274,9 @@ def test_create_binned_fastq_files_basic(
 # --- Tests for run_binning_pipeline ---
 
 
-@patch("src.strainr.binning.create_binned_fastq_files", return_value=(set(), []))
-@patch("src.strainr.binning.get_top_strain_names")
-@patch("src.strainr.binning.generate_table")
+@patch("strainr.binning.create_binned_fastq_files", return_value=(set(), []))
+@patch("strainr.binning.get_top_strain_names")
+@patch("strainr.binning.generate_table")
 def test_run_binning_pipeline_flow(
     mock_generate_table: MagicMock,
     mock_get_top_names: MagicMock,

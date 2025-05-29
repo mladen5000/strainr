@@ -1,5 +1,6 @@
 """
-Pytest unit tests for the AbundanceCalculator class from src.strainr.output.
+Pytest unit tests for the AbundanceCalculator class from strainr.output.
+These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
 import pytest
@@ -140,7 +141,7 @@ def test_convert_assignments_typical(
     # Test case for "NonExistentStrain"
     with pytest.raises(
         ValueError,
-        match=f"String assignment 'NonExistentStrain' for ReadId 'read2' is not a recognized strain name or the unassigned_marker \\('{unassigned_marker_fixture}'\\)."
+        match=f"String assignment 'NonExistentStrain' for ReadId 'read2' is not a recognized strain name or the unassigned_marker \\('{unassigned_marker_fixture}'\\).",
     ):
         calculator_fixture.convert_assignments_to_strain_names(
             {"read2": "NonExistentStrain"}, unassigned_marker=unassigned_marker_fixture
@@ -149,12 +150,12 @@ def test_convert_assignments_typical(
     # Test case for invalid index 99
     with pytest.raises(
         ValueError,
-        match=f"StrainIndex 99 for ReadId 'read3' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\]."
+        match=f"StrainIndex 99 for ReadId 'read3' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\].",
     ):
         calculator_fixture.convert_assignments_to_strain_names(
             {"read3": 99}, unassigned_marker=unassigned_marker_fixture
         )
-    
+
     # Test correct assignments
     expected_correct = {
         "read1": calculator_fixture.strain_names[0],  # StrainA
@@ -173,7 +174,7 @@ def test_convert_assignments_default_unassigned_marker_na(
     # Default unassigned_marker in the method is "NA"
     with pytest.raises(
         ValueError,
-        match=f"StrainIndex 99 for ReadId 'read_invalid_idx' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\]."
+        match=f"StrainIndex 99 for ReadId 'read_invalid_idx' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\].",
     ):
         calculator_fixture.convert_assignments_to_strain_names({"read_invalid_idx": 99})
 
@@ -227,6 +228,30 @@ def test_calculate_raw_abundances_typical(
         "r3": "StrainA",
         "r4": unassigned_marker_fixture,
     }
+    raw_counts = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=True,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts == Counter({"StrainA": 2, "StrainB": 1})
+
+    raw_counts_with_unassigned = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=False,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts_with_unassigned == Counter({
+        "StrainA": 2,
+        "StrainB": 1,
+        unassigned_marker_fixture: 1,
+    })
+
+
+def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
+    assert calculator_fixture.calculate_raw_abundances({}) == Counter()
+
+
+# --- Test calculate_relative_abundances ---
     raw_counts = calculator_fixture.calculate_raw_abundances(
         named_assignments, exclude_unassigned=True, unassigned_marker=unassigned_marker_fixture
     )
@@ -400,41 +425,87 @@ def test_generate_report_string_zero_abundance(
         calculator_fixture.generate_report_string(final_abundances) == expected_report
     )
 
+
 # --- Test for invalid input types (more robust checks) ---
-def test_convert_assignments_invalid_read_id_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="ReadId keys, after string conversion, must not be empty."):
-        calculator_fixture.convert_assignments_to_strain_names({None: 0}) # type: ignore
+def test_convert_assignments_invalid_read_id_type(
+    calculator_fixture: AbundanceCalculator,
+):
+    with pytest.raises(
+        ValueError, match="ReadId keys, after string conversion, must not be empty."
+    ):
+        calculator_fixture.convert_assignments_to_strain_names({None: 0})  # type: ignore
 
-def test_calculate_raw_abundances_invalid_key_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="All ReadId keys in named_assignments must be non-empty strings."):
-        calculator_fixture.calculate_raw_abundances({None: "StrainA"}) # type: ignore
 
-def test_calculate_raw_abundances_invalid_value_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="Assigned name/marker for ReadId 'read1' must be a non-empty string."):
-        calculator_fixture.calculate_raw_abundances({"read1": None}) # type: ignore
+def test_calculate_raw_abundances_invalid_key_type(
+    calculator_fixture: AbundanceCalculator,
+):
+    with pytest.raises(
+        ValueError,
+        match="All ReadId keys in named_assignments must be non-empty strings.",
+    ):
+        calculator_fixture.calculate_raw_abundances({None: "StrainA"})  # type: ignore
 
-def test_calculate_relative_abundances_invalid_key_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="Strain names in raw_abundances must be non-empty strings."):
-        calculator_fixture.calculate_relative_abundances(Counter({None: 10})) # type: ignore
 
-def test_calculate_relative_abundances_invalid_value_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="Count for strain 'StrainA' must be a non-negative number, got None."):
-        calculator_fixture.calculate_relative_abundances(Counter({"StrainA": None})) # type: ignore
+def test_calculate_raw_abundances_invalid_value_type(
+    calculator_fixture: AbundanceCalculator,
+):
+    with pytest.raises(
+        ValueError,
+        match="Assigned name/marker for ReadId 'read1' must be a non-empty string.",
+    ):
+        calculator_fixture.calculate_raw_abundances({"read1": None})  # type: ignore
+
+
+def test_calculate_relative_abundances_invalid_key_type(
+    calculator_fixture: AbundanceCalculator,
+):
+    with pytest.raises(
+        ValueError, match="Strain names in raw_abundances must be non-empty strings."
+    ):
+        calculator_fixture.calculate_relative_abundances(Counter({None: 10}))  # type: ignore
+
+
+def test_calculate_relative_abundances_invalid_value_type(
+    calculator_fixture: AbundanceCalculator,
+):
+    with pytest.raises(
+        ValueError,
+        match="Count for strain 'StrainA' must be a non-negative number, got None.",
+    ):
+        calculator_fixture.calculate_relative_abundances(Counter({"StrainA": None}))  # type: ignore
+
 
 def test_apply_threshold_invalid_key_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="Strain names in relative_abundances must be non-empty strings."):
-        calculator_fixture.apply_threshold_and_format({None: 0.5}) # type: ignore
+    with pytest.raises(
+        ValueError,
+        match="Strain names in relative_abundances must be non-empty strings.",
+    ):
+        calculator_fixture.apply_threshold_and_format({None: 0.5})  # type: ignore
+
 
 def test_apply_threshold_invalid_value_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(TypeError, match="Abundance for strain 'StrainA' must be a float, got <class 'NoneType'>."):
-        calculator_fixture.apply_threshold_and_format({"StrainA": None}) # type: ignore
-    with pytest.raises(ValueError, match="Abundance for strain 'StrainA' .* must be between 0.0 and 1.0."):
+    with pytest.raises(
+        TypeError,
+        match="Abundance for strain 'StrainA' must be a float, got <class 'NoneType'>.",
+    ):
+        calculator_fixture.apply_threshold_and_format({"StrainA": None})  # type: ignore
+    with pytest.raises(
+        ValueError,
+        match="Abundance for strain 'StrainA' .* must be between 0.0 and 1.0.",
+    ):
         calculator_fixture.apply_threshold_and_format({"StrainA": 1.5})
 
+
 def test_generate_report_invalid_key_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(ValueError, match="Strain names in final_abundances must be non-empty strings."):
-        calculator_fixture.generate_report_string({None: 0.5}) # type: ignore
+    with pytest.raises(
+        ValueError, match="Strain names in final_abundances must be non-empty strings."
+    ):
+        calculator_fixture.generate_report_string({None: 0.5})  # type: ignore
+
 
 def test_generate_report_invalid_value_type(calculator_fixture: AbundanceCalculator):
-    with pytest.raises(TypeError, match="Abundance for strain 'StrainA' must be a float, got <class 'NoneType'>."):
-        calculator_fixture.generate_report_string({"StrainA": None}) # type: ignore
+    with pytest.raises(
+        TypeError,
+        match="Abundance for strain 'StrainA' must be a float, got <class 'NoneType'>.",
+    ):
+        calculator_fixture.generate_report_string({"StrainA": None})  # type: ignore

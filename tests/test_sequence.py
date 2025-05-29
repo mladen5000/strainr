@@ -1,6 +1,7 @@
 """
-Pytest unit tests for the GenomicSequence class and k-mer extraction
-functionality from src.strainr.sequence.
+Pytest unit tests for GenomicSequence dataclass and k-mer extraction functions
+from strainr.sequence. These tests assume the file is in the root directory,
+and 'src' is a subdirectory.
 """
 
 import pytest

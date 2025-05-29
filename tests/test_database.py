@@ -1,5 +1,5 @@
 """
-Pytest unit tests for the StrainKmerDatabase class from src.strainr.database.
+Pytest unit tests for the StrainKmerDatabase class from strainr.database.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
