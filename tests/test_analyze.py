@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Dict, List, Union
 from unittest.mock import patch, MagicMock, call # Added call
 
+
 from src.strainr.analyze import ClassificationAnalyzer
 from src.strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
 

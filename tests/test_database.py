@@ -9,14 +9,10 @@ import numpy as np
 import pathlib
 
 # import pickle # Pickle is no longer used directly for db files
-from typing import List, Dict, Union, Any, Optional
+from typing import List, Union, Optional
 from unittest.mock import patch, MagicMock
 
 from src.strainr.database import StrainKmerDatabase
-from src.strainr.genomic_types import (
-    KmerCountDict,
-    CountVector,
-)  # Assuming these are relevant
 
 # --- Helper Functions & Fixtures ---
 

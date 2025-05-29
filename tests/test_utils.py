@@ -9,9 +9,8 @@ import numpy as np
 import pathlib
 import pickle
 import gzip
-import mimetypes  # Used by the function being tested, good to be aware of
 import io
-from typing import List, Dict, Union, Tuple, TextIO  # TextIO for type hint
+from typing import List, Dict, Union, Tuple  # TextIO for type hint
 from unittest.mock import patch, MagicMock, mock_open
 
 from Bio.Seq import Seq

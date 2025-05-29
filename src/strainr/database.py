@@ -1,5 +1,9 @@
-import pathlib
-from typing import Optional, Any, Tuple, List, Dict, Union
+"""
+K-mer database management for strain classification.
+"""
+
+from pathlib import Path
+from typing import Dict, List, Optional, Union, Any  # Tuple removed
 
 import numpy as np
 import pandas as pd
@@ -88,9 +92,14 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_filepath)
         except (IOError, ValueError, pd.errors.EmptyDataError) as e:
             raise RuntimeError(
-                f"Failed to read or process Parquet database file: {self.database_filepath}. File may be corrupted, empty, or not a valid Parquet file. Original error: {e}"
+
+                f"Database file disappeared after validation: {self.database_path}"
+            )
+        except (IOError, ValueError, pd.errors.EmptyDataError) as e:
+            raise RuntimeError(
+                f"Failed to read or process Parquet database from {self.database_path}: {e}"
             ) from e
-        except FileNotFoundError:
+        except Exception as e:
             raise RuntimeError(
                 f"Database file {self.database_filepath} vanished after initial check."
             ) from None
@@ -130,6 +139,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         elif isinstance(first_kmer_obj, bytes):
             inferred_k_len = len(first_kmer_obj)
             kmer_type_is_str = False
+
         else:
             raise TypeError(
                 f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes."
@@ -142,6 +152,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         if expected_kmer_length is not None:
             if expected_kmer_length != inferred_k_len:
+
                 raise ValueError(
                     f"Provided expected_kmer_length ({expected_kmer_length}) does not match "
                     f"length of first k-mer in database ({inferred_k_len})."
@@ -243,6 +254,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         if not isinstance(kmer, bytes):
             return None
         return self.kmer_to_counts_map.get(kmer)
+
 
     def get_database_stats(self) -> Dict[str, Any]:
         """
