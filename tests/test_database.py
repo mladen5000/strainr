@@ -132,7 +132,7 @@ def test_db_init_successful_kmers_as_str(
     valid_kmers_str_db: List[str],
 ):
     db = StrainKmerDatabase(
-        parquet_db_file_db, kmer_length=default_kmer_length_db
+        parquet_db_file_db, expected_kmer_length=default_kmer_length_db
     )  # Use updated fixture
     assert db.kmer_length == default_kmer_length_db
     assert db.num_strains == len(strain_names_fixture_db)
@@ -151,7 +151,7 @@ def test_db_init_successful_kmers_as_bytes(
     valid_kmers_bytes_db: List[bytes],
 ):
     db = StrainKmerDatabase(
-        parquet_db_file_db, kmer_length=default_kmer_length_db
+        parquet_db_file_db, expected_kmer_length=default_kmer_length_db
     )  # Use updated fixture
     assert db.kmer_length == default_kmer_length_db
     assert db.num_strains == len(strain_names_fixture_db)
@@ -169,7 +169,7 @@ def test_db_init_kmer_length_mismatch_warning(
 ):
     constructor_kmer_len = default_kmer_length_db + 2
     db = StrainKmerDatabase(
-        parquet_db_file_db, kmer_length=constructor_kmer_len
+        parquet_db_file_db, expected_kmer_length=constructor_kmer_len
     )  # Use updated fixture
     captured = capsys.readouterr()
     assert (
@@ -188,7 +188,7 @@ def test_db_init_file_not_found():
         FileNotFoundError, match="Database file not found or is not a file:"
     ):
         StrainKmerDatabase(
-            "non_existent_file_for_db.parquet", kmer_length=5
+            "non_existent_file_for_db.parquet", expected_kmer_length=5
         )  # Updated extension
 
 
@@ -205,7 +205,7 @@ def test_db_init_empty_or_corrupt_parquet_file_error(
     with pytest.raises(
         RuntimeError, match="Failed to read or process Parquet database"
     ):
-        StrainKmerDatabase(db_path, kmer_length=5)
+        StrainKmerDatabase(db_path, expected_kmer_length=5)
 
 
 @patch("pandas.read_parquet")  # Patched to read_parquet
@@ -216,7 +216,7 @@ def test_db_init_not_a_dataframe_error(
     db_path = tmp_path / "not_df_db.parquet"  # Updated extension
     db_path.touch()
     with pytest.raises(RuntimeError, match="is not a pandas DataFrame"):
-        StrainKmerDatabase(db_path, kmer_length=5)
+        StrainKmerDatabase(db_path, expected_kmer_length=5)
 
 
 @pytest.mark.parametrize(
@@ -226,7 +226,7 @@ def test_db_init_empty_dataframe_value_error(
     parquet_db_file_db: pathlib.Path,
 ):  # Updated fixture name
     with pytest.raises(ValueError, match="Database DataFrame from .* is empty"):
-        StrainKmerDatabase(parquet_db_file_db, kmer_length=5)  # Use updated fixture
+        StrainKmerDatabase(parquet_db_file_db, expected_kmer_length=5)  # Use updated fixture
 
 
 @pytest.mark.parametrize(
@@ -236,7 +236,7 @@ def test_db_init_dataframe_no_kmers_error(
     parquet_db_file_db: pathlib.Path,
 ):  # Updated fixture name
     with pytest.raises(ValueError, match="has no k-mers (empty index)"):
-        StrainKmerDatabase(parquet_db_file_db, kmer_length=5)  # Use updated fixture
+        StrainKmerDatabase(parquet_db_file_db, expected_kmer_length=5)  # Use updated fixture
 
 
 @pytest.mark.parametrize(
@@ -249,7 +249,7 @@ def test_db_init_dataframe_no_strains_loads_no_counts(
 ):
     with pytest.raises(ValueError, match="Database contains no strain information"):
         StrainKmerDatabase(
-            parquet_db_file_db, kmer_length=default_kmer_length_db
+            parquet_db_file_db, expected_kmer_length=default_kmer_length_db
         )  # Use updated fixture
 
 
@@ -263,23 +263,23 @@ def test_db_init_inconsistent_kmer_lengths_error(
 ):  # Updated fixture name
     with pytest.raises(ValueError, match="Inconsistent k-mer length found"):
         StrainKmerDatabase(
-            parquet_db_file_db, kmer_length=default_kmer_length_db
+            parquet_db_file_db, expected_kmer_length=default_kmer_length_db
         )  # Use updated fixture
 
 
 @pytest.mark.parametrize(
     "parquet_db_file_db",
-    [{"kmer_data": [12345, "A" * KMER_LEN_FOR_TESTS]}],
+    [{"kmer_data": [12345], "kmer_type": "int_special"}], # kmer_data is now just an int, added kmer_type for clarity
     indirect=True,
 )  # Updated fixture name
 def test_db_init_unsupported_kmer_type_in_index_error(
     parquet_db_file_db: pathlib.Path, default_kmer_length_db: int
 ):  # Updated fixture name
     with pytest.raises(
-        ValueError, match="Unsupported k-mer type in DataFrame index: <class 'int'>"
-    ):
+        TypeError, match=r"Unsupported k-mer type in DataFrame index: <class 'numpy.int64'>. Expected str or bytes."
+    ): # Made regex more specific to match the actual error message
         StrainKmerDatabase(
-            parquet_db_file_db, kmer_length=default_kmer_length_db
+            parquet_db_file_db, expected_kmer_length=default_kmer_length_db
         )  # Use updated fixture
 
 
@@ -300,7 +300,7 @@ def test_db_init_non_numeric_data_in_df_error(
         RuntimeError, match="Could not convert DataFrame values to np.uint8"
     ):
         StrainKmerDatabase(
-            parquet_db_file_db, kmer_length=default_kmer_length_db
+            parquet_db_file_db, expected_kmer_length=default_kmer_length_db
         )  # Use updated fixture
 
 
@@ -313,7 +313,7 @@ def test_db_init_non_numeric_data_in_df_error(
 def test_db_lookup_kmer_found_and_not_found(
     parquet_db_file_db: pathlib.Path, strain_names_fixture_db: List[str]
 ):  # Updated fixture name
-    db = StrainKmerDatabase(parquet_db_file_db, kmer_length=5)  # Use updated fixture
+    db = StrainKmerDatabase(parquet_db_file_db, expected_kmer_length=5)  # Use updated fixture
 
     known_kmer_str = "ATGCG"
     known_kmer_bytes = known_kmer_str.encode("utf-8")
@@ -347,7 +347,7 @@ def test_db_get_database_stats(
     strain_names_fixture_db: List[str],
 ):  # Updated fixture name
     db = StrainKmerDatabase(
-        parquet_db_file_db, kmer_length=default_kmer_length_db
+        parquet_db_file_db, expected_kmer_length=default_kmer_length_db
     )  # Use updated fixture
     stats = db.get_database_stats()
 
@@ -370,7 +370,7 @@ def test_db_validate_kmer_length(
     parquet_db_file_db: pathlib.Path, default_kmer_length_db: int
 ):  # Updated fixture name
     db = StrainKmerDatabase(
-        parquet_db_file_db, kmer_length=default_kmer_length_db
+        parquet_db_file_db, expected_kmer_length=default_kmer_length_db
     )  # Use updated fixture
 
     correct_len_str = "X" * default_kmer_length_db

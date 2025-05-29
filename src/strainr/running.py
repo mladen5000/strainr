@@ -4,10 +4,10 @@ import argparse  # For type hinting args
 from typing import Union, Any  # Removed List, Added Any
 
 # Assuming StrainKmerDatabase is correctly importable from this location
-from strainr.database import StrainKmerDatabase # Updated to consolidated class name
+from .database import StrainKmerDatabase # Updated to consolidated class name
 
 # Assuming process_arguments is correctly importable
-import src.strainr.parameter_config as parameter_config
+from .parameter_config import process_arguments # Changed to specific import
 
 
 class SequenceFile(pathlib.Path):
@@ -15,7 +15,8 @@ class SequenceFile(pathlib.Path):
     A pathlib.Path subclass representing a sequence file that must exist.
     """
 
-    _flavour = pathlib.Path._flavour  # type: ignore # Workaround for pathlib internals if needed
+    # _flavour = pathlib.Path._flavour  # type: ignore # Workaround for pathlib internals if needed
+    # This line caused AttributeError and is likely unnecessary as Path subclasses should inherit it.
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "SequenceFile":
         # Path resolution happens in Path.__new__ or __init__
@@ -52,7 +53,7 @@ def main() -> None:
     processes only the first input file if multiple are provided.
     Further development is needed for full functionality.
     """
-    args: argparse.Namespace = parameter_config.process_arguments()
+    args: argparse.Namespace = process_arguments() # Updated call
 
     # Corrected argument access and assumptions
     # args.input is List[pathlib.Path], args.db is pathlib.Path, args.out is pathlib.Path
