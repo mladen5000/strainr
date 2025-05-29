@@ -34,9 +34,10 @@ except ImportError as e:
     ) from e
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from strainr.analyze import ClassificationAnalyzer
-from strainr.genomic_types import CountVector, ReadId, StrainIndex
-from strainr.database import StrainKmerDatabase # Updated import
+from .analyze import ClassificationAnalyzer # Changed to relative import
+from .genomic_types import CountVector, ReadId, StrainIndex # Changed to relative import
+from .database import StrainKmerDatabase # Changed to relative import
+
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]

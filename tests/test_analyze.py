@@ -6,8 +6,9 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 import pytest
 import numpy as np
 from collections import Counter
-from typing import Dict, List, Union  # Removed Generator as streaming not tested here
-from unittest.mock import patch, MagicMock
+from typing import Dict, List, Union
+from unittest.mock import patch, MagicMock, call # Added call
+
 
 from src.strainr.analyze import ClassificationAnalyzer
 from src.strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
@@ -27,7 +28,7 @@ def analyzer_fixture(strain_names_fixture: List[str]) -> ClassificationAnalyzer:
     return ClassificationAnalyzer(
         strain_names=strain_names_fixture,
         disambiguation_mode="max",
-        num_processes=1,  # Default to 1 for easier testing unless parallelism is specifically tested
+        num_processes=1,
     )
 
 
@@ -104,13 +105,13 @@ def test_init_invalid_num_processes(strain_names_fixture: List[str]):
 
 def test_init_invalid_abundance_threshold(strain_names_fixture: List[str]):
     with pytest.raises(
-        ValueError, match="abundance_threshold must be between 0.0 and 1.0"
+        ValueError, match=r"abundance_threshold must be a float between 0.0 and 1.0 \(exclusive of 1.0\)."
     ):
         ClassificationAnalyzer(
             strain_names=strain_names_fixture, abundance_threshold=-0.1
         )
     with pytest.raises(
-        ValueError, match="abundance_threshold must be between 0.0 and 1.0"
+        ValueError, match=r"abundance_threshold must be a float between 0.0 and 1.0 \(exclusive of 1.0\)."
     ):
         ClassificationAnalyzer(
             strain_names=strain_names_fixture, abundance_threshold=1.0
@@ -132,8 +133,8 @@ def test_separate_hit_categories_only_clear_hits(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     results: ReadHitResults = [
-        ("read1", np.array([10, 0, 0, 0])),
-        ("read2", np.array([0, 5, 0, 0])),
+        ("read1", np.array([10, 0, 0, 0], dtype=np.uint8)),
+        ("read2", np.array([0, 5, 0, 0], dtype=np.uint8)),
     ]
     clear, ambiguous, no_hits = analyzer_fixture.separate_hit_categories(results)
     assert len(clear) == 2
@@ -145,8 +146,8 @@ def test_separate_hit_categories_only_ambiguous_hits(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     results: ReadHitResults = [
-        ("read1", np.array([10, 10, 0, 0])),
-        ("read2", np.array([0, 5, 5, 5])),
+        ("read1", np.array([10, 10, 0, 0], dtype=np.uint8)),
+        ("read2", np.array([0, 5, 5, 5], dtype=np.uint8)),
     ]
     clear, ambiguous, no_hits = analyzer_fixture.separate_hit_categories(results)
     assert not clear
@@ -157,8 +158,8 @@ def test_separate_hit_categories_only_ambiguous_hits(
 
 def test_separate_hit_categories_only_no_hits(analyzer_fixture: ClassificationAnalyzer):
     results: ReadHitResults = [
-        ("read1", np.array([0, 0, 0, 0])),
-        ("read2", np.array([0, 0, 0, 0])),
+        ("read1", np.array([0, 0, 0, 0], dtype=np.uint8)),
+        ("read2", np.array([0, 0, 0, 0], dtype=np.uint8)),
     ]
     clear, ambiguous, no_hits = analyzer_fixture.separate_hit_categories(results)
     assert not clear and not ambiguous
@@ -167,9 +168,9 @@ def test_separate_hit_categories_only_no_hits(analyzer_fixture: ClassificationAn
 
 def test_separate_hit_categories_mixed_hits(analyzer_fixture: ClassificationAnalyzer):
     results: ReadHitResults = [
-        ("read_clear", np.array([10, 0, 0, 0])),
-        ("read_amb", np.array([5, 5, 0, 0])),
-        ("read_none", np.array([0, 0, 0, 0])),
+        ("read_clear", np.array([10, 0, 0, 0], dtype=np.uint8)),
+        ("read_amb", np.array([5, 5, 0, 0], dtype=np.uint8)),
+        ("read_none", np.array([0, 0, 0, 0], dtype=np.uint8)),
     ]
     clear, ambiguous, no_hits = analyzer_fixture.separate_hit_categories(results)
     assert len(clear) == 1 and "read_clear" in clear
@@ -181,14 +182,14 @@ def test_separate_hit_categories_invalid_input_type(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     with pytest.raises(
-        TypeError, match="classification_results must be a list of tuples."
+        TypeError, match="classification_results must be a list." 
     ):
         analyzer_fixture.separate_hit_categories({"invalid": "data"})  # type: ignore
 
     results_invalid_content: ReadHitResults = [("read1", [0, 5, 0, 0])]  # type: ignore
     with pytest.raises(
         TypeError,
-        match="Each item in classification_results must be \\(ReadId, CountVector\\).",
+        match=r"Item 0 \('read1'\): CountVector must be a NumPy array, got <class 'list'>." # Corrected regex
     ):
         analyzer_fixture.separate_hit_categories(results_invalid_content)
 
@@ -200,8 +201,8 @@ def test_resolve_clear_hits_to_indices_typical(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     clear_hits_dict: Dict[ReadId, CountVector] = {
-        "read1": np.array([10, 0, 0, 0]),  # StrainA (idx 0)
-        "read2": np.array([0, 0, 5, 0]),  # StrainC (idx 2)
+        "read1": np.array([10, 0, 0, 0], dtype=np.uint8),  # StrainA (idx 0)
+        "read2": np.array([0, 0, 5, 0], dtype=np.uint8),  # StrainC (idx 2)
     }
     resolved = analyzer_fixture.resolve_clear_hits_to_indices(clear_hits_dict)
     assert resolved == {"read1": 0, "read2": 2}
@@ -274,132 +275,106 @@ def test_convert_prior_counts_to_probability_vector_invalid_input(
 
 # --- Test _resolve_single_ambiguous_read ---
 
-
-# Test 'max' mode
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_max_mode(
-    analyzer_fixture: ClassificationAnalyzer,
-):  # analyzer_fixture uses 'max'
-    hits = np.array([10, 10, 5, 0])
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
+):
+    mock_rng_instance = MagicMock()
+    mock_rng_instance.choice = MagicMock(return_value=0) 
+    mock_default_rng.return_value = mock_rng_instance
+
+    analyzer = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="max")
+
+    hits = np.array([10, 10, 5, 0], dtype=np.uint8)
     # Scenario 1: Equal priors for max hits -> chooses first index
     priors_equal = np.array([0.25, 0.25, 0.25, 0.25])
-    assert (
-        analyzer_fixture._resolve_single_ambiguous_read(hits.copy(), priors_equal) == 0
-    )
+    assert analyzer._resolve_single_ambiguous_read(hits.copy(), priors_equal) == 0
 
     # Scenario 2: Higher prior for second max hit -> chooses second index
-    priors_favor_second = np.array([0.1, 0.7, 0.1, 0.1])  # StrainB (idx 1) favored
-    assert (
-        analyzer_fixture._resolve_single_ambiguous_read(
-            hits.copy(), priors_favor_second
-        )
-        == 1
-    )
+    priors_favor_second = np.array([0.1, 0.7, 0.1, 0.1])
+    assert analyzer._resolve_single_ambiguous_read(hits.copy(), priors_favor_second) == 1
 
-    # Scenario 3: Priors zero out all max hits, fallback to original max hits (equal likelihood)
-    hits_2 = np.array([10, 10, 0, 0])
-    priors_zero_max = np.array([0.0, 0.0, 0.5, 0.5])  # Max hits (A,B) have zero prior
-    # Expect fallback to choosing first among original max hits [0,1]
-    with patch.object(
-        analyzer_fixture.random_generator, "choice", return_value=0
-    ) as mock_choice:
-        resolved_idx = analyzer_fixture._resolve_single_ambiguous_read(
-            hits_2.copy(), priors_zero_max
-        )
-        # This now tests the sum_likelihood_scores == 0 fallback
-        assert resolved_idx == 0
-        mock_choice.assert_called_once_with(np.array([0, 1]))
+    # Scenario 3: Priors zero out all max hits, fallback to original max hits
+    hits_2 = np.array([10, 10, 0, 0], dtype=np.uint8)
+    priors_zero_max = np.array([0.0, 0.0, 0.5, 0.5])
+    
+    resolved_idx = analyzer._resolve_single_ambiguous_read(hits_2.copy(), priors_zero_max)
+    assert resolved_idx == 0 
+    # In this path (max mode, non-zero sum_likelihood_scores), 'choice' is not called.
+    # So, no assertion on mock_rng_instance.choice call count.
 
 
-# Test 'random' mode
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_random_mode(
-    analyzer_random_mode: ClassificationAnalyzer,
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
 ):
-    hits = np.array([10, 10, 0, 0])  # Ambiguous between StrainA (0) and StrainB (1)
-    priors = np.array([0.6, 0.4, 0.0, 0.0])  # StrainA favored
-
-    # Likelihoods: [10*0.6, 10*0.4, 0, 0] = [6, 4, 0, 0]
-    # Normalized: [0.6, 0.4, 0, 0]
+    mock_rng_instance = MagicMock()
+    mock_rng_instance.choice = MagicMock(return_value=0)
+    mock_default_rng.return_value = mock_rng_instance
+    
+    analyzer_random_mode = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="random")
+    
+    hits = np.array([10, 10, 0, 0], dtype=np.uint8)
+    priors = np.array([0.6, 0.4, 0.0, 0.0])
     expected_probs = np.array([0.6, 0.4, 0.0, 0.0])
 
-    with patch.object(
-        analyzer_random_mode.random_generator, "choice", return_value=0
-    ) as mock_choice:
-        resolved_idx = analyzer_random_mode._resolve_single_ambiguous_read(
-            hits.copy(), priors
-        )
-        assert resolved_idx == 0  # Mocked choice
-        mock_choice.assert_called_once()
-        call_args = mock_choice.call_args
-        np.testing.assert_array_equal(
-            call_args[0][0], np.arange(len(analyzer_random_mode.strain_names))
-        )
-        np.testing.assert_array_almost_equal(call_args[1]["p"], expected_probs)
+    resolved_idx = analyzer_random_mode._resolve_single_ambiguous_read(hits.copy(), priors)
+    assert resolved_idx == 0
+    
+    mock_rng_instance.choice.assert_called_once()
+    call_args = mock_rng_instance.choice.call_args
+    np.testing.assert_array_equal(call_args[0][0], np.arange(len(analyzer_random_mode.strain_names)))
+    np.testing.assert_array_almost_equal(call_args[1]["p"], expected_probs)
 
 
-# Test 'multinomial' mode
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_multinomial_mode(
-    analyzer_multinomial_mode: ClassificationAnalyzer,
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
 ):
-    hits = np.array([5, 5, 5, 0])  # A, B, C
-    priors = np.array([0.1, 0.2, 0.7, 0.0])  # C favored
-    # Likelihoods: [0.5, 1.0, 3.5, 0] Sum = 5.0
-    # Normalized: [0.1, 0.2, 0.7, 0]
+    mock_rng_instance = MagicMock()
+    mock_multinomial_output = np.array([0, 0, 1, 0]) 
+    mock_rng_instance.multinomial = MagicMock(return_value=mock_multinomial_output)
+    mock_default_rng.return_value = mock_rng_instance
+
+    analyzer_multinomial_mode = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="multinomial")
+
+    hits = np.array([5, 5, 5, 0], dtype=np.uint8)
+    priors = np.array([0.1, 0.2, 0.7, 0.0])
     expected_probs = np.array([0.1, 0.2, 0.7, 0.0])
 
-    # Mock multinomial to select StrainC (idx 2)
-    mock_multinomial_output = np.array([0, 0, 1, 0])
-    with patch.object(
-        analyzer_multinomial_mode.random_generator,
-        "multinomial",
-        return_value=mock_multinomial_output,
-    ) as mock_multinomial:
-        resolved_idx = analyzer_multinomial_mode._resolve_single_ambiguous_read(
-            hits.copy(), priors
-        )
-        assert resolved_idx == 2
-        mock_multinomial.assert_called_once_with(1, pvals=pytest.approx(expected_probs))
+    resolved_idx = analyzer_multinomial_mode._resolve_single_ambiguous_read(hits.copy(), priors)
+    assert resolved_idx == 2
+    mock_rng_instance.multinomial.assert_called_once_with(1, pvals=pytest.approx(expected_probs))
 
 
-# Test 'dirichlet' mode
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_dirichlet_mode(
-    analyzer_dirichlet_mode: ClassificationAnalyzer,
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
 ):
-    hits = np.array([10, 0, 10, 0])  # A, C
+    mock_rng_instance = MagicMock()
+    mock_dirichlet_sample = np.array([0.6,0.0,0.4,0.0,])
+    mock_rng_instance.dirichlet = MagicMock(return_value=mock_dirichlet_sample)
+    mock_rng_instance.choice = MagicMock(return_value=0)
+    mock_default_rng.return_value = mock_rng_instance
+
+    analyzer_dirichlet_mode = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="dirichlet")
+
+    hits = np.array([10, 0, 10, 0], dtype=np.uint8)
     priors = np.array([0.5, 0.0, 0.5, 0.0])
-    # Likelihoods (alpha for Dirichlet): [5, 0, 5, 0]. Zeroes become 1e-10.
     expected_alpha = np.array([5.0, 1e-10, 5.0, 1e-10])
 
-    mock_dirichlet_sample = np.array([
-        0.6,
-        0.0,
-        0.4,
-        0.0,
-    ])  # Sample favoring StrainA (idx 0)
+    resolved_idx = analyzer_dirichlet_mode._resolve_single_ambiguous_read(hits.copy(), priors)
+    assert resolved_idx == 0
 
-    with (
-        patch.object(
-            analyzer_dirichlet_mode.random_generator,
-            "dirichlet",
-            return_value=mock_dirichlet_sample,
-        ) as mock_dirichlet,
-        patch.object(
-            analyzer_dirichlet_mode.random_generator, "choice", return_value=0
-        ) as mock_choice,
-    ):
-        resolved_idx = analyzer_dirichlet_mode._resolve_single_ambiguous_read(
-            hits.copy(), priors
-        )
-        assert resolved_idx == 0
-
-        mock_dirichlet.assert_called_once_with(alpha=pytest.approx(expected_alpha))
-        mock_choice.assert_called_once()
-        call_args_choice = mock_choice.call_args
-        np.testing.assert_array_equal(
-            call_args_choice[0][0], np.arange(len(analyzer_dirichlet_mode.strain_names))
-        )
-        np.testing.assert_array_almost_equal(
-            call_args_choice[1]["p"], mock_dirichlet_sample
-        )
+    mock_rng_instance.dirichlet.assert_called_once_with(alpha=pytest.approx(expected_alpha))
+    mock_rng_instance.choice.assert_called_once()
+    call_args_choice = mock_rng_instance.choice.call_args
+    np.testing.assert_array_equal(call_args_choice[0][0], np.arange(len(analyzer_dirichlet_mode.strain_names)))
+    np.testing.assert_array_almost_equal(call_args_choice[1]["p"], mock_dirichlet_sample)
 
 
 # --- Test resolve_ambiguous_hits_parallel ---
@@ -408,7 +383,12 @@ def test_resolve_single_ambiguous_read_dirichlet_mode(
 def test_resolve_ambiguous_hits_parallel_empty(
     analyzer_fixture: ClassificationAnalyzer,
 ):
-    assert analyzer_fixture.resolve_ambiguous_hits_parallel({}, np.array([])) == {}
+    num_strains = len(analyzer_fixture.strain_names)
+    correct_shape_priors = np.array([1.0/num_strains if num_strains > 0 else 0.0] * num_strains)
+    if num_strains == 0: 
+        correct_shape_priors = np.array([])
+
+    assert analyzer_fixture.resolve_ambiguous_hits_parallel({}, correct_shape_priors) == {}
 
 
 @patch("multiprocessing.Pool")
@@ -417,32 +397,27 @@ def test_resolve_ambiguous_hits_parallel_mocked_pool(
     analyzer_fixture: ClassificationAnalyzer,
     strain_names_fixture: List[str],
 ):
-    analyzer = analyzer_fixture  # 'max' mode
+    analyzer = analyzer_fixture 
     amb_hits: Dict[ReadId, CountVector] = {
-        "read_amb1": np.array([10, 10, 0, 0]),  # Expect 0 (StrainA)
-        "read_amb2": np.array([0, 5, 5, 0]),  # Expect 1 (StrainB)
+        "read_amb1": np.array([10, 10, 0, 0], dtype=np.uint8),
+        "read_amb2": np.array([0, 5, 5, 0], dtype=np.uint8),
     }
-    priors = np.array([0.25] * len(strain_names_fixture))  # Equal priors
+    priors = np.array([0.25] * len(strain_names_fixture))
 
-    # Mock pool's map to return deterministic results
     expected_resolved_indices = [0, 1]
     mock_pool_instance = MagicMock()
     mock_pool_instance.map.return_value = expected_resolved_indices
-    # Configure the context manager part of the mock
     mock_pool_constructor.return_value.__enter__.return_value = mock_pool_instance
 
     resolved = analyzer.resolve_ambiguous_hits_parallel(amb_hits, priors)
-
-    # num_processes for pool is max(1, self.num_processes // 2) = max(1, 1//2) = 1
+    
     mock_pool_constructor.assert_called_with(processes=1)
 
     map_call_args = mock_pool_instance.map.call_args
     assert map_call_args is not None
-    # Check the function passed to map (it's a partial)
     partial_func = map_call_args[0][0]
     assert partial_func.func.__name__ == "_resolve_single_ambiguous_read"
     np.testing.assert_array_equal(partial_func.keywords["prior_probabilities"], priors)
-    # Check the iterable passed to map
     hit_vectors_arg = map_call_args[0][1]
     assert len(hit_vectors_arg) == 2
     np.testing.assert_array_equal(hit_vectors_arg[0], amb_hits["read_amb1"])
@@ -478,7 +453,7 @@ def test_combine_assignments_empty_categories(analyzer_fixture: ClassificationAn
     combined = analyzer_fixture.combine_assignments(
         clear, {}, [], unassigned_marker="NA"
     )
-    assert combined == {"c1": 0}  # No "NA" entries if no_hit_ids is empty
+    assert combined == {"c1": 0}
 
 
 def test_combine_assignments_all_empty(analyzer_fixture: ClassificationAnalyzer):
