@@ -19,8 +19,8 @@ import pandas as pd
 from Bio import SeqIO
 
 # Local application/library specific imports
-from strainr.utils import open_file_transparently
-from strainr.genomic_types import (
+from .utils import open_file_transparently # Changed to relative import
+from .genomic_types import ( # Changed to relative import
     ReadId,
     FinalAssignmentsType,
 )  # Import FinalAssignmentsType

@@ -7,7 +7,7 @@ import pytest
 import numpy as np
 from collections import Counter
 from typing import Dict, List, Union
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call # Added call
 
 from src.strainr.analyze import ClassificationAnalyzer
 from src.strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
@@ -181,14 +181,14 @@ def test_separate_hit_categories_invalid_input_type(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     with pytest.raises(
-        TypeError, match="classification_results must be a list."
+        TypeError, match="classification_results must be a list." 
     ):
         analyzer_fixture.separate_hit_categories({"invalid": "data"})  # type: ignore
 
     results_invalid_content: ReadHitResults = [("read1", [0, 5, 0, 0])]  # type: ignore
     with pytest.raises(
         TypeError,
-        match=r"Item 0 \('read1'\): CountVector must be a NumPy array, got <class 'list'>."
+        match=r"Item 0 \('read1'\): CountVector must be a NumPy array, got <class 'list'>." # Corrected regex
     ):
         analyzer_fixture.separate_hit_categories(results_invalid_content)
 
@@ -200,8 +200,8 @@ def test_resolve_clear_hits_to_indices_typical(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     clear_hits_dict: Dict[ReadId, CountVector] = {
-        "read1": np.array([10, 0, 0, 0], dtype=np.uint8),
-        "read2": np.array([0, 0, 5, 0], dtype=np.uint8),
+        "read1": np.array([10, 0, 0, 0], dtype=np.uint8),  # StrainA (idx 0)
+        "read2": np.array([0, 0, 5, 0], dtype=np.uint8),  # StrainC (idx 2)
     }
     resolved = analyzer_fixture.resolve_clear_hits_to_indices(clear_hits_dict)
     assert resolved == {"read1": 0, "read2": 2}
@@ -275,30 +275,37 @@ def test_convert_prior_counts_to_probability_vector_invalid_input(
 # --- Test _resolve_single_ambiguous_read ---
 
 @patch('src.strainr.analyze.np.random.default_rng')
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_max_mode(
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
 ):
     mock_rng_instance = MagicMock()
-    mock_rng_instance.choice = MagicMock(return_value=0)
+    mock_rng_instance.choice = MagicMock(return_value=0) 
     mock_default_rng.return_value = mock_rng_instance
 
     analyzer = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="max")
 
     hits = np.array([10, 10, 5, 0], dtype=np.uint8)
+    # Scenario 1: Equal priors for max hits -> chooses first index
     priors_equal = np.array([0.25, 0.25, 0.25, 0.25])
     assert analyzer._resolve_single_ambiguous_read(hits.copy(), priors_equal) == 0
 
+    # Scenario 2: Higher prior for second max hit -> chooses second index
     priors_favor_second = np.array([0.1, 0.7, 0.1, 0.1])
     assert analyzer._resolve_single_ambiguous_read(hits.copy(), priors_favor_second) == 1
 
+    # Scenario 3: Priors zero out all max hits, fallback to original max hits
     hits_2 = np.array([10, 10, 0, 0], dtype=np.uint8)
     priors_zero_max = np.array([0.0, 0.0, 0.5, 0.5])
-
+    
     resolved_idx = analyzer._resolve_single_ambiguous_read(hits_2.copy(), priors_zero_max)
-    assert resolved_idx == 0
+    assert resolved_idx == 0 
+    # In this path (max mode, non-zero sum_likelihood_scores), 'choice' is not called.
+    # So, no assertion on mock_rng_instance.choice call count.
 
 
+@patch('src.strainr.analyze.np.random.default_rng')
 @patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_random_mode(
     mock_default_rng: MagicMock,
@@ -307,16 +314,16 @@ def test_resolve_single_ambiguous_read_random_mode(
     mock_rng_instance = MagicMock()
     mock_rng_instance.choice = MagicMock(return_value=0)
     mock_default_rng.return_value = mock_rng_instance
-
+    
     analyzer_random_mode = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="random")
-
+    
     hits = np.array([10, 10, 0, 0], dtype=np.uint8)
     priors = np.array([0.6, 0.4, 0.0, 0.0])
     expected_probs = np.array([0.6, 0.4, 0.0, 0.0])
 
     resolved_idx = analyzer_random_mode._resolve_single_ambiguous_read(hits.copy(), priors)
     assert resolved_idx == 0
-
+    
     mock_rng_instance.choice.assert_called_once()
     call_args = mock_rng_instance.choice.call_args
     np.testing.assert_array_equal(call_args[0][0], np.arange(len(analyzer_random_mode.strain_names)))
@@ -324,12 +331,15 @@ def test_resolve_single_ambiguous_read_random_mode(
 
 
 @patch('src.strainr.analyze.np.random.default_rng')
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_multinomial_mode(
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
 ):
     mock_rng_instance = MagicMock()
-    mock_multinomial_output = np.array([0, 0, 1, 0])
+    mock_multinomial_output = np.array([0, 0, 1, 0]) 
     mock_rng_instance.multinomial = MagicMock(return_value=mock_multinomial_output)
     mock_default_rng.return_value = mock_rng_instance
 
@@ -342,10 +352,26 @@ def test_resolve_single_ambiguous_read_multinomial_mode(
     resolved_idx = analyzer_multinomial_mode._resolve_single_ambiguous_read(hits.copy(), priors)
     assert resolved_idx == 2
     mock_rng_instance.multinomial.assert_called_once_with(1, pvals=pytest.approx(expected_probs))
+    resolved_idx = analyzer_multinomial_mode._resolve_single_ambiguous_read(hits.copy(), priors)
+    assert resolved_idx == 2
+    mock_rng_instance.multinomial.assert_called_once_with(1, pvals=pytest.approx(expected_probs))
 
 
 @patch('src.strainr.analyze.np.random.default_rng')
+@patch('src.strainr.analyze.np.random.default_rng')
 def test_resolve_single_ambiguous_read_dirichlet_mode(
+    mock_default_rng: MagicMock,
+    strain_names_fixture: List[str],
+):
+    mock_rng_instance = MagicMock()
+    mock_dirichlet_sample = np.array([0.6,0.0,0.4,0.0,])
+    mock_rng_instance.dirichlet = MagicMock(return_value=mock_dirichlet_sample)
+    mock_rng_instance.choice = MagicMock(return_value=0)
+    mock_default_rng.return_value = mock_rng_instance
+
+    analyzer_dirichlet_mode = ClassificationAnalyzer(strain_names=strain_names_fixture, disambiguation_mode="dirichlet")
+
+    hits = np.array([10, 0, 10, 0], dtype=np.uint8)
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
 ):
@@ -363,7 +389,14 @@ def test_resolve_single_ambiguous_read_dirichlet_mode(
 
     resolved_idx = analyzer_dirichlet_mode._resolve_single_ambiguous_read(hits.copy(), priors)
     assert resolved_idx == 0
+    resolved_idx = analyzer_dirichlet_mode._resolve_single_ambiguous_read(hits.copy(), priors)
+    assert resolved_idx == 0
 
+    mock_rng_instance.dirichlet.assert_called_once_with(alpha=pytest.approx(expected_alpha))
+    mock_rng_instance.choice.assert_called_once()
+    call_args_choice = mock_rng_instance.choice.call_args
+    np.testing.assert_array_equal(call_args_choice[0][0], np.arange(len(analyzer_dirichlet_mode.strain_names)))
+    np.testing.assert_array_almost_equal(call_args_choice[1]["p"], mock_dirichlet_sample)
     mock_rng_instance.dirichlet.assert_called_once_with(alpha=pytest.approx(expected_alpha))
     mock_rng_instance.choice.assert_called_once()
     call_args_choice = mock_rng_instance.choice.call_args
@@ -378,9 +411,9 @@ def test_resolve_ambiguous_hits_parallel_empty(
     analyzer_fixture: ClassificationAnalyzer,
 ):
     num_strains = len(analyzer_fixture.strain_names)
-    correct_shape_priors = np.array([1.0/num_strains if num_strains > 0 else 0.0] * num_strains, dtype=float)
-    if num_strains == 0:
-        correct_shape_priors = np.array([], dtype=float)
+    correct_shape_priors = np.array([1.0/num_strains if num_strains > 0 else 0.0] * num_strains)
+    if num_strains == 0: 
+        correct_shape_priors = np.array([])
 
     assert analyzer_fixture.resolve_ambiguous_hits_parallel({}, correct_shape_priors) == {}
 
@@ -391,11 +424,14 @@ def test_resolve_ambiguous_hits_parallel_mocked_pool(
     analyzer_fixture: ClassificationAnalyzer,
     strain_names_fixture: List[str],
 ):
-    analyzer = analyzer_fixture
+    analyzer = analyzer_fixture 
     amb_hits: Dict[ReadId, CountVector] = {
         "read_amb1": np.array([10, 10, 0, 0], dtype=np.uint8),
         "read_amb2": np.array([0, 5, 5, 0], dtype=np.uint8),
+        "read_amb1": np.array([10, 10, 0, 0], dtype=np.uint8),
+        "read_amb2": np.array([0, 5, 5, 0], dtype=np.uint8),
     }
+    priors = np.array([0.25] * len(strain_names_fixture))
     priors = np.array([0.25] * len(strain_names_fixture))
 
     expected_resolved_indices = [0, 1]
@@ -404,7 +440,7 @@ def test_resolve_ambiguous_hits_parallel_mocked_pool(
     mock_pool_constructor.return_value.__enter__.return_value = mock_pool_instance
 
     resolved = analyzer.resolve_ambiguous_hits_parallel(amb_hits, priors)
-
+    
     mock_pool_constructor.assert_called_with(processes=1)
 
     map_call_args = mock_pool_instance.map.call_args
@@ -447,6 +483,7 @@ def test_combine_assignments_empty_categories(analyzer_fixture: ClassificationAn
     combined = analyzer_fixture.combine_assignments(
         clear, {}, [], unassigned_marker="NA"
     )
+    assert combined == {"c1": 0}
     assert combined == {"c1": 0}
 
 

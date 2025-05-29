@@ -31,7 +31,7 @@ from Bio import SeqIO
 from tqdm import tqdm  # For progress bars
 
 # Assuming strainr.utils is in PYTHONPATH or installed
-from strainr.utils import open_file_transparently
+from .utils import open_file_transparently # Changed to relative import
 
 
 # --- Logging Setup ---
