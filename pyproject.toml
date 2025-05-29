@@ -21,3 +21,12 @@ ncbi-genome-download = "^0.3.3"
 requires = ["poetry-core>=1.0.0"]
 build-backend = "maturin"
 
+# PROJECT_ROOT/pyproject.toml
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
+# Add other pytest configurations if needed, e.g., testpaths
+testpaths = [
+    "tests"
+]

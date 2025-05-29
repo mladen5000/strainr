@@ -1,5 +1,5 @@
 """
-Pytest unit tests for the binning module (src.strainr.binning).
+Pytest unit tests for the binning module (strainr.binning).
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
@@ -13,7 +13,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # Functions and types to test
-from src.strainr.binning import (
+from strainr.binning import (
     generate_table,
     get_top_strain_names,
     _extract_reads_for_strain,
@@ -215,9 +215,9 @@ def test_get_top_strain_names_exclude_unassigned_false(
 # --- Tests for _extract_reads_for_strain ---
 
 
-@patch("src.strainr.utils.open_file_transparently", new_callable=mock_open)
-@patch("src.strainr.binning.SeqIO.parse")
-@patch("src.strainr.binning.SeqIO.write")
+@patch("strainr.utils.open_file_transparently", new_callable=mock_open)
+@patch("strainr.binning.SeqIO.parse")
+@patch("strainr.binning.SeqIO.write")
 @patch("pathlib.Path.is_file")
 def test_extract_reads_for_strain_r1_only(
     mock_is_file: MagicMock,
@@ -266,7 +266,7 @@ def test_extract_reads_for_strain_r1_only(
 # --- Tests for create_binned_fastq_files ---
 
 
-@patch("src.strainr.binning.mp.Process")
+@patch("strainr.binning.mp.Process")
 @patch("pathlib.Path.mkdir")  # Mock mkdir to avoid actual directory creation
 def test_create_binned_fastq_files_basic(
     mock_mkdir: MagicMock,
@@ -310,9 +310,9 @@ def test_create_binned_fastq_files_basic(
 # --- Tests for run_binning_pipeline ---
 
 
-@patch("src.strainr.binning.create_binned_fastq_files", return_value=(set(), []))
-@patch("src.strainr.binning.get_top_strain_names")
-@patch("src.strainr.binning.generate_table")
+@patch("strainr.binning.create_binned_fastq_files", return_value=(set(), []))
+@patch("strainr.binning.get_top_strain_names")
+@patch("strainr.binning.generate_table")
 def test_run_binning_pipeline_flow(
     mock_generate_table: MagicMock,
     mock_get_top_names: MagicMock,

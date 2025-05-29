@@ -4,11 +4,11 @@ import argparse  # For type hinting args
 from typing import Union, Any  # Removed List, Added Any
 
 # Assuming StrainKmerDatabase is correctly importable from this location
-from .database import StrainKmerDatabase # Updated to consolidated class name
+from .database import StrainKmerDatabase  # Updated to consolidated class name
 
 
 # Assuming process_arguments is correctly importable
-from .parameter_config import process_arguments # Changed to specific import
+from .parameter_config import process_arguments  # Changed to specific import
 
 
 class SequenceFile(pathlib.Path):
@@ -54,7 +54,7 @@ def main() -> None:
     processes only the first input file if multiple are provided.
     Further development is needed for full functionality.
     """
-    args: argparse.Namespace = process_arguments() # Updated call
+    args: argparse.Namespace = process_arguments()  # Updated call
 
     # Corrected argument access and assumptions
     # args.input is List[pathlib.Path], args.db is pathlib.Path, args.out is pathlib.Path
@@ -142,7 +142,9 @@ class Runner:
     """
 
     fasta: pathlib.Path  # Path to the input FASTA/FASTQ file
-    kmer_database: StrainKmerDatabase  # Instance of the k-mer database, updated class name
+    kmer_database: (
+        StrainKmerDatabase  # Instance of the k-mer database, updated class name
+    )
     k: int = 31  # k-mer length to use for analysis (e.g., k-mer extraction)
 
     # Removed commented-out block

@@ -1,5 +1,5 @@
 """
-Pytest unit tests for utility functions in src.strainr.utils.
+Pytest unit tests for utility functions in strainr.utils.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
@@ -15,15 +15,15 @@ from unittest.mock import patch, MagicMock, mock_open
 
 from Bio.Seq import Seq
 
-# Assuming src.strainr.* is in PYTHONPATH or tests are run from a suitable root
-from src.strainr.utils import (
+# Assuming strainr.* is in PYTHONPATH or tests are run from a suitable root
+from strainr.utils import (
     open_file_transparently,
     get_canonical_kmer,
     pickle_intermediate_results,
     save_classification_results_to_dataframe,
 )
 # Assuming these types might be used in dummy data for pickle_intermediate_results
-# from src.strainr.genomic_types import ReadId, CountVector, StrainName, StrainIndex
+# from strainr.genomic_types import ReadId, CountVector, StrainName, StrainIndex
 
 # --- Fixtures ---
 

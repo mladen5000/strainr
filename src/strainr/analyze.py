@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple, Union, Set  # Added Set
 
 import numpy as np
 
-from .genomic_types import ( # Changed to relative import
+from strainr.genomic_types import (
     CountVector,
     ReadHitResults,
     StrainIndex,
