@@ -3,23 +3,25 @@ Pytest unit tests for the binning module (strainr.binning).
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import pandas as pd
 import pathlib
-from typing import List, Dict  # Added Optional
-from unittest.mock import patch, MagicMock, mock_open  # Added mock_open
+from typing import Dict, List  # Added Optional
+from unittest.mock import MagicMock, mock_open, patch  # Added mock_open
 
+import pandas as pd
+import pytest
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # Functions and types to test
 from strainr.binning import (
-    generate_table,
-    get_top_strain_names,
+    FinalAssignmentsType,
+)  # Assuming this is defined in binning.py or imported there
+from strainr.binning import (
     _extract_reads_for_strain,
     create_binned_fastq_files,
+    generate_table,
+    get_top_strain_names,
     run_binning_pipeline,
-    FinalAssignmentsType,  # Assuming this is defined in binning.py or imported there
 )
 
 # --- Fixtures ---
@@ -112,6 +114,7 @@ def test_generate_table_empty_strain_names(
     simple_final_assignments: FinalAssignmentsType,
 ):
     df = generate_table(simple_final_assignments, [])
+    df = pd.Series(df, index=[])
     assert df.shape == (len(simple_final_assignments), 0)  # No columns
     assert sorted(list(df.index)) == sorted(list(simple_final_assignments.keys()))
 

@@ -3,14 +3,13 @@ Pytest unit tests for the AbundanceCalculator class from strainr.output.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 from collections import Counter
-from typing import Dict, List, Union, Any
+from typing import Dict, List, Union
 
-
+import pytest
+from strainr.genomic_types import FinalAssignmentsType
 from strainr.output import AbundanceCalculator
+
 # Assuming StrainIndex and ReadId might be used if FinalAssignmentsType was more specific
 # For now, the tests align with AbundanceCalculator's direct type hints.
 # from strainr.genomic_types import StrainIndex, ReadId

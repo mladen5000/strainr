@@ -3,6 +3,7 @@ K-mer database management for strain classification.
 """
 
 from pathlib import Path
+import pathlib
 from typing import Dict, List, Optional, Union, Any  # Tuple removed
 
 import numpy as np
@@ -68,7 +69,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         # Initialize attributes
         self.kmer_length: int = 0
-        self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {} # Explicit type
+        self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {}  # Explicit type
         self.strain_names: List[str] = []
         self.num_strains: int = 0
         self.num_kmers: int = 0
@@ -87,12 +88,13 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         """
         Internal method to load data from the Parquet database file.
         """
-        print(f"Loading k-mer database from {self.database_filepath} (Parquet format)...")
+        print(
+            f"Loading k-mer database from {self.database_filepath} (Parquet format)..."
+        )
         try:
             kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_filepath)
         except (IOError, ValueError, pd.errors.EmptyDataError) as e:
             raise RuntimeError(
-
                 f"Database file disappeared after validation: {self.database_path}"
             )
         except (IOError, ValueError, pd.errors.EmptyDataError) as e:
@@ -152,7 +154,6 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         if expected_kmer_length is not None:
             if expected_kmer_length != inferred_k_len:
-
                 raise ValueError(
                     f"Provided expected_kmer_length ({expected_kmer_length}) does not match "
                     f"length of first k-mer in database ({inferred_k_len})."
@@ -167,7 +168,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 f"Determined k-mer length ({self.kmer_length}) must be positive."
             )
 
-        temp_kmer_map: Dict[bytes, np.ndarray] = {} # Explicit type
+        temp_kmer_map: Dict[bytes, np.ndarray] = {}  # Explicit type
         try:
             count_matrix = kmer_strain_df.to_numpy(dtype=np.uint8)
         except ValueError as e:
@@ -219,7 +220,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                     )
                     skipped_kmers_count += 1
                     continue
-            
+
             temp_kmer_map[kmer_bytes] = count_matrix[i]
 
         self.kmer_to_counts_map = temp_kmer_map
@@ -254,7 +255,6 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         if not isinstance(kmer, bytes):
             return None
         return self.kmer_to_counts_map.get(kmer)
-
 
     def get_database_stats(self) -> Dict[str, Any]:
         """
@@ -324,12 +324,18 @@ if __name__ == "__main__":
     dummy_db_output_dir = script_dir / "test_db_output_consolidated"
     dummy_db_output_dir.mkdir(exist_ok=True)
 
-    dummy_db_path_str_parquet = dummy_db_output_dir / "dummy_strain_kmer_db_str_idx.parquet"
+    dummy_db_path_str_parquet = (
+        dummy_db_output_dir / "dummy_strain_kmer_db_str_idx.parquet"
+    )
     dummy_df_str_idx.to_parquet(dummy_db_path_str_parquet, index=True)
-    print(f"Created dummy Parquet database (string k-mers) at {dummy_db_path_str_parquet.resolve()}")
+    print(
+        f"Created dummy Parquet database (string k-mers) at {dummy_db_path_str_parquet.resolve()}"
+    )
 
     try:
-        print("\n--- Testing consolidated StrainKmerDatabase (inferred length) from Parquet ---")
+        print(
+            "\n--- Testing consolidated StrainKmerDatabase (inferred length) from Parquet ---"
+        )
         # Use the new class name StrainKmerDatabase
         db_inferred = StrainKmerDatabase(dummy_db_path_str_parquet)
         kmer_to_find_bytes = b"AAAA"
@@ -347,13 +353,16 @@ if __name__ == "__main__":
 
         print("\n--- Testing with expected_kmer_length provided (from Parquet) ---")
         # Use the new class name StrainKmerDatabase
-        db_expected_len = StrainKmerDatabase(dummy_db_path_str_parquet, expected_kmer_length=4)
+        db_expected_len = StrainKmerDatabase(
+            dummy_db_path_str_parquet, expected_kmer_length=4
+        )
         counts_2 = db_expected_len.get_strain_counts_for_kmer(b"GGGG")
         print(f"Counts for b'GGGG': {counts_2}")
 
     except Exception as e:
         print(f"An error occurred during Parquet database testing: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         if dummy_db_path_str_parquet.exists():
