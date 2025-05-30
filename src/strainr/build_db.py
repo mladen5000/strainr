@@ -22,7 +22,7 @@ import pathlib
 import sys
 from collections import defaultdict
 from functools import partial
-from typing import Dict, List, Tuple, Set, Any, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import ncbi_genome_download as ngd
 import numpy as np
@@ -31,9 +31,7 @@ from Bio import SeqIO
 from tqdm import tqdm  # For progress bars
 
 # Assuming strainr.utils is in PYTHONPATH or installed
-from .utils import open_file_transparently # Changed to relative import
-
-
+from .utils import open_file_transparently  # Changed to relative import
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -180,12 +178,10 @@ class DatabaseBuilder:
             genome_output_dir / f"metadata_summary_{genome_target_dir_suffix}.tsv"
         )
 
-        ncbi_kwargs.update(
-            {
-                "output_folder": genome_output_dir,  # Corrected from 'output' to 'output_folder' for ngd
-                "metadata_table": metadata_table_path,
-            }
-        )
+        ncbi_kwargs.update({
+            "output_folder": genome_output_dir,  # Corrected from 'output' to 'output_folder' for ngd
+            "metadata_table": metadata_table_path,
+        })
 
         logger.info(
             f"Downloading genomes to: {genome_output_dir} with metadata to {metadata_table_path}"
@@ -580,15 +576,15 @@ class DatabaseBuilder:
 
     def _save_database_to_parquet(self, database_df: pd.DataFrame) -> None:
         """Saves the k-mer database DataFrame to a Parquet file."""
-        output_path = self.base_path / (
-            self.output_db_name + ".db.parquet"
-        ) 
+        output_path = self.base_path / (self.output_db_name + ".db.parquet")
         logger.info(f"Saving k-mer database to (Parquet format): {output_path}")
         try:
             database_df.to_parquet(output_path, index=True)
             logger.info("Database saved successfully to Parquet.")
         except Exception as e:
-            logger.error(f"Failed to save database to {output_path} (Parquet format): {e}")
+            logger.error(
+                f"Failed to save database to {output_path} (Parquet format): {e}"
+            )
             raise
 
     def create_database(self) -> None:

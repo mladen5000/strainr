@@ -1,11 +1,10 @@
+import argparse  # For type hinting args
 import dataclasses
 import pathlib
-import argparse  # For type hinting args
-from typing import Union, Any  # Removed List, Added Any
+from typing import Any, Union  # Removed List, Added Any
 
 # Assuming StrainKmerDatabase is correctly importable from this location
 from .database import StrainKmerDatabase  # Updated to consolidated class name
-
 
 # Assuming process_arguments is correctly importable
 from .parameter_config import process_arguments  # Changed to specific import

@@ -12,16 +12,11 @@ Different disambiguation strategies are supported.
 import functools
 import multiprocessing as mp
 from collections import Counter
-from typing import Dict, List, Tuple, Union, Set  # Added Set
+from typing import Dict, List, Set, Tuple, Union  # Added Set
 
 import numpy as np
 
-from strainr.genomic_types import (
-    CountVector,
-    ReadHitResults,
-    StrainIndex,
-    ReadId,
-)
+from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
 
 
 class ClassificationAnalyzer:
