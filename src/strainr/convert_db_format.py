@@ -7,9 +7,10 @@ from a pickle file and save it to a Parquet file, ensuring the index
 """
 
 import argparse
-import pandas as pd
-from pathlib import Path
 import pickle  # Added import
+from pathlib import Path
+
+import pandas as pd
 
 
 def convert_pickle_to_parquet(pickle_path: Path, parquet_path: Path) -> None:
