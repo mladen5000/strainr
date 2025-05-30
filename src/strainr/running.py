@@ -3,11 +3,11 @@ import pathlib
 import argparse  # For type hinting args
 from typing import Union, Any  # Removed List, Added Any
 
-# Assuming StrainKmerDb is correctly importable from this location
-from strainr.kmer_database import StrainKmerDb  # Updated to consolidated class name
+# Assuming StrainKmerDatabase is correctly importable from this location
+from .database import StrainKmerDatabase # Changed to relative import
 
 # Assuming process_arguments is correctly importable
-import src.strainr.parameter_config as parameter_config
+from .parameter_config import process_arguments # Changed to relative and specific import
 
 
 class SequenceFile(pathlib.Path):
@@ -15,7 +15,8 @@ class SequenceFile(pathlib.Path):
     A pathlib.Path subclass representing a sequence file that must exist.
     """
 
-    _flavour = pathlib.Path._flavour  # type: ignore # Workaround for pathlib internals if needed
+    # _flavour = pathlib.Path._flavour  # type: ignore # Workaround for pathlib internals if needed # Commented out
+    # This line caused AttributeError and is likely unnecessary as Path subclasses should inherit it.
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "SequenceFile":
         # Path resolution happens in Path.__new__ or __init__
@@ -52,7 +53,7 @@ def main() -> None:
     processes only the first input file if multiple are provided.
     Further development is needed for full functionality.
     """
-    args: argparse.Namespace = parameter_config.process_arguments()
+    args: argparse.Namespace = process_arguments() # Use directly imported function
 
     # Corrected argument access and assumptions
     # args.input is List[pathlib.Path], args.db is pathlib.Path, args.out is pathlib.Path
@@ -99,11 +100,11 @@ def main() -> None:
     # If a specific k-mer length is expected from CLI for DB, it should be added to process_arguments.
     # For now, let's assume we want the DB to use its intrinsic k-mer length.
     try:
-        kmer_db = StrainKmerDb(
+        kmer_db = StrainKmerDatabase( # Updated class name
             database_filepath=database_file_path, expected_kmer_length=None
-        )  # Updated class nam
+        )
     except Exception as e:
-        print(f"Error initializing StrainKmerDb: {e}")  # Updated class name
+        print(f"Error initializing StrainKmerDatabase: {e}") # Updated class name
         return
 
     # Runner's k parameter (default 31) can be used for k-mer extraction logic within Runner.
@@ -140,7 +141,7 @@ class Runner:
     """
 
     fasta: pathlib.Path  # Path to the input FASTA/FASTQ file
-    kmer_database: StrainKmerDb  # Instance of the k-mer database, updated class name
+    kmer_database: StrainKmerDatabase  # Instance of the k-mer database, updated class name
     k: int = 31  # k-mer length to use for analysis (e.g., k-mer extraction)
 
     # Removed commented-out block

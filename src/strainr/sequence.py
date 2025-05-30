@@ -108,7 +108,13 @@ class GenomicSequence:
 
     def __hash__(self) -> int:
         """Generate hash using MurmurHash3 for consistency and performance."""
-        return mmh3.hash_bytes(self.sequence_data)
+        hash_result = mmh3.hash_bytes(self.sequence_data)
+        if isinstance(hash_result, bytes):
+            # If mmh3.hash_bytes unexpectedly returns bytes, hash these bytes.
+            # This ensures we return an int, though it's an extra hash.
+            return hash(hash_result)
+        # Otherwise, assume it's already an int (or int-like, e.g. np.int32)
+        return int(hash_result) # Cast to ensure it's a Python int
 
     def __len__(self) -> int:
         """Return the length of the sequence."""
