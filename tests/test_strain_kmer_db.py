@@ -3,17 +3,18 @@ Pytest unit tests for the consolidated StrainKmerDatabase class from src.strainr
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 import pathlib
-from typing import List, Union, Optional
-from unittest.mock import patch, MagicMock
 
-from src.strainr.database import StrainKmerDatabase  # Updated import
+# import pickle # Pickle is no longer used directly for db files
+from typing import List, Optional, Union
+from unittest.mock import MagicMock, patch
 
-# Define Kmer type alias locally as it's no longer exported by the database module
-Kmer = Union[str, bytes]
+import numpy as np
+import pandas as pd
+import pytest
+
+# Import the consolidated class
+from strainr.database import StrainKmerDatabase
 
 # --- Helper Functions & Fixtures (adapted from previous test_kmer_database.py) ---
 # Define Kmer type alias locally as it's no longer exported by the database module

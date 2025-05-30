@@ -10,7 +10,7 @@ __version__ = "0.1.0"
 
 # Core classes and functions for easier access
 from .analyze import ClassificationAnalyzer
-from .database import StrainKmerDatabase # Updated to consolidated class name
+from .database import StrainKmerDatabase  # Updated to consolidated class name
 from .output import AbundanceCalculator
 from .parameter_config import process_arguments
 from .running import main

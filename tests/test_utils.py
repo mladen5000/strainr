@@ -3,25 +3,26 @@ Pytest unit tests for utility functions in strainr.utils.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-import pathlib
-import pickle
 import gzip
 import io
-from typing import List, Dict, Union, Tuple  # TextIO for type hint
-from unittest.mock import patch, MagicMock, mock_open
+import pathlib
+import pickle
+from typing import Dict, List, Tuple, Union  # TextIO for type hint
+from unittest.mock import MagicMock, mock_open, patch
 
+import numpy as np
+import pandas as pd
+import pytest
 from Bio.Seq import Seq
 
 # Assuming strainr.* is in PYTHONPATH or tests are run from a suitable root
 from strainr.utils import (
-    open_file_transparently,
     get_canonical_kmer,
+    open_file_transparently,
     pickle_intermediate_results,
     save_classification_results_to_dataframe,
 )
+
 # Assuming these types might be used in dummy data for pickle_intermediate_results
 # from strainr.genomic_types import ReadId, CountVector, StrainName, StrainIndex
 

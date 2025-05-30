@@ -3,18 +3,16 @@ Pytest unit tests for the StrainKmerDatabase class from strainr.database.
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 import pathlib
 
-from typing import List, Dict, Union, Any, Optional
-from unittest.mock import patch, MagicMock
+# import pickle # Pickle is no longer used directly for db files
+from typing import List, Optional, Union
+from unittest.mock import MagicMock, patch
 
-from src.strainr.database import StrainKmerDatabase
-# KmerCountDict and CountVector are not directly used by the new class,
-# but tests might use them for constructing expected values if they were part of old interface.
-# For now, keeping them if tests rely on them for structure, but the class itself uses np.ndarray.
+import numpy as np
+import pandas as pd
+import pytest
+from strainr.database import StrainKmerDatabase
 
 # --- Helper Functions & Fixtures ---
 
@@ -220,6 +218,9 @@ def test_db_init_empty_dataframe_value_error(
         StrainKmerDatabase(
             parquet_db_file_db, expected_kmer_length=5
         )  # Use updated fixture
+        StrainKmerDatabase(
+            parquet_db_file_db, expected_kmer_length=5
+        )  # Use updated fixture
 
 
 @pytest.mark.parametrize("parquet_db_file_db", [{"no_kmers_df": True}], indirect=True)
@@ -227,6 +228,9 @@ def test_db_init_dataframe_no_kmers_error(
     parquet_db_file_db: pathlib.Path,
 ):  # Updated fixture name
     with pytest.raises(ValueError, match="has no k-mers (empty index)"):
+        StrainKmerDatabase(
+            parquet_db_file_db, expected_kmer_length=5
+        )  # Use updated fixture
         StrainKmerDatabase(
             parquet_db_file_db, expected_kmer_length=5
         )  # Use updated fixture
@@ -265,12 +269,18 @@ def test_db_init_inconsistent_kmer_lengths_error(
     [
         {"kmer_data": [12345], "kmer_type": "int_special"}
     ],  # kmer_data is now just an int, added kmer_type for clarity
+    [
+        {"kmer_data": [12345], "kmer_type": "int_special"}
+    ],  # kmer_data is now just an int, added kmer_type for clarity
     indirect=True,
 )
 def test_db_init_unsupported_kmer_type_in_index_error(
     parquet_db_file_db: pathlib.Path, default_kmer_length_db: int
 ):
     with pytest.raises(
+        TypeError,
+        match=r"Unsupported k-mer type in DataFrame index: <class 'numpy.int64'>. Expected str or bytes.",
+    ):  # Made regex more specific to match the actual error message
         TypeError,
         match=r"Unsupported k-mer type in DataFrame index: <class 'numpy.int64'>. Expected str or bytes.",
     ):  # Made regex more specific to match the actual error message
@@ -310,6 +320,9 @@ def test_db_init_non_numeric_data_in_df_error(
 def test_db_get_strain_counts_for_kmer_found_and_not_found(  # Renamed
     parquet_db_file_db: pathlib.Path, strain_names_fixture_db: List[str]
 ):  # Updated fixture name
+    db = StrainKmerDatabase(
+        parquet_db_file_db, expected_kmer_length=5
+    )  # Use updated fixture
     db = StrainKmerDatabase(
         parquet_db_file_db, expected_kmer_length=5
     )  # Use updated fixture

@@ -3,6 +3,7 @@ K-mer database management for strain classification.
 """
 
 from pathlib import Path
+import pathlib
 from typing import Dict, List, Optional, Union, Any  # Tuple removed
 
 import numpy as np

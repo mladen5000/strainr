@@ -20,19 +20,26 @@ from unittest.mock import patch, MagicMock, mock_open, call
 
 # Third-party imports
 import numpy as np
+import pathlib
+from typing import Dict, List  # Added Optional
+from unittest.mock import MagicMock, mock_open, patch  # Added mock_open
+
 import pandas as pd
 from Bio import SeqIO
+import pytest
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # Functions and types to test
 from strainr.binning import (
-    generate_table,
-    get_top_strain_names,
+    FinalAssignmentsType,
+)  # Assuming this is defined in binning.py or imported there
+from strainr.binning import (
     _extract_reads_for_strain,
     create_binned_fastq_files,
+    generate_table,
+    get_top_strain_names,
     run_binning_pipeline,
-    FinalAssignmentsType,  # Assuming this is defined in binning.py or imported there
 )
 
 # --- Fixtures ---
@@ -115,6 +122,10 @@ def test_generate_table_empty_strain_names(
         match="all_strain_names is empty, but final_assignments contains integer .* assignments.",
     ):
         generate_table(simple_final_assignments, [])
+    df = generate_table(simple_final_assignments, [])
+    df = pd.Series(df, index=[])
+    assert df.shape == (len(simple_final_assignments), 0)  # No columns
+    assert sorted(list(df.index)) == sorted(list(simple_final_assignments.keys()))
 
 
 def test_generate_table_all_unassigned(
