@@ -7,16 +7,12 @@ classifies them against a k-mer database, resolves ambiguous assignments,
 calculates strain abundances, and outputs the results.
 """
 
-import argparse
 import gzip
 import logging
-import multiprocessing as mp
 import pathlib
-import sys
 from collections import Counter
-from typing import Callable, Dict, Generator, List, Optional, Set, TextIO, Tuple, Union
+from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
 
-import numpy as np
 import pandas as pd
 
 try:
@@ -34,9 +30,8 @@ except ImportError as e:
     ) from e
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from strainr.analyze import ClassificationAnalyzer
-from strainr.genomic_types import CountVector, ReadId, StrainIndex
-from strainr.database import StrainKmerDatabase # Updated import
+from .genomic_types import CountVector, ReadId, StrainIndex # Changed to relative import
+
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]

@@ -6,11 +6,11 @@ Output formatting and abundance calculation functionality.
 """
 
 from collections import Counter
-from typing import (
+from typing import (  # Any for potential complex dicts, though striving for specifics
     Dict,
-    Union,
     List,
-)  # Any for potential complex dicts, though striving for specifics
+    Union,
+)
 
 # Assuming these types are available from a central genomic_types module
 # from strainr.genomic_types import ReadId, StrainIndex

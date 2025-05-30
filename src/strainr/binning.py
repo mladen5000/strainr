@@ -1,29 +1,26 @@
 # Standard library imports
+import gzip  # For writing gzipped example files
 import multiprocessing as mp
 import pathlib
-from typing import (
-    List,
-    Dict,
-    Set,
-    Tuple,
-    Union,
-    Optional,  # Added Any
-)
-import gzip  # For writing gzipped example files
 import traceback  # For more detailed error info in main example
-# Removed redundant typing import
+from typing import Optional  # Added Any
+from typing import Dict, List, Set, Tuple, Union
 
 # Third-party imports
 import numpy as np  # Added missing import
 import pandas as pd
 from Bio import SeqIO
 
-# Local application/library specific imports
-from .utils import open_file_transparently # Changed to relative import
-from .genomic_types import ( # Changed to relative import
-    ReadId,
+from .genomic_types import (  # Changed to relative import; Import FinalAssignmentsType
     FinalAssignmentsType,
-)  # Import FinalAssignmentsType
+    ReadId,
+)
+
+# Local application/library specific imports
+from .utils import open_file_transparently  # Changed to relative import
+
+# Removed redundant typing import
+
 
 # Type alias FinalAssignmentsType is now imported from genomic_types
 

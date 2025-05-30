@@ -4,13 +4,8 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
-from typing import (
-    Dict,  # Removed Any, Optional. functools is not used.
-    List,
-    TextIO,
-    Tuple,
-    Union,
-)
+from typing import Dict  # Removed Any, Optional. functools is not used.
+from typing import List, TextIO, Tuple, Union
 
 import numpy as np  # For type hinting np.ndarray
 import pandas as pd

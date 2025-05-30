@@ -2,11 +2,11 @@
 Sequence handling and k-mer extraction functionality.
 """
 
+import pathlib
 from dataclasses import dataclass, field
 from typing import List, Set
 
 import mmh3
-import pathlib
 
 # Define allowed DNA bytes at the module level for clarity and reuse
 VALID_DNA_BYTES: frozenset[int] = frozenset(b"ACGTN")
