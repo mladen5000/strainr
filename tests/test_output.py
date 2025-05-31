@@ -125,7 +125,7 @@ def test_convert_assignments_typical(
     assert result == expected
 
 
-def test_convert_assignments_custom_unassigned_marker(
+def test_convert_assignments_typical(
     calculator_fixture: AbundanceCalculator, unassigned_marker_fixture: str
 ):
     read_assignments: Dict[Union[str, int], Union[str, int]] = {
@@ -154,6 +154,7 @@ def test_convert_assignments_custom_unassigned_marker(
     expected_correct = {
         "read1": calculator_fixture.strain_names[0],  # StrainA
         "read4": unassigned_marker_fixture,
+        "12345": "StrainA",
     }
     result_correct = calculator_fixture.convert_assignments_to_strain_names(
         read_assignments, unassigned_marker=unassigned_marker_fixture
@@ -165,6 +166,19 @@ def test_convert_assignments_default_unassigned_marker_na(
     calculator_fixture: AbundanceCalculator,
 ):
     # Default unassigned_marker in the method is "NA"
+    with pytest.raises(
+        ValueError,
+        match=f"StrainIndex 99 for ReadId 'read_invalid_idx' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\].",
+    ):
+        calculator_fixture.convert_assignments_to_strain_names({"read_invalid_idx": 99})
+
+    with pytest.raises(
+        ValueError,
+        match=f"String assignment 'UnknownStrainXYZ' for ReadId 'read_unknown_str' is not a recognized strain name or the unassigned_marker \\('NA'\\).",
+    ):
+        calculator_fixture.convert_assignments_to_strain_names({
+            "read_unknown_str": "UnknownStrainXYZ"
+        })
     with pytest.raises(
         ValueError,
         match=f"StrainIndex 99 for ReadId 'read_invalid_idx' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\].",
@@ -205,8 +219,56 @@ def test_calculate_raw_abundances_typical(
         "r1": "StrainA",
         "r2": "StrainB",
         "r3": "StrainA",
+        "r2": "StrainB",
+        "r3": "StrainA",
         "r4": unassigned_marker_fixture,
     }
+    raw_counts = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=True,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts == Counter({"StrainA": 2, "StrainB": 1})
+
+    raw_counts_with_unassigned = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=False,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts_with_unassigned == Counter({
+        "StrainA": 2,
+        "StrainB": 1,
+        unassigned_marker_fixture: 1,
+    })
+
+
+def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
+    assert calculator_fixture.calculate_raw_abundances({}) == Counter()
+
+    # --- Test calculate_relative_abundances ---
+    raw_counts = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=True,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts == Counter({"StrainA": 2, "StrainB": 1})
+
+    raw_counts_with_unassigned = calculator_fixture.calculate_raw_abundances(
+        named_assignments,
+        exclude_unassigned=False,
+        unassigned_marker=unassigned_marker_fixture,
+    )
+    assert raw_counts_with_unassigned == Counter({
+        "StrainA": 2,
+        "StrainB": 1,
+        unassigned_marker_fixture: 1,
+    })
+
+
+def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
+    assert calculator_fixture.calculate_raw_abundances({}) == Counter()
+
+    # --- Test calculate_relative_abundances ---
     raw_counts = calculator_fixture.calculate_raw_abundances(
         named_assignments,
         exclude_unassigned=True,
@@ -242,6 +304,12 @@ def test_calculate_relative_abundances_typical(
 
 
 def test_calculate_relative_abundances_empty(calculator_fixture: AbundanceCalculator):
+    raw_counts = Counter({"StrainA": 60, "StrainB": 30, "StrainC": 10})  # Total 100
+    rel_ab = calculator_fixture.calculate_relative_abundances(raw_counts)
+    assert rel_ab == {"StrainA": 0.6, "StrainB": 0.3, "StrainC": 0.1}
+
+
+def test_calculate_relative_abundances_empty(calculator_fixture: AbundanceCalculator):
     assert calculator_fixture.calculate_relative_abundances(Counter()) == {}
 
 
@@ -257,6 +325,7 @@ def test_apply_threshold_and_format_basic(
         rel_ab, sort_by_abundance=True
     )
     assert formatted == {"StrainA": 0.7, "StrainB": 0.2}  # Sorted by abundance
+    assert formatted == {"StrainA": 0.7, "StrainB": 0.2}  # Sorted by abundance
 
 
 def test_apply_threshold_and_format_all_below_threshold(
@@ -264,11 +333,27 @@ def test_apply_threshold_and_format_all_below_threshold(
 ):
     rel_ab = {"StrainA": 0.005, "StrainB": 0.001}
     assert calculator_fixture.apply_threshold_and_format(rel_ab) == {}
+    rel_ab = {"StrainA": 0.005, "StrainB": 0.001}
+    assert calculator_fixture.apply_threshold_and_format(rel_ab) == {}
 
 
-def test_apply_threshold_and_format_sort_by_name(
-    calculator_fixture: AbundanceCalculator,
-):
+def test_apply_threshold_and_format_sort_by_name():
+    rel_ab = {"StrainC": 0.3, "StrainA": 0.5, "StrainB": 0.2}
+    formatted = calculator_fixture.apply_threshold_and_format(
+        rel_ab, sort_by_abundance=False
+    )
+    # Expected order: StrainA, StrainB, StrainC (alphabetical)
+    assert list(formatted.keys()) == ["StrainA", "StrainB", "StrainC"]
+
+
+# --- Test generate_report_string ---
+
+
+def test_generate_report_string_empty(calculator_fixture: AbundanceCalculator):
+    assert (
+        calculator_fixture.generate_report_string({})
+        == "No strains found above the abundance threshold."
+    )
     rel_ab = {"StrainC": 0.3, "StrainA": 0.5, "StrainB": 0.2}
     formatted = calculator_fixture.apply_threshold_and_format(
         rel_ab, sort_by_abundance=False
@@ -295,6 +380,9 @@ def test_generate_report_string_basic_formatting(
         "StrainA: 75.13%",
         "StrainC: 10.00%",
         "StrainB: 14.87%",
+        "StrainA: 75.13%",
+        "StrainC: 10.00%",
+        "StrainB: 14.87%",
     ]
     expected_report = "\n".join(expected_report_lines)
     assert (
@@ -304,6 +392,17 @@ def test_generate_report_string_basic_formatting(
 
 def test_generate_report_string_single_strain(calculator_fixture: AbundanceCalculator):
     final_abundances = {"StrainX": 1.0}
+    expected_report = "StrainX: 100.00%"
+    assert (
+        calculator_fixture.generate_report_string(final_abundances) == expected_report
+    )
+
+
+def test_generate_report_string_zero_abundance(
+    calculator_fixture: AbundanceCalculator,
+):
+    final_abundances = {"StrainA": 0.0}
+    expected_report = "StrainA: 0.00%"
     expected_report = "StrainX: 100.00%"
     assert (
         calculator_fixture.generate_report_string(final_abundances) == expected_report

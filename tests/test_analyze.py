@@ -11,6 +11,10 @@ import numpy as np
 import pytest
 from strainr.analyze import ClassificationAnalyzer, ReadHitResults
 from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
+import numpy as np
+import pytest
+from strainr.analyze import ClassificationAnalyzer, ReadHitResults
+from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
 
 # --- Fixtures ---
 
@@ -219,8 +223,6 @@ def test_resolve_clear_hits_to_indices_invalid_input(
 
 
 # --- Test calculate_strain_prior_from_assignments ---
-
-
 def test_calculate_strain_prior_from_assignments_typical(
     analyzer_fixture: ClassificationAnalyzer,
 ):
@@ -250,9 +252,9 @@ def test_calculate_strain_prior_from_assignments_invalid_input(
 def test_convert_prior_counts_to_probability_vector_basic(
     analyzer_fixture: ClassificationAnalyzer, strain_names_fixture: List[str]
 ):
-    counts = Counter({0: 6, 1: 3, 2: 1})  # Total 10
+    counts = Counter({0: 6, 1: 3, 2: 1})
     probs = analyzer_fixture.convert_prior_counts_to_probability_vector(counts)
-    expected = np.array([0.6, 0.3, 0.1, 1e-20])  # StrainD gets epsilon
+    expected = np.array([0.6, 0.3, 0.1, 1e-20])
     np.testing.assert_array_almost_equal(probs, expected)
 
 

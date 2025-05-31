@@ -4,6 +4,7 @@ import argparse
 import gzip
 import logging
 import pathlib
+
 # import pickle # Will be removed if pickle_db function is removed or no longer uses it.
 import sys
 import csv
@@ -505,17 +506,21 @@ def pickle_db(database, fout):
     return
 
 
-def save_dataframe_db(df, filename_prefix: str): # Renamed function, removed method argument
+def save_dataframe_db(
+    df, filename_prefix: str
+):  # Renamed function, removed method argument
     """Saves the DataFrame to a Parquet file."""
     # outfile = filename_prefix + ".db.parquet" # Assuming filename_prefix is args.out
     # The global `args` is used here, which is not ideal but follows existing pattern.
-    outfile = args.out + ".db.parquet" 
+    outfile = args.out + ".db.parquet"
     logger.info(f"Saving DataFrame database to (Parquet format): {outfile}")
     try:
         df.to_parquet(outfile, index=True)
         logger.info("DataFrame database saved successfully to Parquet.")
     except Exception as e:
-        logger.error(f"Failed to save DataFrame database to {outfile} (Parquet format): {e}")
+        logger.error(
+            f"Failed to save DataFrame database to {outfile} (Parquet format): {e}"
+        )
         raise
     return
 
@@ -641,10 +646,12 @@ def main(args: argparse.ArgumentParser):
 
     logger.debug(f"{len(database)} kmers in database")
     logger.debug(f"{sys.getsizeof(database) // 1e6} MB")
-    logger.debug(f"Kmer-building complete, saving db as {args.out + '.db.parquet'}.") # Updated log
+    logger.debug(
+        f"Kmer-building complete, saving db as {args.out + '.db.parquet'}."
+    )  # Updated log
 
     ## 3. Save the results
-    save_dataframe_db(df, args.out) # Call renamed function
+    save_dataframe_db(df, args.out)  # Call renamed function
 
     return
 

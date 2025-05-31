@@ -121,7 +121,9 @@ class StrainDatabase:
 getattr(StrainDatabase, "__slots__")
 
 
-elenta_path = pathlib.Path("~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet") # Updated extension
+elenta_path = pathlib.Path(
+    "~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet"
+)  # Updated extension
 db = StrainDatabase(elenta_path)
 
 for k, v in StrainDatabase.__dict__.items():
@@ -170,7 +172,9 @@ def hash_kmer(DNA_read: Seq):
 def main() -> None:
     myseq2 = SimpleSeq(name="s1", seq="ATCGATCGATCG")
     NDArray[Shape["*"], UInt8]
-    elenta = StrainDatabase("~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet") # Updated extension
+    elenta = StrainDatabase(
+        "~/Strainr_Extra/databases_idk/elenta_10genomes.db.parquet"
+    )  # Updated extension
     get_kmers(myseq2, elenta)
 
 
