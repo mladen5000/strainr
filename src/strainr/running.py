@@ -8,7 +8,6 @@ from .database import StrainKmerDatabase  # Updated to consolidated class name
 
 # Assuming process_arguments is correctly importable
 from .parameter_config import process_arguments  # Changed to specific import
-from .parameter_config import process_arguments  # Changed to specific import
 
 
 class SequenceFile(pathlib.Path):

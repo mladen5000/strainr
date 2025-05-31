@@ -34,7 +34,7 @@ from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 # StrainR module imports
 from strainr.utils import open_file_transparently  # Corrected import
-from strainr.database import StrainKmerDatabase # Corrected import
+from strainr.database import StrainKmerDatabase  # Corrected import
 from strainr.analyze import ClassificationAnalyzer
 from strainr.genomic_types import ReadId, CountVector, StrainIndex, ReadHitResults
 from typing import Callable  # Added Callable, Set
@@ -401,16 +401,14 @@ class PangenomeAnalysisWorkflow:
             if strain_name not in hit_counts:
                 continue  # Skip if a name (e.g. NA) had no hits at all
 
-            report_data.append(
-                {
-                    "strain_name": strain_name,
-                    "sample_hits": hit_counts.get(strain_name, 0),
-                    "sample_relab": sample_relab.get(strain_name, 0.0),
-                    "intra_relab": intra_relab.get(strain_name, 0.0)
-                    if strain_name != self.UNASSIGNED_READ_MARKER
-                    else 0.0,
-                }
-            )
+            report_data.append({
+                "strain_name": strain_name,
+                "sample_hits": hit_counts.get(strain_name, 0),
+                "sample_relab": sample_relab.get(strain_name, 0.0),
+                "intra_relab": intra_relab.get(strain_name, 0.0)
+                if strain_name != self.UNASSIGNED_READ_MARKER
+                else 0.0,
+            })
 
         abundance_df = pd.DataFrame(report_data).set_index("strain_name")
         # Sort by sample_hits, ensuring NA is last if present

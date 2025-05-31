@@ -5,7 +5,7 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 
 from collections import Counter
 from typing import Dict, List, Union
-from unittest.mock import MagicMock, call, patch  # Added call
+from unittest.mock import MagicMock, patch  # Added call
 
 import numpy as np
 import pytest
@@ -219,8 +219,6 @@ def test_resolve_clear_hits_to_indices_invalid_input(
 
 
 # --- Test calculate_strain_prior_from_assignments ---
-
-
 def test_calculate_strain_prior_from_assignments_typical(
     analyzer_fixture: ClassificationAnalyzer,
 ):
@@ -343,8 +341,6 @@ def test_resolve_single_ambiguous_read_random_mode(
 
 @patch("src.strainr.analyze.np.random.default_rng")
 def test_resolve_single_ambiguous_read_multinomial_mode(
-    mock_default_rng: MagicMock,
-    strain_names_fixture: List[str],
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
 ):

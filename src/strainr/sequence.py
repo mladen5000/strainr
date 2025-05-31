@@ -2,7 +2,6 @@
 Sequence handling and k-mer extraction functionality.
 """
 
-import pathlib
 from dataclasses import dataclass, field
 from typing import List, Set
 
@@ -115,7 +114,7 @@ class GenomicSequence:
             # This ensures we return an int, though it's an extra hash.
             return hash(hash_result)
         # Otherwise, assume it's already an int (or int-like, e.g. np.int32)
-        return int(hash_result) # Cast to ensure it's a Python int
+        return int(hash_result)  # Cast to ensure it's a Python int
 
     def __len__(self) -> int:
         """Return the length of the sequence."""

@@ -5,14 +5,11 @@ and 'src' is a subdirectory.
 """
 
 import pytest
-from typing import List, Set  # Added Set for type hinting if needed
 
-import mmh3  # Ensure mmh3 is imported for direct use if needed in tests, though not strictly for this fix
 
 from src.strainr.sequence import (
     GenomicSequence,
     extract_kmers_from_sequence,
-    VALID_DNA_BYTES,
 )
 
 # --- Fixtures ---

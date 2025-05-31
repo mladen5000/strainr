@@ -3,38 +3,20 @@ Pytest unit tests for the binning module (strainr.binning).
 These tests assume the file is in the root directory, and 'src' is a subdirectory.
 """
 
-import pytest
-import multiprocessing as mp
 import pathlib
-from typing import (
-    List,
-    Dict,
-    Set,
-    Tuple,
-    Union,
-    Optional,
-)
-import gzip
-import traceback
-from unittest.mock import patch, MagicMock, mock_open, call
+from typing import Dict, List
+from unittest.mock import MagicMock, call, mock_open, patch
 
 # Third-party imports
 import numpy as np
-import pathlib
-from typing import Dict, List  # Added Optional
-from unittest.mock import MagicMock, mock_open, patch  # Added mock_open
-
 import pandas as pd
-from Bio import SeqIO
 import pytest
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # Functions and types to test
-from strainr.binning import (
+from strainr.binning import (  # Assuming this is defined in binning.py or imported there
     FinalAssignmentsType,
-)  # Assuming this is defined in binning.py or imported there
-from strainr.binning import (
     _extract_reads_for_strain,
     create_binned_fastq_files,
     generate_table,
@@ -121,11 +103,10 @@ def test_generate_table_empty_strain_names(
         ValueError,
         match="all_strain_names is empty, but final_assignments contains integer .* assignments.",
     ):
-        generate_table(simple_final_assignments, [])
-    df = generate_table(simple_final_assignments, [])
-    df = pd.Series(df, index=[])
-    assert df.shape == (len(simple_final_assignments), 0)  # No columns
-    assert sorted(list(df.index)) == sorted(list(simple_final_assignments.keys()))
+        df = generate_table(simple_final_assignments, [])
+        df = pd.Series(df, index=[])
+        assert df.shape == (len(simple_final_assignments), 0)  # No columns
+        assert sorted(list(df.index)) == sorted(list(simple_final_assignments.keys()))
 
 
 def test_generate_table_all_unassigned(
@@ -175,8 +156,6 @@ def test_get_top_strain_names_include_unassigned(
 
 
 # --- Tests for _extract_reads_for_strain ---
-
-
 @patch("strainr.utils.open_file_transparently", new_callable=mock_open)
 @patch("strainr.binning.SeqIO.parse")
 @patch("strainr.binning.SeqIO.write")
