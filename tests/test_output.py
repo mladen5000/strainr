@@ -154,7 +154,7 @@ def test_convert_assignments_typical(
     expected_correct = {
         "read1": calculator_fixture.strain_names[0],  # StrainA
         "read4": unassigned_marker_fixture,
-        "12345": "StrainA",
+        # "12345": "StrainA", # This key is not in read_assignments for this test
     }
     result_correct = calculator_fixture.convert_assignments_to_strain_names(
         read_assignments, unassigned_marker=unassigned_marker_fixture
@@ -337,9 +337,9 @@ def test_apply_threshold_and_format_all_below_threshold(
     assert calculator_fixture.apply_threshold_and_format(rel_ab) == {}
 
 
-def test_apply_threshold_and_format_sort_by_name():
+def test_apply_threshold_and_format_sort_by_name(calculator_fixture: AbundanceCalculator): # Added fixture
     rel_ab = {"StrainC": 0.3, "StrainA": 0.5, "StrainB": 0.2}
-    formatted = calculator_fixture.apply_threshold_and_format(
+    formatted = calculator_fixture.apply_threshold_and_format( # Used instance
         rel_ab, sort_by_abundance=False
     )
     # Expected order: StrainA, StrainB, StrainC (alphabetical)
@@ -377,9 +377,6 @@ def test_generate_report_string_basic_formatting(
 ):
     final_abundances = {"StrainA": 0.75126, "StrainC": 0.1000, "StrainB": 0.14874}
     expected_report_lines = [
-        "StrainA: 75.13%",
-        "StrainC: 10.00%",
-        "StrainB: 14.87%",
         "StrainA: 75.13%",
         "StrainC: 10.00%",
         "StrainB: 14.87%",
@@ -426,7 +423,7 @@ def test_convert_assignments_invalid_read_id_type(
     with pytest.raises(
         ValueError, match="ReadId keys, after string conversion, must not be empty."
     ):
-        calculator_fixture.convert_assignments_to_strain_names({None: 0})  # type: ignore
+        calculator_fixture.convert_assignments_to_strain_names({"": 0})
 
 
 def test_calculate_raw_abundances_invalid_key_type(

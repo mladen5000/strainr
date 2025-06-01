@@ -10,6 +10,7 @@ Different disambiguation strategies are supported.
 """
 
 import functools
+import logging # Added logging
 import multiprocessing as mp
 from collections import Counter
 from typing import Dict, List, Set, Tuple, Union  # Added Set
@@ -18,6 +19,7 @@ import numpy as np
 
 from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
 
+logger = logging.getLogger(__name__) # Define logger at module level
 
 class ClassificationAnalyzer:
     """
@@ -177,11 +179,11 @@ class ClassificationAnalyzer:
                 else:
                     ambiguous_hits_dict[read_id] = strain_count_vector
 
-        print(
-            f"Hit categorization summary:\n"
-            f"  Clear assignments: {len(clear_hits_dict)}\n"
-            f"  Ambiguous assignments: {len(ambiguous_hits_dict)}\n"
-            f"  No hits: {len(no_hit_read_ids)}"
+        logger.info(
+            f"Hit categorization summary: "
+            f"Clear assignments: {len(clear_hits_dict)}, "
+            f"Ambiguous assignments: {len(ambiguous_hits_dict)}, "
+            f"No hits: {len(no_hit_read_ids)}"
         )
         return clear_hits_dict, ambiguous_hits_dict, no_hit_read_ids
 
@@ -330,8 +332,8 @@ class ClassificationAnalyzer:
             # For internal use with convert_prior_counts_to_probability_vector, this might need adjustment
             # or this check relaxed if the epsilon strategy means sum isn't always 1.
             # For now, keeping it relatively strict.
-            print(
-                f"Warning: prior_probabilities sum ({np.sum(prior_probabilities)}) is not close to 1.0. Normalizing for choice functions."
+            logger.warning(
+                f"prior_probabilities sum ({np.sum(prior_probabilities)}) is not close to 1.0. This might affect choice functions if not handled."
             )
             # Re-normalize if used for p-values in choice functions that require sum=1
             # However, likelihood_scores * prior_probabilities does not require priors to sum to 1.
@@ -346,8 +348,8 @@ class ClassificationAnalyzer:
             # This case should ideally be filtered out before calling this method.
             # If it occurs, randomly assign to any strain based on priors if they are informative,
             # or completely random if priors are uninformative (e.g. uniform).
-            print(
-                "Warning: _resolve_single_ambiguous_read called with zero hit vector. Assigning randomly based on priors."
+            logger.warning(
+                "_resolve_single_ambiguous_read called with zero hit vector. Assigning randomly based on priors."
             )
             return int(
                 self.random_generator.choice(
@@ -480,12 +482,14 @@ class ClassificationAnalyzer:
                     resolve_func_with_priors, hit_vectors_to_process
                 )
         except Exception as e:  # Catch potential mp.Pool errors
+            # Consider more specific exception handling if possible
+            logger.error(f"Multiprocessing pool error during ambiguous hit resolution: {e}")
             raise RuntimeError(
                 f"Multiprocessing pool error during ambiguous hit resolution: {e}"
             ) from e
 
         resolved_assignments = dict(zip(read_ids_in_order, resolved_indices_list))
-        print(f"Resolved {len(resolved_assignments)} ambiguous assignments.")
+        logger.info(f"Resolved {len(resolved_assignments)} ambiguous assignments.")
         return resolved_assignments
 
     def combine_assignments(
@@ -542,64 +546,10 @@ class ClassificationAnalyzer:
         for read_id in no_hit_read_ids:
             final_assignments[read_id] = unassigned_marker
 
-        print(
-            f"Final combined assignment summary:\n"
-            f"  Total reads processed: {len(final_assignments)}\n"
-            f"  Assigned (clear + resolved): {len(clear_assignments) + len(resolved_ambiguous_assignments)}\n"
-            f"  Marked '{unassigned_marker}': {len(no_hit_read_ids)}"  # This count is only for no_hit_read_ids
+        logger.info(
+            f"Final combined assignment summary: "
+            f"Total reads processed: {len(final_assignments)}, "
+            f"Assigned (clear + resolved): {len(clear_assignments) + len(resolved_ambiguous_assignments)}, "
+            f"Marked '{unassigned_marker}': {len(no_hit_read_ids)}"
         )
         return final_assignments
-
-
-# analyze_results_streaming method remains commented out as per original file.
-# ... (rest of the commented out code for analyze_results_streaming)
-# (Code for analyze_results_streaming is omitted here for brevity but would be included in the actual file overwrite)
-# Alternative streaming analysis method (commented out as requested)
-# def analyze_results_streaming(
-#     self,
-#     classification_results: Generator[Tuple[str, CountVector], None, None]
-# ) -> Generator[Dict[str, Union[int, str]], None, None]:
-#     """
-#     Stream-based analysis that processes results as they arrive.
-#
-#     This alternative approach processes classification results incrementally
-#     without storing all results in memory, suitable for very large datasets.
-#
-#     Args:
-#         classification_results: Generator of classification results
-#
-#     Yields:
-#         Dictionaries containing processed assignments
-#     """
-#     clear_hits = {}
-#     ambiguous_hits = {}
-#     no_hits = []
-#     batch_size = 10000 # Example batch size
-#
-#     # Placeholder for _process_batch which would need to be defined
-#     # and would likely use methods like resolve_clear_hits_to_indices,
-#     # calculate_strain_prior_from_assignments, etc., potentially on batches.
-#     # def _process_batch(self, clear, ambig, no):
-#     #     # ... process this batch ...
-#     #     # This would involve prior calculation, disambiguation for the batch,
-#     #     # and then combining. Prior might need to be global or updated.
-#     #     # This is non-trivial to implement correctly for streaming priors.
-#     #     return combined_batch_assignments
-#
-#     for i, (read_id, strain_counts) in enumerate(classification_results):
-#         if np.all(strain_counts == 0):
-#             no_hits.append(read_id)
-#         elif len(np.argwhere(strain_counts == np.max(strain_counts))) == 1:
-#             clear_hits[read_id] = strain_counts
-#         else:
-#             ambiguous_hits[read_id] = strain_counts
-#
-#         # Process in batches
-#         if (i + 1) % batch_size == 0:
-#             # yield self._process_batch(clear_hits, ambiguous_hits, no_hits) # Call to undefined method
-#             clear_hits, ambiguous_hits, no_hits = {}, {}, [] # Reset for next batch
-#
-#     # Process final batch
-#     if clear_hits or ambiguous_hits or no_hits:
-#         # yield self._process_batch(clear_hits, ambiguous_hits, no_hits) # Call to undefined method
-#         pass
