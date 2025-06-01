@@ -241,19 +241,6 @@ def _extract_reads_for_strain(
     ):
         raise TypeError("All path arguments must be pathlib.Path objects.")
 
-    # Generate a safe filename from strain_name
-    safe_strain_filename = (
-        strain_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    )
-
-    fastq_files_to_process: List[Tuple[pathlib.Path, str]] = []
-    if forward_fastq_path.is_file():
-        fastq_files_to_process.append((forward_fastq_path, "R1"))
-    else:
-        print(
-            f"Warning: Forward FASTQ file not found or is not a file: {forward_fastq_path}. Skipping R1 for strain {strain_name}."
-        )
-
     # The minimal docstring and the first parameter/path validation block have been removed as requested.
     # The more complete docstring and validation block below are retained.
 

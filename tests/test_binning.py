@@ -104,10 +104,6 @@ def test_generate_table_empty_strain_names(
         match="all_strain_names is empty, but final_assignments contains integer .* assignments.",
     ):
         df = generate_table(simple_final_assignments, [])
-    df = pd.Series(df, index=[])
-        df = pd.Series(df, index=[])
-        assert df.shape == (len(simple_final_assignments), 0)  # No columns
-        assert sorted(list(df.index)) == sorted(list(simple_final_assignments.keys()))
 
 
 def test_generate_table_all_unassigned(
@@ -159,44 +155,46 @@ def test_get_top_strain_names_include_unassigned(
 # --- Tests for _extract_reads_for_strain ---
 
 
-@patch("strainr.utils.open_file_transparently", new_callable=mock_open)
+@patch("strainr.binning.open_file_transparently", new_callable=mock_open) # Patched where it's looked up
 @patch("strainr.binning.SeqIO.parse")
 @patch("strainr.binning.SeqIO.write")
-@patch("pathlib.Path.is_file")
+@patch("pathlib.Path.is_file") # Effectively mock_path_is_file, the first arg
 def test_extract_reads_for_strain_r1_only(
-    mock_seqio_write: MagicMock,
-    mock_seqio_parse: MagicMock,
-    mock_open_transp: MagicMock,
-    tmp_output_dir: pathlib.Path,
-    mock_fastq_paths: Dict[str, pathlib.Path],
+    mock_path_is_file: MagicMock,      # from @patch("pathlib.Path.is_file")
+    mock_seqio_write_actual: MagicMock,       # from @patch("strainr.binning.SeqIO.write")
+    mock_seqio_parse_actual: MagicMock,       # from @patch("strainr.binning.SeqIO.parse")
+    mock_open_transparently_actual: MagicMock, # from @patch("strainr.binning.open_file_transparently")
+    tmp_output_dir: pathlib.Path,      # Fixture
+    mock_fastq_paths: Dict[str, pathlib.Path], # Fixture
 ):
     r1_path = mock_fastq_paths["r1"]
-    with patch.object(
-        pathlib.Path, "is_file", return_value=True
-    ):  # Ensure is_file() passes for the dummy path
-        read_ids_for_strain = {"read_A1", "read_A2"}
-        all_seq_records = [
-            SeqRecord(Seq("ATGC"), id="read_A1"),
-            SeqRecord(Seq("CGTA"), id="read_B1"),
-            SeqRecord(Seq("TTTT"), id="read_A2"),
-        ]
-        mock_seqio_parse.return_value = iter(all_seq_records)
-        mock_seqio_write.return_value = 2
+    # mock_path_is_file is active due to the decorator
+    # Configure it if specific return values per call are needed, otherwise it's a MagicMock
+    mock_path_is_file.return_value = True # Default for any is_file call
 
-        with patch("builtins.open", new_callable=mock_open) as mock_builtin_write_open:
-            _extract_reads_for_strain(
-                "StrainA", read_ids_for_strain, r1_path, None, tmp_output_dir
-            )
+    read_ids_for_strain = {"read_A1", "read_A2"}
+    all_seq_records = [
+        SeqRecord(Seq("ATGC"), id="read_A1"),
+        SeqRecord(Seq("CGTA"), id="read_B1"),
+        SeqRecord(Seq("TTTT"), id="read_A2"),
+    ]
+    mock_seqio_parse_actual.return_value = iter(all_seq_records)
+    mock_seqio_write_actual.return_value = 2
 
-        mock_open_transp.assert_called_once_with(r1_path, mode="rt")
-        mock_builtin_write_open.assert_called_once_with(
-            tmp_output_dir / "bin.StrainA_R1.fastq", "w"
+    with patch("builtins.open", new_callable=mock_open) as mock_builtin_write_open:
+        _extract_reads_for_strain(
+            "StrainA", read_ids_for_strain, r1_path, None, tmp_output_dir
         )
-        mock_seqio_write.assert_called_once()
-        written_records = mock_seqio_write.call_args[0][0]
-        assert len(written_records) == 2
-        assert written_records[0].id == "read_A1"
-        assert written_records[1].id == "read_A2"
+
+    mock_open_transparently_actual.assert_called_once_with(r1_path, mode="rt")
+    mock_builtin_write_open.assert_called_once_with(
+        tmp_output_dir / "bin.StrainA_R1.fastq", "w"
+    )
+    mock_seqio_write_actual.assert_called_once()
+    written_records = mock_seqio_write_actual.call_args[0][0]
+    assert len(written_records) == 2
+    assert written_records[0].id == "read_A1"
+    assert written_records[1].id == "read_A2"
 
 
 # --- Tests for create_binned_fastq_files ---

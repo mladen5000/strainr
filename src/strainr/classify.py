@@ -37,12 +37,6 @@ from .genomic_types import (
     StrainIndex,
 )  # Changed to relative import
 
-from .genomic_types import (
-    CountVector,
-    ReadId,
-    StrainIndex,
-)  # Changed to relative import
-
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
@@ -446,19 +440,13 @@ class KmerClassificationWorkflow:
         """Initialize the workflow with validated arguments."""
         self.args = args
         self.database: Optional[StrainKmerDatabase] = None
-        self.database: Optional[StrainKmerDatabase] = None
-        self.database: Optional[StrainKmerDatabase] = None
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
 
     def _initialize_database(self) -> None:
         """Loads and initializes the StrainKmerDatabase."""
-        """Loads and initializes the StrainKmerDatabase."""
-        """Loads and initializes the StrainKmerDatabase."""
         self.logger.info(f"Loading k-mer database from: {self.args.db_path}")
         try:
-            self.database = StrainKmerDatabase(self.args.db_path)
-            self.database = StrainKmerDatabase(self.args.db_path)
             self.database = StrainKmerDatabase(self.args.db_path)
             self.logger.info(
                 f"Database loaded: {self.database.num_kmers} k-mers, "
@@ -830,76 +818,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-try:
-    count_matrix = kmer_strain_df.to_numpy(dtype=np.uint8)
-except ValueError as e:
-    raise TypeError(
-        f"Could not convert database values to count matrix (np.uint8). "
-        f"Ensure all values are numeric and within 0-255. Error: {e}"
-    ) from e
-
-self.kmer_lookup_dict.clear()
-skipped_kmers_count = 0
-
-for i, kmer_obj in enumerate(kmer_strain_df.index):
-    # Validate type and encode if needed
-    if kmer_type_is_str:
-        if not isinstance(kmer_obj, str):
-            print(
-                f"Warning: Inconsistent k-mer type at index {i}. Expected str, got {type(kmer_obj)}. Skipping."
-            )
-            skipped_kmers_count += 1
-            continue
-        kmer_bytes = None
-        try:
-            kmer_bytes = kmer_obj.encode("utf-8")
-        except UnicodeEncodeError as e:
-            print(
-                f"Warning: Failed to encode k-mer '{kmer_obj}' (index {i}) to UTF-8 bytes: {e}. Skipping."
-            )
-            skipped_kmers_count += 1
-            continue
-    else:
-        if not isinstance(kmer_obj, bytes):
-            print(
-                f"Warning: Inconsistent k-mer type at index {i}. Expected bytes, got {type(kmer_obj)}. Skipping."
-            )
-            skipped_kmers_count += 1
-            continue
-        kmer_bytes = kmer_obj
-
-    # Validate length
-    if len(kmer_bytes) != self.kmer_length:
-        print(
-            f"Warning: K-mer '{kmer_obj}' (index {i}) resulted in byte length {len(kmer_bytes)}, expected {self.kmer_length}. Skipping."
-        )
-        skipped_kmers_count += 1
-        continue
-
-    self.kmer_lookup_dict[kmer_bytes] = count_matrix[i]
-
-self.num_kmers = len(self.kmer_lookup_dict)
-
-if (
-    self.num_kmers == 0
-    and not kmer_strain_df.index.empty
-    and skipped_kmers_count == len(kmer_strain_df.index)
-):
-    raise ValueError(
-        f"No k-mers were successfully loaded into the database from {self.database_path} "
-        f"(all {skipped_kmers_count} k-mers from input were skipped). "
-        "This is likely due to encoding issues or consistent length mismatches. Check warnings."
-    )
-if skipped_kmers_count > 0:
-    print(
-        f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues."
-    )
-
-print(
-    f"Successfully loaded database: {self.num_strains} strains, "
-    f"{self.num_kmers} k-mers (k={self.kmer_length}). "
-    f"Skipped {skipped_kmers_count} k-mers during loading."
-    if skipped_kmers_count > 0
-    else ""
-)

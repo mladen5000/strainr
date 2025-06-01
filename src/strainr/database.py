@@ -42,17 +42,11 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         database_filepath: Union[str, pathlib.Path],
         expected_kmer_length: Optional[int] = None,
     ) -> None:
-    def __init__(
-        self,
-        database_path: Union[str, pathlib.Path],
-        expected_kmer_length: Optional[int] = None,
-    ) -> None:
         """
-        Initializes and loads the StrainKmerDatabase from a file.
         Initializes and loads the StrainKmerDatabase from a file.
 
         Args:
-            database_path: Path to the Parquet file containing the k-mer database.
+            database_filepath: Path to the Parquet file containing the k-mer database.
                                The DataFrame stored in Parquet should have k-mers (strings or bytes)
                                as its index and strain names (strings) as its columns.
                                Cell values should be numeric and convertible to `np.uint8`.
@@ -62,7 +56,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                                   enforced for all other k-mers.
 
         Raises:
-            FileNotFoundError: If the `database_path` does not exist or is not a file.
+            FileNotFoundError: If the `database_filepath` does not exist or is not a file.
             ValueError: If the database is empty, if k-mers have inconsistent lengths,
                         if `expected_kmer_length` is provided and does not match the k-mer
                         lengths in the file, or if other data validation checks fail.
@@ -74,15 +68,14 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                           or specific PyArrow errors.
         """
         self.database_path = (
-            Path(database_path).resolve().expanduser()
+            Path(database_filepath).resolve().expanduser()
         )  # Use resolve for absolute path
-        self.kmer_length = expected_kmer_length
+        # self.kmer_length will be set in _load_database or validated if provided
+        self.kmer_length: Optional[int] = expected_kmer_length
 
-        # Initialize attributes
-        self.kmer_length: int = 0
-        self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {}  # Explicit type
+        # These will be populated by _load_database
+        self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {}
         self.strain_names: List[str] = []
-        self.kmer_to_counts_map: KmerCountDict = {}  # Dict[bytes, CountVector]
         self.num_strains: int = 0
         self.num_kmers: int = 0
 
@@ -105,33 +98,24 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
     def _load_database(self, expected_kmer_length: Optional[int]) -> None:
         """
             Internal method to load data from the Parquet database file.
-        def _load_database(self, expected_kmer_length: Optional[int]) -> None:
-
-            Internal method to load data from the Parquet database file.
         """
         print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
+        if not self.database_path.is_file():
+            raise FileNotFoundError(f"Database file not found: {self.database_path}")
+
         try:
             kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_path)
-
-        except (IOError, ValueError, pd.errors.EmptyDataError) as e:
-            kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_path)
-        except (IOError, ValueError, pd.errors.EmptyDataError) as e:
+        except (IOError, ValueError, pd.errors.EmptyDataError) as e: # More specific pandas/IO errors
             raise RuntimeError(
                 f"Failed to read or process Parquet database from {self.database_path}: {e}"
             ) from e
-        except FileNotFoundError:
-            raise RuntimeError(
-                f"Database file {self.database_path} vanished after initial check."
-            ) from None
-        except Exception as e:
-            print(f"Database file {self.database_path} vanished after initial check.")
-        except Exception as e:
+        except Exception as e: # Catch other potential pyarrow/pandas load errors
             raise RuntimeError(
                 f"An unexpected error occurred while reading Parquet file {self.database_path}: {e}"
             ) from e
 
-        if not isinstance(kmer_strain_df, pd.DataFrame):
-            raise RuntimeError(
+        if not isinstance(kmer_strain_df, pd.DataFrame): # Should be caught by parquet reader, but good check
+            raise TypeError(
                 f"Data loaded from {self.database_path} is not a pandas DataFrame (type: {type(kmer_strain_df)})."
             )
 
@@ -139,19 +123,8 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             raise ValueError(f"Loaded database is empty: {self.database_path}")
 
         self.strain_names = list(kmer_strain_df.columns.astype(str))
-
         self.num_strains = len(self.strain_names)
-        if self.num_strains == 0:
-            raise ValueError("Database contains no strain information (no columns).")
 
-        if kmer_strain_df.index.empty:
-            raise ValueError("Database contains no k-mers (empty index).")
-        if kmer_strain_df.empty:
-            raise ValueError(f"Loaded database is empty: {self.database_path}")
-
-        self.strain_names = list(kmer_strain_df.columns.astype(str))
-
-        self.num_strains = len(self.strain_names)
         if self.num_strains == 0:
             raise ValueError("Database contains no strain information (no columns).")
 
@@ -173,17 +146,6 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         elif isinstance(first_kmer_obj, bytes):
             inferred_k_len = len(first_kmer_obj)
             kmer_type_is_str = False
-
-        first_kmer_obj = kmer_strain_df.index[0]
-        kmer_type_is_str: bool
-        inferred_k_len: int
-
-        if isinstance(first_kmer_obj, str):
-            inferred_k_len = len(first_kmer_obj)
-            kmer_type_is_str = True
-        elif isinstance(first_kmer_obj, bytes):
-            inferred_k_len = len(first_kmer_obj)
-            kmer_type_is_str = False
         else:
             raise TypeError(
                 f"Unsupported k-mer type in DataFrame index: {type(first_kmer_obj)}. Expected str or bytes."
@@ -194,15 +156,43 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 "First k-mer in database has zero length, which is invalid."
             )
 
+        # Determine and set self.kmer_length
+        if self.kmer_length is not None: # expected_kmer_length was provided
+            if inferred_k_len != self.kmer_length:
+                raise ValueError(
+                    f"Inferred k-mer length ({inferred_k_len}) from database file "
+                    f"does not match expected_kmer_length ({self.kmer_length})."
+                )
+        else: # expected_kmer_length was None, so infer from data
+            self.kmer_length = inferred_k_len
+
+        if self.kmer_length == 0: # Should be caught by inferred_k_len == 0, but as a safeguard
+             raise ValueError("K-mer length determined to be 0, which is invalid.")
+
         try:
-            count_matrix = kmer_strain_df.to_numpy(dtype=np.uint8)
-        except ValueError as e:
+            # Ensure all data is numeric before converting
+            if not all(kmer_strain_df.map(lambda x: isinstance(x, (int, float, np.number))).all()):
+                # Attempt to convert, or raise more specific error if mixed types found
+                try:
+                    # Convert to float first for broader compatibility before uint8
+                    kmer_strain_df_numeric = kmer_strain_df.astype(float)
+                except ValueError as e:
+                     raise TypeError(
+                        f"Non-numeric data found in DataFrame values. Cannot convert to count matrix. Error: {e}"
+                    )
+            else:
+                kmer_strain_df_numeric = kmer_strain_df
+
+            count_matrix = kmer_strain_df_numeric.to_numpy(dtype=np.uint8)
+        except ValueError as e: # Catches issues if values are out of np.uint8 range
             raise TypeError(
                 f"Could not convert database values to count matrix (np.uint8). "
                 f"Ensure all values are numeric and within 0-255. Error: {e}"
             ) from e
+        except Exception as e: # Catch other potential numpy conversion errors
+            raise RuntimeError(f"Failed to convert DataFrame to NumPy array: {e}") from e
 
-        self.kmer_to_counts_map.clear()
+        self.kmer_to_counts_map.clear() # Ensure it's empty before populating
         skipped_kmers_count = 0
 
         for i, kmer_obj in enumerate(kmer_strain_df.index):
@@ -233,14 +223,11 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 kmer_bytes = kmer_obj
 
             # Validate length
-            try:
-                if self.kmer_length == len(kmer_bytes):
-                    continue
-            except ValueError as e:
-                raise ValueError(
+            # Validate length (self.kmer_length is now guaranteed to be set)
+            if len(kmer_bytes) != self.kmer_length:
+                print(
                     f"Warning: K-mer '{kmer_obj}' (index {i}) has inconsistent length: {len(kmer_bytes)}. Expected {self.kmer_length}. Skipping."
                 )
-
                 skipped_kmers_count += 1
                 continue
 
@@ -257,10 +244,6 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 f"No k-mers were successfully loaded into the database from {self.database_path} "
                 f"(all {skipped_kmers_count} k-mers from input were skipped). "
                 "This is likely due to encoding issues or consistent length mismatches. Check warnings."
-            )
-        if skipped_kmers_count > 0:
-            print(
-                f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues."
             )
         if skipped_kmers_count > 0:
             print(
@@ -324,17 +307,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         if not isinstance(test_kmer, (str, bytes)):
             return False
-        return len(test_kmer) == self.kmer_length
-
-    def __len__(self) -> int:
-        """Returns the number of unique k-mers in the database."""
-        return self.num_kmers
-
-    def __contains__(self, kmer: bytes) -> bool:
-        """Checks if a k-mer (bytes) is present in the database."""
-        if not isinstance(kmer, bytes):
-            return False
-        return kmer in self.kmer_to_counts_map
+        return len(test_kmer) == self.kmer_length # self.kmer_length is now an int
 
 
 # Example Usage (adapted from StrainKmerDb in original kmer_database.py)

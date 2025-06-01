@@ -162,24 +162,18 @@ def test_db_init_kmer_length_mismatch_error(  # Renamed test, checking for error
     capsys: pytest.CaptureFixture,
 ):
     constructor_kmer_len = default_kmer_length_db + 2
-    db = StrainKmerDatabase(
-        parquet_db_file_db, expected_kmer_length=constructor_kmer_len
-    )  # Use updated fixture
-    captured = capsys.readouterr()
-    assert (
-        f"Warning: Initial expected k-mer length was {constructor_kmer_len}"
-        in captured.out
-    )
-    assert f"but found {default_kmer_length_db}" in captured.out
-    assert (
-        f"Using actual length from database: {default_kmer_length_db}" in captured.out
-    )
-    assert db.kmer_length == default_kmer_length_db
+    expected_error_msg = rf"Inferred k-mer length \({default_kmer_length_db}\) from database file does not match expected_kmer_length \({constructor_kmer_len}\)\."
+    with pytest.raises(ValueError, match=expected_error_msg):
+        StrainKmerDatabase(
+            parquet_db_file_db, expected_kmer_length=constructor_kmer_len
+        )
+    # capsys assertions removed as they are not relevant to this specific ValueError check.
+    # The db object would not be created if ValueError is raised, so db.kmer_length check is also removed.
 
 
 def test_db_init_file_not_found():
     with pytest.raises(
-        FileNotFoundError, match="Database file not found or is not a file:"
+        FileNotFoundError, match=r"Database file not found: .*/non_existent_file_for_db.parquet"
     ):
         StrainKmerDatabase(
             "non_existent_file_for_db.parquet", expected_kmer_length=5
@@ -206,7 +200,7 @@ def test_db_init_not_a_dataframe_error(
     mock_read_parquet.return_value = {"not_a_df": True}
     db_path = tmp_path / "not_df_db.parquet"
     db_path.touch()
-    with pytest.raises(RuntimeError, match="is not a pandas DataFrame"):
+    with pytest.raises(TypeError, match=r"Data loaded from .*not_df_db.parquet is not a pandas DataFrame \(type: <class 'dict'>\)\."):
         StrainKmerDatabase(db_path, expected_kmer_length=5)
 
 
@@ -293,8 +287,8 @@ def test_db_init_non_numeric_data_in_df_error(
     parquet_db_file_db: pathlib.Path, default_kmer_length_db: int
 ):
     with pytest.raises(
-        TypeError,
-        match="Could not convert database values to count matrix",  # Corrected to TypeError
+        RuntimeError, # The final error raised after internal TypeError
+        match=r"Failed to convert DataFrame to NumPy array: Non-numeric data found in DataFrame values. Cannot convert to count matrix. Error: could not convert string to float: 'X'"
     ):
         StrainKmerDatabase(
             parquet_db_file_db, expected_kmer_length=default_kmer_length_db
