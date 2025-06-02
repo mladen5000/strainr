@@ -10,16 +10,17 @@ Different disambiguation strategies are supported.
 """
 
 import functools
-import logging # Added logging
+import logging  # Added logging
 import multiprocessing as mp
 from collections import Counter
 from typing import Dict, List, Set, Tuple, Union  # Added Set
 
 import numpy as np
 
-from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
+from .genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
 
-logger = logging.getLogger(__name__) # Define logger at module level
+logger = logging.getLogger(__name__)  # Define logger at module level
+
 
 class ClassificationAnalyzer:
     """
@@ -483,7 +484,9 @@ class ClassificationAnalyzer:
                 )
         except Exception as e:  # Catch potential mp.Pool errors
             # Consider more specific exception handling if possible
-            logger.error(f"Multiprocessing pool error during ambiguous hit resolution: {e}")
+            logger.error(
+                f"Multiprocessing pool error during ambiguous hit resolution: {e}"
+            )
             raise RuntimeError(
                 f"Multiprocessing pool error during ambiguous hit resolution: {e}"
             ) from e

@@ -24,7 +24,7 @@ build-backend = "maturin"
 # PROJECT_ROOT/pyproject.toml
 [tool.pytest.ini_options]
 pythonpath = [
-  "src"
+  "src",
 ]
 # Add other pytest configurations if needed, e.g., testpaths
 testpaths = [

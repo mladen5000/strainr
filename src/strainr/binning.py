@@ -3,8 +3,7 @@ import gzip  # For writing gzipped example files
 import multiprocessing as mp
 import pathlib
 import traceback  # For more detailed error info in main example
-from typing import Optional  # Added Any
-from typing import Dict, List, Set, Tuple, Union
+from typing import Optional, Dict, List, Set, Tuple, Union
 
 # Third-party imports
 import numpy as np  # Added missing import
