@@ -20,7 +20,9 @@ import argparse
 import logging
 import pathlib
 import sys
-from collections import defaultdict
+import tempfile # Added
+import multiprocessing as mp # Added
+from collections import defaultdict, Counter # Ensured Counter is here
 from functools import partial
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -442,28 +444,28 @@ class DatabaseBuilder:
 
     def _process_single_fasta_for_kmers(
         self,
-        genome_file_info: Tuple[
-            pathlib.Path, str, int
-        ],  # (file_path, strain_name, strain_idx)
+        genome_file_info: Tuple[ # (file_path, strain_name, strain_idx, temp_file_path)
+            pathlib.Path, str, int, pathlib.Path
+        ], 
         kmer_length: int,
         num_total_strains: int,
-    ) -> Tuple[
-        str, int, Dict[bytes, bool]
-    ]:  # (strain_name, strain_idx, {kmer: presence})
+    ) -> Tuple[ # (strain_name, strain_idx, count_written, temp_file_path)
+        str, int, int, pathlib.Path
+    ]:
         """
-        Extracts k-mers from a single FASTA file for one strain.
+        Extracts k-mers from a single FASTA file for one strain and writes them to a temp file.
 
         Args:
             genome_file_info: Tuple containing the path to the FASTA file,
-                              the assigned strain name, and the strain's column index.
+                              the assigned strain name, its column index, 
+                              and the path to the temporary file for writing k-mers.
             kmer_length: The length of k-mers to extract.
-            num_total_strains: Total number of strains (for context, though not directly used here).
+            num_total_strains: Total number of strains (for context).
 
         Returns:
-            A tuple: (strain_name, strain_idx, unique_kmers_for_strain_dict).
-            The dict maps k-mer bytes to True.
+            A tuple: (strain_name, strain_idx, count_of_unique_kmers_written, temp_file_path).
         """
-        genome_file, strain_name, strain_idx = genome_file_info
+        genome_file, strain_name, strain_idx, _ = genome_file_info # temp_file_path is extracted inside later
         logger.debug(
             f"Processing {genome_file} for strain '{strain_name}' (index {strain_idx})."
         )
@@ -471,6 +473,8 @@ class DatabaseBuilder:
         # Using dict for kmer presence for this strain initially, then will populate matrix
         # Using set is more memory efficient if just checking presence for this one strain
         strain_kmers: Set[bytes] = set()
+        # temp_file_path is a new argument passed via worker_function partial, part of genome_file_info
+        temp_file_path = genome_file_info[3] # (file_path, strain_name, strain_idx, temp_file_path)
 
         with open_file_transparently(genome_file) as f_handle:
             for record in SeqIO.parse(f_handle, "fasta"):
@@ -484,9 +488,18 @@ class DatabaseBuilder:
                     for i in range(len(sequence_bytes) - kmer_length + 1):
                         kmer = seq_view[i : i + kmer_length].tobytes()
                         strain_kmers.add(kmer)
-
-        # Convert set to dict {kmer: True} for easier merging or consistency if needed later
-        return strain_name, strain_idx, {kmer: True for kmer in strain_kmers}
+        
+        # Write unique k-mers to the temporary file
+        count_written = 0
+        with open(temp_file_path, "w", encoding="utf-8") as f:
+            for kmer_bytes in strain_kmers:
+                try:
+                    f.write(kmer_bytes.decode('utf-8') + "\n")
+                    count_written +=1
+                except UnicodeDecodeError:
+                    logger.warning(f"Skipping k-mer that is not UTF-8 decodable in {genome_file}: {kmer_bytes!r}")
+        
+        return strain_name, strain_idx, count_written, temp_file_path
 
     def _build_kmer_database_parallel(
         self, genome_files: List[pathlib.Path], strain_names: List[str]
@@ -514,19 +527,6 @@ class DatabaseBuilder:
             f"Starting k-mer extraction for {len(genome_files)} genomes using {self.args.procs} processes."
         )
 
-        # Prepare arguments for multiprocessing
-        # Each task needs file path, strain name, its index, kmer_length, and total number of strains
-        tasks = [
-            (genome_files[i], strain_names[i], i) for i in range(len(genome_files))
-        ]
-
-        # Use functools.partial to pass fixed arguments to the worker function
-        worker_function = partial(
-            self._process_single_fasta_for_kmers,
-            kmer_length=self.args.kmerlen,
-            num_total_strains=len(strain_names),
-        )
-
         # This dictionary will store all unique k-mers found across all genomes
         # and for each k-mer, a boolean numpy array indicating presence/absence in strains
         # {kmer_bytes: np.array([False, True, False, ...])}
@@ -534,23 +534,66 @@ class DatabaseBuilder:
             lambda: np.zeros(len(strain_names), dtype=bool)
         )
 
-        with mp.Pool(processes=self.args.procs) as pool:
-            # Process files in parallel
-            # Wrap with tqdm for a progress bar
-            results = list(
-                tqdm(
-                    pool.imap_unordered(worker_function, tasks),
-                    total=len(tasks),
-                    desc="Extracting k-mers",
-                )
-            )
+        # processed_info_for_aggregation will store (strain_idx, temp_file_path) tuples
+        processed_info_for_aggregation: List[Tuple[int, pathlib.Path]] = []
 
-        logger.info("Aggregating k-mers into database matrix.")
-        for strain_name, strain_idx, unique_kmers_for_strain_dict in tqdm(
-            results, desc="Aggregating results"
-        ):
-            for kmer_bytes in unique_kmers_for_strain_dict:  # Iterate over keys (kmers)
-                master_kmer_dict[kmer_bytes][strain_idx] = True
+        try:
+            with tempfile.TemporaryDirectory(prefix="strainr_kmers_") as temp_dir_name:
+                logger.info(f"Created temporary directory for k-mers: {temp_dir_name}")
+                temp_dir_path = pathlib.Path(temp_dir_name)
+                
+                tasks = []
+                for i in range(len(genome_files)):
+                    # Generate a unique temp file path for each genome
+                    temp_file_for_genome = temp_dir_path / f"strain_{i}_kmers.txt"
+                    # Task now includes the temp_file_path for the worker
+                    tasks.append( (genome_files[i], strain_names[i], i, temp_file_for_genome) )
+
+                # Use functools.partial to pass fixed arguments to the worker function
+                # _process_single_fasta_for_kmers now expects genome_file_info to contain the temp_file_path
+                worker_function = partial(
+                    self._process_single_fasta_for_kmers,
+                    kmer_length=self.args.kmerlen,
+                    num_total_strains=len(strain_names), # This arg is still part of the partial
+                )
+                
+                with mp.Pool(processes=self.args.procs) as pool:
+                    logger.info("Starting parallel k-mer extraction to temporary files.")
+                    # Results from worker: (strain_name, strain_idx, unique_kmer_count, temp_file_path_used)
+                    extraction_results = list(
+                        tqdm(
+                            pool.imap_unordered(worker_function, tasks), # tasks now include temp_file_path in the tuple
+                            total=len(tasks),
+                            desc="Extracting k-mers to temp files",
+                        )
+                    )
+                
+                for res_strain_name, res_strain_idx, res_count, res_temp_file_path in extraction_results:
+                    logger.debug(f"Strain {res_strain_name} (idx {res_strain_idx}) wrote {res_count} k-mers to {res_temp_file_path}")
+                    # Store strain_idx and the path of the temporary file for the aggregation step
+                    processed_info_for_aggregation.append( (res_strain_idx, res_temp_file_path) )
+
+                logger.info("Aggregating k-mers from temporary files into database matrix.")
+                # New aggregation step from temporary files - loop will be here
+                for strain_idx, temp_file in tqdm(processed_info_for_aggregation, desc="Aggregating k-mers from files"):
+                    if not temp_file.exists(): 
+                        logger.warning(f"Temporary k-mer file {temp_file} not found for strain index {strain_idx}. Skipping.")
+                        continue
+                    
+                    with open(temp_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            kmer_str = line.strip()
+                            if kmer_str: 
+                                try:
+                                    kmer_bytes = kmer_str.encode('utf-8')
+                                    master_kmer_dict[kmer_bytes][strain_idx] = True
+                                except UnicodeEncodeError: 
+                                    logger.error(f"Could not encode k-mer string '{kmer_str}' from {temp_file} back to bytes. Skipping.")
+        finally:
+            # This block executes whether the try block succeeded or failed.
+            # The TemporaryDirectory context manager handles cleanup of the directory
+            # itself automatically when the 'with' block is exited.
+            logger.info("Cleanup of temporary k-mer directory (if created) is handled by TemporaryDirectory context manager.")
 
         if not master_kmer_dict:
             logger.warning(
