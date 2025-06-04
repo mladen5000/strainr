@@ -354,22 +354,6 @@ def test_generate_report_string_empty(calculator_fixture: AbundanceCalculator):
         calculator_fixture.generate_report_string({})
         == "No strains found above the abundance threshold."
     )
-    rel_ab = {"StrainC": 0.3, "StrainA": 0.5, "StrainB": 0.2}
-    formatted = calculator_fixture.apply_threshold_and_format(
-        rel_ab, sort_by_abundance=False
-    )
-    # Expected order: StrainA, StrainB, StrainC (alphabetical)
-    assert list(formatted.keys()) == ["StrainA", "StrainB", "StrainC"]
-
-
-# --- Test generate_report_string ---
-
-
-def test_generate_report_string_empty(calculator_fixture: AbundanceCalculator):
-    assert (
-        calculator_fixture.generate_report_string({})
-        == "No strains found above the abundance threshold."
-    )
 
 
 def test_generate_report_string_basic_formatting(

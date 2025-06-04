@@ -107,18 +107,6 @@ def test_genomic_sequence_getitem(genomic_sequence_fixture: GenomicSequence):
         _ = genomic_sequence_fixture[len(genomic_sequence_fixture.sequence_data)]
 
 
-def test_genomic_sequence_length(
-    genomic_sequence_fixture: GenomicSequence, valid_dna_bytes_fixture: bytes
-):
-    assert len(genomic_sequence_fixture) == len(valid_dna_bytes_fixture)
-
-
-def test_genomic_sequence_string_representation(
-    genomic_sequence_fixture: GenomicSequence, valid_dna_bytes_fixture: bytes
-):
-    assert str(genomic_sequence_fixture) == valid_dna_bytes_fixture.decode("ascii")
-
-
 def test_genomic_sequence_getitem(genomic_sequence_fixture: GenomicSequence):
     assert genomic_sequence_fixture[0] == "A"
     assert genomic_sequence_fixture[-1] == "T"
