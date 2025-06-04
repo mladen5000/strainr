@@ -47,6 +47,20 @@ if not logger.handlers:
         ],
     )
 
+try:
+    from kmer_counter_rs import extract_kmers_rs
+    _extract_kmers_func = extract_kmers_rs
+    _RUST_KMER_COUNTER_AVAILABLE = True
+    logger.info(
+        "Successfully imported Rust k-mer counter. Using Rust implementation for k-mer extraction."
+    )
+except Exception as e:  # pragma: no cover - rust module optional
+    _extract_kmers_func = None
+    _RUST_KMER_COUNTER_AVAILABLE = False
+    logger.warning(
+        f"Rust k-mer counter not available ({e}). Falling back to Python implementation."
+    )
+
 
 class DatabaseBuilder:
     """
@@ -344,6 +358,22 @@ class DatabaseBuilder:
         void_windows = windows.view(np.dtype((np.void, k))).ravel()
         return {vw.tobytes() for vw in void_windows}
 
+    def _extract_kmers_from_bytes(self, sequence_bytes: bytes, k: int) -> List[bytes]:
+        """Extract k-mers using Rust implementation if available, else Python."""
+        if _extract_kmers_func is not None:
+            try:
+                return _extract_kmers_func(sequence_bytes.upper(), k)
+            except Exception as e:  # pragma: no cover - runtime fallback
+                logger.error(
+                    f"Rust k-mer extraction failed: {e}. Falling back to Python implementation."
+                )
+
+        if len(sequence_bytes) < k:
+            return []
+
+        with memoryview(sequence_bytes.upper()) as seq_view:
+            return [seq_view[i : i + k].tobytes() for i in range(len(sequence_bytes) - k + 1)]
+
     def _process_single_fasta_for_kmers(
         self,
         genome_file_info: Tuple[  # (file_path, strain_name, strain_idx, temp_file_path)
@@ -384,16 +414,10 @@ class DatabaseBuilder:
 
         with open_file_transparently(genome_file) as f_handle:
             for record in SeqIO.parse(f_handle, "fasta"):
-                sequence_bytes = (
-                    str(record.seq).upper().encode("utf-8")
-                )  # Ensure bytes and upper case
-                if len(sequence_bytes) < kmer_length:
-                    continue
-
-                with memoryview(sequence_bytes) as seq_view:
-                    for i in range(len(sequence_bytes) - kmer_length + 1):
-                        kmer = seq_view[i : i + kmer_length].tobytes()
-                        strain_kmers.add(kmer)
+                seq_bytes = str(record.seq).encode("utf-8")
+                kmers = self._extract_kmers_from_bytes(seq_bytes, kmer_length)
+                for kmer in kmers:
+                    strain_kmers.add(kmer)
 
         # Write unique k-mers to the temporary file
         count_written = 0
