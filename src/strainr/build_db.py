@@ -17,10 +17,11 @@ import argparse
 import logging
 import multiprocessing as mp
 import pathlib
+from pathlib import Path
 import sys
 import tempfile  # Added
 import multiprocessing as mp  # Added
-from collections import Counter, Counter  # Ensured Counter is here
+from collections import Counter, defaultdict
 from functools import partial
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -161,7 +162,7 @@ class DatabaseBuilder:
         logger.info(
             f"Filtering genomes for unique strain taxIDs using metadata: {metadata_table_path}"
         )
-        if not metadata_table_path.exists():
+        if not Path.exists(metadata_table_path):
             logger.warning(
                 f"Metadata file not found at {metadata_table_path}, cannot filter by unique taxID. Using all genomes."
             )
@@ -192,7 +193,7 @@ class DatabaseBuilder:
         filtered_genome_files: List[pathlib.Path] = []
         for rel_path_str in filtered_accessions_df["local_filename"]:
             potential_path = genome_dir / pathlib.Path(rel_path_str).name
-            if potential_path.exists():
+            if Path.exists(potential_path):
                 filtered_genome_files.append(potential_path)
             else:
                 logger.warning(
@@ -241,8 +242,10 @@ class DatabaseBuilder:
         if metadata_df is None or metadata_df.empty:
             return base_name
 
-        accession_match = base_name.split("_")[0]
-        if len(accession_match) < 10:
+        parts = base_name.split("_")
+        if len(parts) >= 2:
+            accession_match = "_".join(parts[:2])
+        else:
             accession_match = base_name
 
         try:
@@ -282,7 +285,7 @@ class DatabaseBuilder:
             return []
 
         metadata_df: Optional[pd.DataFrame] = None
-        if metadata_file_path and metadata_file_path.exists():
+        if metadata_file_path and Path.exists(metadata_file_path):
             try:
                 metadata_df = pd.read_csv(metadata_file_path, sep="\t")
                 if "assembly_accession" in metadata_df.columns:
@@ -498,7 +501,7 @@ class DatabaseBuilder:
                 for strain_idx, temp_file in tqdm(
                     processed_info_for_aggregation, desc="Aggregating k-mers from files"
                 ):
-                    if not temp_file.exists():
+                    if not Path.exists(temp_file):
                         logger.warning(
                             f"Temporary k-mer file {temp_file} not found for strain index {strain_idx}. Skipping."
                         )
