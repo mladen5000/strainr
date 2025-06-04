@@ -86,6 +86,20 @@ def test_open_gzipped_text_file(
         )  # Check for TextIO attributes
 
 
+def test_open_binary_file(tmp_path: pathlib.Path) -> None:
+    """Ensure binary files are read correctly in binary mode."""
+    binary_content = b"\x00\x01\x02binarydata"
+    bin_path = tmp_path / "sample.bin"
+    with open(bin_path, "wb") as fh:
+        fh.write(binary_content)
+
+    with open_file_transparently(bin_path, mode="rb") as f:
+        data = f.read()
+        assert isinstance(f, io.BufferedReader)
+        assert data == binary_content
+        assert isinstance(data, bytes)
+
+
 def test_open_file_not_found_error():  # Renamed for clarity
     with pytest.raises(FileNotFoundError, match="File not found:"):
         open_file_transparently("non_existent_utils_file.txt")
