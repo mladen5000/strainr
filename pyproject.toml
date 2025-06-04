@@ -19,7 +19,7 @@ ncbi-genome-download = "^0.3.3"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
-build-backend = "maturin"
+build-backend = "poetry.core.masonry.api"
 
 # PROJECT_ROOT/pyproject.toml
 [tool.pytest.ini_options]
