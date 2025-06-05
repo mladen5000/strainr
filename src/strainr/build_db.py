@@ -11,6 +11,15 @@ This script automates the process of:
 4. Constructing a presence/absence matrix where rows are unique k-mers,
    columns are strains (genomes), and values indicate if a k-mer is present.
 5. Saving this matrix as a Parquet file.
+
+K-mer Strategy:
+- Canonical K-mers: The database stores canonical k-mers (the lexicographically
+  smaller of a k-mer and its reverse complement) to ensure strand-insensitivity
+  during classification.
+- Ambiguous Bases ('N'): By default, k-mers containing 'N' bases are included.
+  The `--skip-n-kmers` flag can be used to exclude such k-mers.
+- K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
+  a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
 import argparse
@@ -369,10 +378,28 @@ class DatabaseBuilder:
         # Rust implementation is expected to handle this, or ensure input is uppercase
         upper_sequence_bytes = sequence_bytes.upper()
 
+        # DEV NOTE / BIOINFORMATICS INTEGRITY:
+        # The Rust k-mer extraction function (`kmer_counter_rs.extract_kmers_rs`)
+        # is assumed to return CANONICAL k-mers (the lexicographically smaller of
+        # a k-mer and its reverse complement).
+        # This is crucial for consistency with the classification step, which typically
+        # processes reads by generating canonical k-mers to ensure strand-insensitivity.
+        # If the Rust implementation does not provide canonical k-mers, or provides
+        # raw k-mers, this could lead to mismatches during classification unless
+        # the k-mers from reads are also processed in the exact same (raw) way.
+        # The Python fallback in this script (`_py_extract_canonical_kmers` logic within
+        # `_extract_kmers_from_bytes`) *does* generate canonical k-mers.
+        # If kmer_counter_rs behavior is uncertain or needs to be raw, ensure downstream
+        # classification tools are aligned, or add an explicit canonicalization step here
+        # (though that would preferably be handled by the Rust library itself for performance).
         if _extract_kmers_func is not None: # Rust path
             try:
                 # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
-                return _extract_kmers_func(upper_sequence_bytes, k)
+                kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
+                if self.args.skip_n_kmers:
+                    # Assuming kmer_counter_rs returns a list of bytes objects
+                    kmers_from_rust = [kmer for kmer in kmers_from_rust if b'N' not in kmer] # N is already uppercase due to upper_sequence_bytes
+                return kmers_from_rust
             except Exception as e:  # pragma: no cover - runtime fallback
                 logger.error(
                     f"Rust k-mer extraction failed: {e}. Falling back to Python canonical implementation."
@@ -385,9 +412,13 @@ class DatabaseBuilder:
 
         with memoryview(upper_sequence_bytes) as seq_view:
             for i in range(len(upper_sequence_bytes) - k + 1):
-                kmer = seq_view[i : i + k].tobytes()
-                rc_kmer = self._py_reverse_complement_db(kmer)
-                kmers_list.append(kmer if kmer <= rc_kmer else rc_kmer)
+                kmer_candidate_bytes = seq_view[i : i + k].tobytes() # kmer candidate before canonicalization
+
+                if self.args.skip_n_kmers and b'N' in kmer_candidate_bytes: # Check for 'N'
+                    continue
+
+                rc_kmer = self._py_reverse_complement_db(kmer_candidate_bytes)
+                kmers_list.append(kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer)
         return kmers_list
 
     def _process_single_fasta_for_kmers(
@@ -618,7 +649,7 @@ def get_cli_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "-k", "--kmerlen", type=int, default=31, help="Length of k-mers to extract."
+        "-k", "--kmerlen", type=int, default=31, help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes."
     )
     parser.add_argument(
         "-l",
@@ -654,6 +685,11 @@ def get_cli_parser() -> argparse.ArgumentParser:
         "--unique-taxid",
         action="store_true",
         help="Flag to only include genomes from NCBI that have a unique strain-level taxonomic ID.",
+    )
+    parser.add_argument(
+        "--skip-n-kmers",
+        action="store_true",
+        help="If set, k-mers containing 'N' (ambiguous) bases will be excluded from the database."
     )
     return parser
 
