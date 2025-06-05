@@ -10,6 +10,7 @@ calculates strain abundances, and outputs the results.
 import gzip
 import logging
 import pathlib
+import pickle
 from collections import Counter
 from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
 
@@ -534,6 +535,26 @@ class KmerClassificationWorkflow:
                     no_hit_ids,
                     unassigned_marker="NA",
                 )
+
+                # Save final_assignments and strain_names for potential downstream use (e.g., binning)
+                self.logger.info("Saving final_assignments and strain_names for downstream use.")
+
+                assignments_output_path = self.args.output_dir / f"{sample_name}_final_assignments.pkl"
+                try:
+                    with open(assignments_output_path, "wb") as f_assign:
+                        pickle.dump(final_assignments, f_assign)
+                    self.logger.info(f"Final assignments pickled to: {assignments_output_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to pickle final_assignments: {e}")
+
+                strain_names_output_path = self.args.output_dir / f"{sample_name}_strain_names.txt"
+                try:
+                    with open(strain_names_output_path, "w") as f_strains:
+                        for strain_name_item in self.database.strain_names: # Corrected variable name
+                            f_strains.write(f"{strain_name_item}\n")
+                    self.logger.info(f"Strain names saved to: {strain_names_output_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to save strain_names: {e}")
 
                 # 3. Calculate and output abundances
                 # New sequence using output.AbundanceCalculator:
