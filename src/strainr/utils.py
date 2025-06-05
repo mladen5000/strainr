@@ -4,7 +4,7 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
-from typing import Dict, IO, List, Tuple, Union, Any
+from typing import Dict, IO, List, Tuple, Union, Any, TextIO, BinaryIO
 
 import numpy as np  # For type hinting np.ndarray
 import pandas as pd
@@ -13,7 +13,7 @@ from Bio.Seq import Seq
 
 def open_file_transparently(
     file_path: Union[str, pathlib.Path], mode: str = "rt"
-) -> IO[Any]:
+) -> Union[TextIO, BinaryIO]:
     """Opens a file, transparently handling gzip compression.
 
     Infers compression from file extension. Defaults to text read mode.
