@@ -96,6 +96,20 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         return kmer in self.kmer_to_counts_map
 
     def _load_database(self, expected_kmer_length: Optional[int]) -> None:
+        # TECH DEBT SUGGESTION:
+        # This method is quite long and handles several distinct tasks:
+        #   - File existence checks and reading the Parquet file.
+        #   - DataFrame validation (empty, columns, index uniqueness).
+        #   - K-mer length inference and validation against expected length.
+        #   - Data type validation and conversion of the DataFrame to a NumPy matrix (uint8).
+        #   - Iterating through k-mers for final processing (type/length checks, encoding)
+        #     and populating `self.kmer_to_counts_map`.
+        #
+        # Consider refactoring by breaking this method into smaller private helper methods,
+        # each responsible for one of the tasks above (e.g., `_read_and_validate_parquet`,
+        # `_infer_and_validate_kmer_length`, `_convert_df_to_count_matrix`,
+        # `_populate_kmer_map_from_df_and_matrix`). This would improve readability,
+        # maintainability, and testability of the database loading process.
         """
             Internal method to load data from the Parquet database file.
         """

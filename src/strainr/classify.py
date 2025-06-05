@@ -35,6 +35,8 @@ from .genomic_types import (
     ReadId,
     StrainIndex,
 )  # Changed to relative import
+from .output import AbundanceCalculator
+from .utils import _get_sample_name
 
 
 # Type aliases for better readability
@@ -323,110 +325,6 @@ class CliArgs(BaseModel):
     # If it was `super().__init__(**data)` it would be fine, but it's not needed here.
 
 
-class AbundanceCalculator:
-    """Handles abundance calculations and output formatting."""
-
-    def __init__(self, strain_names: List[str], abundance_threshold: float):
-        self.strain_names = strain_names
-        self.abundance_threshold = abundance_threshold
-        self.logger = logging.getLogger(__name__)
-
-    def translate_assignments_to_names(
-        self, final_assignments: Dict[ReadId, Union[StrainIndex, str]]
-    ) -> Dict[ReadId, str]:
-        """Translates final assignments (indices or 'NA') to strain names."""
-        translated: Dict[ReadId, str] = {}
-        for read_id, assignment in final_assignments.items():
-            if isinstance(assignment, int):
-                if 0 <= assignment < len(self.strain_names):
-                    translated[read_id] = self.strain_names[assignment]
-                else:
-                    translated[read_id] = "Unassigned_BadIndex"
-            else:
-                translated[read_id] = str(assignment)
-        return translated
-
-    def calculate_abundances(
-        self, final_named_assignments: Dict[ReadId, str], sample_name: str
-    ) -> pd.DataFrame:
-        """Calculates and formats abundance data into a DataFrame."""
-        self.logger.info(f"Calculating abundances for sample: {sample_name}")
-
-        hit_counts: Counter[str] = Counter(final_named_assignments.values())
-
-        # Ensure all strains are represented
-        for strain_name in self.strain_names:
-            hit_counts.setdefault(strain_name, 0)
-        hit_counts.setdefault("NA", 0)
-
-        total_reads = sum(hit_counts.values())
-        # sum(count for strain, count in hit_counts.items() if strain != "NA") # This sum was unused
-
-        table_data = []
-        for strain_name in self.strain_names + ["NA"]:
-            raw_hits = hit_counts[strain_name]
-
-            # Sample relative abundance
-            sample_relab = raw_hits / total_reads if total_reads > 0 else 0.0
-
-            # Intra-sample relative abundance (for strains passing threshold)
-            intra_relab = 0.0
-            if strain_name != "NA" and sample_relab >= self.abundance_threshold:
-                # Calculate denominator for intra-sample relab
-                sum_hits_passing = sum(
-                    count
-                    for name, count in hit_counts.items()
-                    if name != "NA"
-                    and (count / total_reads if total_reads > 0 else 0)
-                    >= self.abundance_threshold
-                )
-                if sum_hits_passing > 0:
-                    intra_relab = raw_hits / sum_hits_passing
-
-            table_data.append({
-                "strain_name": strain_name,
-                "sample_hits": raw_hits,
-                "sample_relab": sample_relab,
-                "intra_relab": intra_relab if strain_name != "NA" else 0.0,
-            })
-
-        abundance_df = pd.DataFrame(table_data).set_index("strain_name")
-        abundance_df = abundance_df.sort_values(by="sample_hits", ascending=False)
-
-        return abundance_df
-
-    def save_abundance_report(
-        self, abundance_df: pd.DataFrame, output_path: pathlib.Path
-    ) -> None:
-        """Save abundance report to TSV file."""
-        abundance_df.to_csv(output_path, sep="	", float_format="%.6f")
-        self.logger.info(f"Abundance report saved to: {output_path}")
-
-    def display_console_output(
-        self, abundance_df: pd.DataFrame, sample_name: str, top_n: int = 10
-    ) -> None:
-        """Displays formatted abundance results to the console."""
-        self.logger.info(f"Displaying top {top_n} abundances for sample: {sample_name}")
-        print(f" --- Abundance Report for: {sample_name} ---")
-
-        df_to_display = abundance_df[abundance_df["sample_hits"] > 0].copy()
-
-        # Handle unassigned reads separately
-        unassigned_info = ""
-        if "NA" in df_to_display.index:
-            na_row = df_to_display.loc["NA"]
-            unassigned_info = (
-                f"Unassigned Reads: {int(na_row['sample_hits'])} "
-                f"({na_row['sample_relab']:.4f})"
-            )
-            df_to_display = df_to_display.drop(index="NA")
-
-        print(df_to_display.head(top_n).to_string(float_format="%.4f"))
-        if unassigned_info:
-            print(unassigned_info)
-        print("--- End of Report ---")
-
-
 class KmerClassificationWorkflow:
     """Orchestrates the k-mer based strain classification workflow."""
 
@@ -536,23 +434,24 @@ class KmerClassificationWorkflow:
         df.to_csv(output_path, index=False)
         self.logger.info(f"Raw k-mer hit counts saved to: {output_path}")
 
-    def _get_sample_name(self, file_path: pathlib.Path) -> str:
-        """Extract sample name from file path."""
-        # Remove common suffixes and prefixes
-        name = file_path.name
-        for suffix in [".fastq", ".fasta", ".fq", ".fa", ".gz"]:
-            if name.endswith(suffix):
-                name = name[: -len(suffix)]
-
-        # Remove common read pair indicators
-        for pattern in ["_R1", "_R2", "_1", "_2"]:
-            if pattern in name:
-                name = name.split(pattern)[0]
-                break
-
-        return name
-
     def run_workflow(self) -> None:
+        # TECH DEBT SUGGESTION:
+        # This method orchestrates the main StrainR classification workflow and is quite long.
+        # It handles:
+        #   - Database initialization.
+        #   - Analyzer and AbundanceCalculator initialization.
+        #   - Iterating through input files (samples).
+        #   - For each sample:
+        #       - Read classification (parallel processing).
+        #       - Saving raw k-mer hits (optional).
+        #       - Hit categorization and disambiguation via ClassificationAnalyzer.
+        #       - Abundance calculation and reporting (reconstructing DataFrame logic).
+        #
+        # While an orchestrator method is expected to call many other components, if more
+        # steps or complexity are added to the per-sample processing, consider breaking
+        # down the loop body into smaller private methods. For example, a
+        # `_process_single_sample(self, fwd_reads_path, rev_reads_path, sample_name, analyzer, abundance_calc)`
+        # method could encapsulate the logic for one sample, improving readability of `run_workflow`.
         """Executes the main classification and analysis workflow."""
         self.logger.info("Starting StrainR workflow")
 
@@ -594,7 +493,7 @@ class KmerClassificationWorkflow:
 
             # Process each sample
             for i, fwd_reads_path in enumerate(fwd_files):
-                sample_name = self._get_sample_name(fwd_reads_path)
+                sample_name = _get_sample_name(fwd_reads_path)
                 self.logger.info(
                     f"Processing sample: {sample_name} (File: {fwd_reads_path.name})"
                 )
@@ -637,19 +536,91 @@ class KmerClassificationWorkflow:
                 )
 
                 # 3. Calculate and output abundances
-                final_named_assignments = abundance_calc.translate_assignments_to_names(
-                    final_assignments
-                )
-                abundance_df = abundance_calc.calculate_abundances(
-                    final_named_assignments, sample_name
+                # New sequence using output.AbundanceCalculator:
+                final_named_assignments = abundance_calc.convert_assignments_to_strain_names(
+                    final_assignments, unassigned_marker="NA" # Assuming "NA" is the marker
                 )
 
-                # Save and display results
-                output_path = (
-                    self.args.output_dir / f"{sample_name}_abundance_report.tsv"
+                # To replicate the old abundance_df structure:
+                raw_counts = abundance_calc.calculate_raw_abundances(
+                    final_named_assignments, exclude_unassigned=False, unassigned_marker="NA" # Get all counts including NA
                 )
-                abundance_calc.save_abundance_report(abundance_df, output_path)
-                abundance_calc.display_console_output(abundance_df, sample_name)
+
+                # Prepare data for DataFrame similar to the original one in classify.py's AbundanceCalculator
+                table_data = []
+                total_reads_for_relab = sum(raw_counts.values())
+
+                # Calculate sum of hits for strains passing threshold for intra_relab calculation
+                sum_hits_passing_threshold = 0
+                if total_reads_for_relab > 0:
+                    for strain_name_iter in self.database.strain_names: # Iterate through known strains
+                        count = raw_counts.get(strain_name_iter, 0)
+                        sample_relab_temp = count / total_reads_for_relab
+                        if sample_relab_temp >= self.args.abundance_threshold:
+                            sum_hits_passing_threshold += count
+
+                # Ensure all strains and NA are in the df. Use a combined list of known strain names and any potentially new names from raw_counts (e.g. "NA" or others if they appear)
+                # However, the original logic iterated self.database.strain_names + ["NA"], so we stick to that to replicate behavior.
+                all_strain_keys_for_df = self.database.strain_names + ["NA"]
+                # Deduplicate if "NA" is somehow in self.database.strain_names (though unlikely)
+                processed_keys = set()
+                unique_keys_for_df = []
+                for key in all_strain_keys_for_df:
+                    if key not in processed_keys:
+                        unique_keys_for_df.append(key)
+                        processed_keys.add(key)
+                # Also add any keys from raw_counts that might not be in the initial list (e.g. if "Unassigned_BadIndex" was produced)
+                # For strict replication of original, we only consider self.database.strain_names + ["NA"]
+                # The original code was: for strain_name_for_df in self.strain_names + ["NA"]:
+
+                for strain_name_for_df in unique_keys_for_df:
+                    raw_hits = raw_counts.get(strain_name_for_df, 0)
+                    sample_relab = raw_hits / total_reads_for_relab if total_reads_for_relab > 0 else 0.0
+
+                    intra_relab = 0.0
+                    # Original logic for intra_relab:
+                    # if strain_name_for_df != "NA" and sample_relab >= self.abundance_threshold:
+                    #    if sum_hits_passing_threshold > 0: # sum_hits_passing_threshold calculated above
+                    #        intra_relab = raw_hits / sum_hits_passing_threshold
+                    # The self.args.abundance_threshold is from the workflow args
+                    if strain_name_for_df != "NA" and sample_relab >= self.args.abundance_threshold:
+                        if sum_hits_passing_threshold > 0:
+                            intra_relab = raw_hits / sum_hits_passing_threshold
+
+                    table_data.append({
+                        "strain_name": strain_name_for_df,
+                        "sample_hits": raw_hits,
+                        "sample_relab": sample_relab,
+                        "intra_relab": intra_relab, # ensure NA has 0.0 as per original logic due to strain_name_for_df != "NA"
+                    })
+
+                abundance_df_reconstructed = pd.DataFrame(table_data).set_index("strain_name")
+                abundance_df_reconstructed = abundance_df_reconstructed.sort_values(by="sample_hits", ascending=False)
+
+                # Now save and display this reconstructed DataFrame
+                output_path = self.args.output_dir / f"{sample_name}_abundance_report.tsv"
+                abundance_df_reconstructed.to_csv(output_path, sep="	", float_format="%.6f")
+                self.logger.info(f"Abundance report saved to: {output_path}")
+
+                # Display to console (replicate KmerClassificationWorkflow.AbundanceCalculator.display_console_output)
+                self.logger.info(f"Displaying top 10 abundances for sample: {sample_name}")
+                print(f" --- Abundance Report for: {sample_name} ---")
+                # Make sure to use the reconstructed DataFrame
+                df_to_display_reconstructed = abundance_df_reconstructed[abundance_df_reconstructed["sample_hits"] > 0].copy()
+                unassigned_info_reconstructed = ""
+                if "NA" in df_to_display_reconstructed.index:
+                    na_row_reconstructed = df_to_display_reconstructed.loc["NA"]
+                    unassigned_info_reconstructed = (
+                        f"Unassigned Reads: {int(na_row_reconstructed['sample_hits'])} "
+                        f"({na_row_reconstructed['sample_relab']:.4f})"
+                    )
+                    df_to_display_reconstructed = df_to_display_reconstructed.drop(index="NA")
+
+                # Default top_n=10 as in the original display_console_output method
+                print(df_to_display_reconstructed.head(10).to_string(float_format="%.4f"))
+                if unassigned_info_reconstructed:
+                    print(unassigned_info_reconstructed)
+                print("--- End of Report ---")
 
             self.logger.info("StrainR workflow completed successfully")
 

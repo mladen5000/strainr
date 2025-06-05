@@ -23,6 +23,23 @@ logger = logging.getLogger(__name__)  # Define logger at module level
 
 
 class ClassificationAnalyzer:
+    # TECH DEBT SUGGESTION:
+    # This class has multiple responsibilities including:
+    #   - Input validation for its methods.
+    #   - Categorizing read hits (clear, ambiguous, no hits).
+    #   - Calculating strain priors from clear assignments.
+    #   - Resolving ambiguous assignments using various modes (max, random, multinomial, dirichlet).
+    #
+    # Consider refactoring to improve separation of concerns:
+    #   - Extract disambiguation modes: The logic within `_resolve_single_ambiguous_read`
+    #     that switches based on `self.disambiguation_mode` could be refactored using the
+    #     Strategy pattern. Each mode (max, random, etc.) could be its own class
+    #     with a common interface.
+    #   - Centralize validation: Validation logic (e.g., `_validate_count_vector`)
+    #     is spread throughout. Some of this could be grouped or moved to a dedicated
+    #     validation component/module if patterns of reuse emerge across other classes.
+    #   - Smaller, focused methods: Some methods are quite long; breaking them down
+    #     further could improve readability and testability.
     """
     Analyzes and disambiguates strain classification results.
 

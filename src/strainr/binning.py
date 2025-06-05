@@ -341,6 +341,21 @@ def _detect_sequence_format(file_path: pathlib.Path) -> str:
 
 
 def _write_reads_to_bins_single_pass(
+    # TECH DEBT SUGGESTION:
+    # This function implements a single pass through input FASTQ/FASTA files
+    # to distribute reads into multiple output bin files. It handles:
+    #   - Opening multiple output file handles.
+    #   - Detecting input sequence format.
+    #   - Iterating through input reads (potentially paired).
+    #   - Matching read IDs to the assignment table.
+    #   - Writing reads to the appropriate bin files.
+    #   - Managing file handles and error handling.
+    #
+    # This is a complex operation. If it becomes harder to maintain or needs
+    # more features (e.g., more sophisticated output naming, compression options
+    # for bins), consider breaking it down into smaller helper functions or potentially
+    # a class dedicated to the multi-bin writing process. For instance, input read
+    # parsing and output file management could be further separated.
     read_to_strain_assignment_table: pd.DataFrame,
     strains_to_bin: List[str],
     # all_strain_names_in_table: List[str], # Not strictly needed if table columns are already strain names
