@@ -13,10 +13,8 @@ from typing import (  # Any for potential complex dicts, though striving for spe
 )
 
 # Assuming these types are available from a central genomic_types module
-# from strainr.genomic_types import ReadId, StrainIndex
+from .genomic_types import ReadId, StrainIndex
 # For now, defining them locally if not, or assuming basic types.
-ReadId = str
-StrainIndex = int
 
 
 class AbundanceCalculator:

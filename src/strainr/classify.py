@@ -12,7 +12,6 @@ import logging
 import pathlib
 from collections import Counter
 from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
-from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
 
 import pandas as pd
 
@@ -49,6 +48,7 @@ DEFAULT_ABUNDANCE_THRESHOLD = 0.001
 
 class KmerExtractor:
     """Handles k-mer extraction with fallback between Rust and Python implementations."""
+    PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
     def __init__(self):
         self._extract_func: Callable[[bytes, int], List[bytes]]
@@ -81,14 +81,8 @@ class KmerExtractor:
     @staticmethod
     def _py_reverse_complement(dna_sequence: bytes) -> bytes:
         """Computes the reverse complement of a DNA sequence."""
-        complement_map = {
-            ord("A"): ord("T"),
-            ord("T"): ord("A"),
-            ord("C"): ord("G"),
-            ord("G"): ord("C"),
-            ord("N"): ord("N"),
-        }
-        return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+        # Assumes PY_RC_TRANSLATE_TABLE is defined at class level
+        return dna_sequence.translate(KmerExtractor.PY_RC_TRANSLATE_TABLE)[::-1]
 
     def _py_extract_canonical_kmers(self, sequence: bytes, k: int) -> List[bytes]:
         """
@@ -243,10 +237,10 @@ class SequenceFileProcessor:
 class CliArgs(BaseModel):
     """Pydantic model for command-line argument validation and management."""
 
-    input_forward: Union[pathlib.Path, List[pathlib.Path]] = Field(
+    input_forward: List[pathlib.Path] = Field(
         description="Input forward read file(s) (FASTA/FASTQ, possibly gzipped)."
     )
-    input_reverse: Optional[Union[pathlib.Path, List[pathlib.Path]]] = Field(
+    input_reverse: Optional[List[pathlib.Path]] = Field(
         default=None,
         description="Optional input reverse read file(s) for paired-end data.",
     )
@@ -284,12 +278,20 @@ class CliArgs(BaseModel):
     def validate_paths_exist(
         cls, v: Union[str, List[str], None]
     ) -> Optional[Union[pathlib.Path, List[pathlib.Path]]]:
-        """Ensures input file paths exist."""
-        if v is None:
+        """Ensures input file paths exist.
+        Pydantic calls this per field. The return type should be what Pydantic expects for that field
+        after "before" validation, or Pydantic will attempt coercion.
+        """
+        if v is None: # This case is for Optional fields like input_reverse if it's not provided.
             return None
 
         if isinstance(v, list):
+            # This branch is for input_forward (List[str] from argparse)
+            # and input_reverse (List[str] from argparse if provided)
             return [cls._validate_single_path(path_str) for path_str in v]
+
+        # This branch is for db_path (str from argparse)
+        # It's also a fallback, but argparse setup should prevent other types for these fields.
         return cls._validate_single_path(str(v))
 
     @classmethod
@@ -305,28 +307,20 @@ class CliArgs(BaseModel):
     @model_validator(mode="after")
     def validate_paired_read_consistency(self) -> "CliArgs":
         """Validates consistency between forward and reverse read file lists."""
-        if self.input_reverse:
-            fwd_is_list = isinstance(self.input_forward, list)
-            rev_is_list = isinstance(self.input_reverse, list)
-
-            if fwd_is_list != rev_is_list:
+        if self.input_reverse: # This is now Optional[List[pathlib.Path]]
+            # self.input_forward is List[pathlib.Path]
+            if len(self.input_forward) != len(self.input_reverse):
                 raise ValueError(
-                    "Both input_forward and input_reverse must be lists or both single files."
+                    "Number of forward and reverse read files must match."
                 )
-
-            if fwd_is_list and rev_is_list:
-                if (
-                    isinstance(self.input_forward, list)
-                    and isinstance(self.input_reverse, list)
-                    and len(self.input_forward) != len(self.input_reverse)
-                ):
-                    raise ValueError(
-                        "Number of forward and reverse read files must match."
-                    )
         return self
 
-    def __init__(self, **data):
-        super().__init__()
+    # __init__ is not needed for Pydantic models unless custom logic beyond validation is required at instantiation.
+    # Pydantic handles initialization from kwargs automatically.
+    # def __init__(self, **data):
+    # super().__init__() # This is incorrect for Pydantic V2. Use super().__init__(**data) if overriding.
+    # For Pydantic, usually no custom __init__ is needed if only using field definitions and validators.
+    # If it was `super().__init__(**data)` it would be fine, but it's not needed here.
 
 
 class AbundanceCalculator:
@@ -762,21 +756,14 @@ def parse_cli_arguments() -> CliArgs:
     logger.info("Parsing command-line arguments")
 
     try:
-        # Map CLI args to CliArgs model, handling lists and optionals
-        input_forward = args.input_forward
-        if isinstance(input_forward, list) and len(input_forward) == 1:
-            input_forward = input_forward[0]
-        input_reverse = args.input_reverse
-        if input_reverse is not None:
-            if len(input_reverse) == 0:
-                input_reverse = None
-            elif len(input_reverse) == 1:
-                input_reverse = input_reverse[0]
-
+        # Map CLI args to CliArgs model
+        # argparse with nargs="+" ensures input_forward is always a list.
+        # argparse with nargs="*" ensures input_reverse is a list or None (if not provided).
+        # No need to convert single-item lists to single items.
         cli_args = CliArgs(
-            input_forward=input_forward,
-            input_reverse=input_reverse,
-            db_path=args.db,
+            input_forward=args.input_forward, # Directly pass the list from argparse
+            input_reverse=args.input_reverse if args.input_reverse else None, # Pass list or None
+            db_path=args.db, # This is a single path string from argparse
             num_processes=args.procs,
             output_dir=args.out,
             disambiguation_mode=args.mode,
