@@ -702,7 +702,7 @@ def get_cli_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
-    logger.info("StrainR Database Building Script Started.")
+    logger.info("Strainr Database Building Script Started.")
 
     arg_parser = get_cli_parser()
     cli_args = arg_parser.parse_args()
