@@ -53,6 +53,7 @@ ncbi-rs/
 other/
 species_84112_complete/
 *Zymo/
+strain_kmer_database_files/
 
 ###############################################################################
 # Documentation Build
