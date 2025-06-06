@@ -4,16 +4,49 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
-from typing import Dict, IO, List, Tuple, Union, Any
+from typing import Dict, IO, List, Tuple, Union, Any, TextIO, BinaryIO
 
 import numpy as np  # For type hinting np.ndarray
 import pandas as pd
 from Bio.Seq import Seq
 
 
+def _get_sample_name(file_path: pathlib.Path) -> str:
+    """Extract sample name from file path."""
+    # Remove common suffixes and prefixes
+    name = file_path.name
+    for suffix in [".fastq", ".fasta", ".fq", ".fa", ".gz"]:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+
+    # Remove common read pair indicators
+    for pattern in ["_R1", "_R2", "_1", "_2"]:
+        if pattern in name:
+            name = name.split(pattern)[0]
+            break
+
+    return name
+
+
 def open_file_transparently(
+    # TECH DEBT SUGGESTION:
+    # This function's logic for handling both text/binary modes and
+    # gzip/non-gzip files transparently can be complex, especially
+    # concerning type hints (TextIO vs BinaryIO) and ensuring the
+    # correct mode is used with gzip.open vs open.
+    # The existing comments within the function highlight some of these
+    # complexities (e.g., "This path is problematic for TextIO return hint").
+    #
+    # If this function becomes a source of bugs or is hard to maintain,
+    # consider:
+    #   - Separating into two functions: e.g., `open_text_file_transparently`
+    #     and `open_binary_file_transparently`.
+    #   - Simplifying the type handling if possible, or making behavior
+    #     more explicit for callers.
+    #   - Adding more comprehensive tests for various mode combinations
+    #     and file types.
     file_path: Union[str, pathlib.Path], mode: str = "rt"
-) -> IO[Any]:
+) -> Union[TextIO, BinaryIO]:
     """Opens a file, transparently handling gzip compression.
 
     Infers compression from file extension. Defaults to text read mode.
