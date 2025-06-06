@@ -15,14 +15,13 @@ This script automates the process of:
 
 import argparse
 import logging
-import multiprocessing as mp
+import multiprocessing as mp  # Added
 import pathlib
-from pathlib import Path
 import sys
 import tempfile  # Added
-import multiprocessing as mp  # Added
 from collections import Counter, defaultdict
 from functools import partial
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import ncbi_genome_download as ngd
@@ -31,7 +30,6 @@ import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
 
-# from utils import open_file_transparently
 from .utils import open_file_transparently
 
 # --- Logging Setup ---
@@ -49,6 +47,7 @@ if not logger.handlers:
 
 try:
     from kmer_counter_rs import extract_kmers_rs
+
     _extract_kmers_func = extract_kmers_rs
     _RUST_KMER_COUNTER_AVAILABLE = True
     logger.info(
@@ -372,7 +371,10 @@ class DatabaseBuilder:
             return []
 
         with memoryview(sequence_bytes.upper()) as seq_view:
-            return [seq_view[i : i + k].tobytes() for i in range(len(sequence_bytes) - k + 1)]
+            return [
+                seq_view[i : i + k].tobytes()
+                for i in range(len(sequence_bytes) - k + 1)
+            ]
 
     def _process_single_fasta_for_kmers(
         self,

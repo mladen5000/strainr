@@ -5,11 +5,13 @@ __pycache__/
 */__pycache__**
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
 .cache/
 .session/
 *.py[cod]
 kmer_counter_rs/target/
 target/
+dist/
 
 ###############################################################################
 # Jupyter Notebook Checkpoints and Outputs

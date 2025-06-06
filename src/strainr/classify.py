@@ -12,7 +12,6 @@ import logging
 import pathlib
 from collections import Counter
 from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
-from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
 
 import pandas as pd
 
@@ -57,7 +56,7 @@ class KmerExtractor:
 
     def _initialize_extractor(self) -> None:
         """Initialize the k-mer extraction function with Rust fallback to Python."""
-        try:
+        try:  # Rust implementation
             from kmer_counter_rs import extract_kmers_rs
 
             self._extract_func = extract_kmers_rs
@@ -65,30 +64,37 @@ class KmerExtractor:
             logging.getLogger(__name__).info(
                 "Successfully imported Rust k-mer counter. Using Rust implementation."
             )
-        except ImportError:
+        except ImportError:  # Fallback to Python implementation
             self._extract_func = self._py_extract_canonical_kmers
             self._rust_available = False
             logging.getLogger(__name__).warning(
                 "Rust k-mer counter not found. Using Python fallback."
             )
-        except Exception as e:
+        except Exception as e:  # Fallback to Python implementation
             self._extract_func = self._py_extract_canonical_kmers
             self._rust_available = False
             logging.getLogger(__name__).error(
                 f"Error importing Rust k-mer counter: {e}. Using Python fallback."
             )
 
+    # @staticmethod
+    # def _py_reverse_complement(dna_sequence: bytes) -> bytes:
+    #     """Computes the reverse complement of a DNA sequence."""
+    #     complement_map = {
+    #         ord("A"): ord("T"),
+    #         ord("T"): ord("A"),
+    #         ord("C"): ord("G"),
+    #         ord("G"): ord("C"),
+    #         ord("N"): ord("N"),
+    #     }
+    #     return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+
+    _RC_TABLE = bytes.maketrans(b"ACGTacgt", b"TGCAtgca")
+
     @staticmethod
-    def _py_reverse_complement(dna_sequence: bytes) -> bytes:
-        """Computes the reverse complement of a DNA sequence."""
-        complement_map = {
-            ord("A"): ord("T"),
-            ord("T"): ord("A"),
-            ord("C"): ord("G"),
-            ord("G"): ord("C"),
-            ord("N"): ord("N"),
-        }
-        return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+    def _py_reverse_complement(seq: bytes) -> bytes:
+        """Efficient reverse complement for DNA k-mers as bytes."""
+        return seq.translate(KmerExtractor._RC_TABLE)[::-1]
 
     def _py_extract_canonical_kmers(self, sequence: bytes, k: int) -> List[bytes]:
         """
