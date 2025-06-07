@@ -33,12 +33,11 @@ except ImportError as e:
 # Assuming these local modules are structured correctly within the 'strainr' package
 from .genomic_types import (
     CountVector,
-    ReadId,
+    ReadId,  # Changed to relative import
     StrainIndex,
-)  # Changed to relative import
+)
 from .output import AbundanceCalculator
 from .utils import _get_sample_name
-
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
