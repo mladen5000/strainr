@@ -95,10 +95,8 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
     def __contains__(self, kmer: bytes) -> bool:
         return kmer in self.kmer_to_counts_map
 
-    def _load_database(self, expected_kmer_length: Optional[int]) -> None:
-        """
-            Internal method to load data from the Parquet database file.
-        """
+    def _read_and_validate_parquet_file(self) -> pd.DataFrame:
+        """Reads and performs initial validation on the Parquet database file."""
         print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
         if not self.database_path.is_file():
             raise FileNotFoundError(f"Database file not found: {self.database_path}")
@@ -135,7 +133,10 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             print(
                 f"Warning: K-mer index in {self.database_path} is not unique. Duplicates will be resolved by last occurrence when creating the lookup dictionary."
             )
+        return kmer_strain_df
 
+    def _infer_and_set_kmer_length(self, kmer_strain_df: pd.DataFrame, expected_kmer_length: Optional[int]) -> Tuple[bool, int]:
+        """Infers and validates k-mer length from the DataFrame."""
         first_kmer_obj = kmer_strain_df.index[0]
         kmer_type_is_str: bool
         inferred_k_len: int
@@ -157,7 +158,8 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             )
 
         # Determine and set self.kmer_length
-        if self.kmer_length is not None: # expected_kmer_length was provided
+        # self.kmer_length might have been pre-set by __init__ if expected_kmer_length was provided
+        if self.kmer_length is not None: # expected_kmer_length was provided at initialization
             if inferred_k_len != self.kmer_length:
                 raise ValueError(
                     f"Inferred k-mer length ({inferred_k_len}) from database file "
@@ -169,6 +171,10 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         if self.kmer_length == 0: # Should be caught by inferred_k_len == 0, but as a safeguard
              raise ValueError("K-mer length determined to be 0, which is invalid.")
 
+        return kmer_type_is_str, self.kmer_length # self.kmer_length is now guaranteed to be an int
+
+    def _convert_df_to_numpy_matrix(self, kmer_strain_df: pd.DataFrame) -> np.ndarray:
+        """Converts the DataFrame values to a NumPy uint8 matrix."""
         try:
             # Ensure all data is numeric before converting
             if not all(kmer_strain_df.map(lambda x: isinstance(x, (int, float, np.number))).all()):
@@ -191,9 +197,17 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             ) from e
         except Exception as e: # Catch other potential numpy conversion errors
             raise RuntimeError(f"Failed to convert DataFrame to NumPy array: {e}") from e
+        return count_matrix
 
+    def _populate_kmer_map(self, kmer_strain_df: pd.DataFrame, count_matrix: np.ndarray, kmer_type_is_str: bool) -> None:
+        """Populates the self.kmer_to_counts_map from the DataFrame and count matrix."""
         self.kmer_to_counts_map.clear() # Ensure it's empty before populating
         skipped_kmers_count = 0
+
+        # self.kmer_length should be set and validated by _infer_and_set_kmer_length before this method is called
+        if self.kmer_length is None:
+             raise RuntimeError("K-mer length was not set before calling _populate_kmer_map.")
+
 
         for i, kmer_obj in enumerate(kmer_strain_df.index):
             # Validate type and encode if needed
@@ -223,8 +237,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 kmer_bytes = kmer_obj
 
             # Validate length
-            # Validate length (self.kmer_length is now guaranteed to be set)
-            if len(kmer_bytes) != self.kmer_length:
+            if len(kmer_bytes) != self.kmer_length: # self.kmer_length is an int here
                 print(
                     f"Warning: K-mer '{kmer_obj}' (index {i}) has inconsistent length: {len(kmer_bytes)}. Expected {self.kmer_length}. Skipping."
                 )
@@ -249,6 +262,29 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
             print(
                 f"Warning: Skipped {skipped_kmers_count} k-mers during loading due to type, length, or encoding issues."
             )
+
+    def _load_database(self, expected_kmer_length: Optional[int]) -> None:
+        """
+            Internal method to load data from the Parquet database file.
+            Orchestrates calls to helper methods for each step of the loading process.
+        """
+        print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
+        # Note: The initial file existence check for self.database_path is now inside _read_and_validate_parquet_file.
+
+        kmer_strain_df = self._read_and_validate_parquet_file()
+
+        # self.kmer_length is potentially passed from __init__ via expected_kmer_length.
+        # _infer_and_set_kmer_length will use it if available, or infer and set it.
+        kmer_type_is_str, _ = self._infer_and_set_kmer_length(kmer_strain_df, expected_kmer_length)
+        # self.kmer_length is now authoritatively set.
+        # The returned actual_kmer_len is self.kmer_length, so not strictly needed as a separate variable here.
+
+        count_matrix = self._convert_df_to_numpy_matrix(kmer_strain_df)
+
+        self._populate_kmer_map(kmer_strain_df, count_matrix, kmer_type_is_str)
+
+        # The print statement summarizing loaded DB stats is in __init__, after _load_database is called.
+        # It will use the class attributes populated by the helper methods.
 
     def get_strain_counts_for_kmer(self, kmer: bytes) -> Optional[np.ndarray]:
         """
