@@ -20,11 +20,21 @@ K-mer Strategy:
   The `--skip-n-kmers` flag can be used to exclude such k-mers.
 - K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
   a common choice for bacterial genomes balancing specificity and sensitivity.
+  
+K-mer Strategy:
+- Canonical K-mers: The database stores canonical k-mers (the lexicographically
+  smaller of a k-mer and its reverse complement) to ensure strand-insensitivity
+  during classification.
+- Ambiguous Bases ('N'): By default, k-mers containing 'N' bases are included.
+  The `--skip-n-kmers` flag can be used to exclude such k-mers.
+- K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
+  a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
 import argparse
 import logging
 import multiprocessing as mp  # Added
+
 import pathlib
 import sys
 import tempfile
@@ -57,6 +67,7 @@ if not logger.handlers:
 try:
     from kmer_counter_rs import extract_kmers_rs
 
+
     _extract_kmers_func = extract_kmers_rs
     _RUST_KMER_COUNTER_AVAILABLE = True
     logger.info(
@@ -77,6 +88,7 @@ class DatabaseBuilder:
     This class encapsulates all steps from genome download to k-mer matrix
     generation and saving.
     """
+
 
     PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
@@ -392,6 +404,7 @@ class DatabaseBuilder:
         # If kmer_counter_rs behavior is uncertain or needs to be raw, ensure downstream
         # classification tools are aligned, or add an explicit canonicalization step here
         # (though that would preferably be handled by the Rust library itself for performance).
+
         if _extract_kmers_func is not None:  # Rust path
             try:
                 # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
@@ -402,6 +415,7 @@ class DatabaseBuilder:
                         kmer for kmer in kmers_from_rust if b"N" not in kmer
                     ]  # N is already uppercase due to upper_sequence_bytes
                 return kmers_from_rust
+
             except Exception as e:  # pragma: no cover - runtime fallback
                 logger.error(
                     f"Rust k-mer extraction failed: {e}. Falling back to Python canonical implementation."
@@ -427,6 +441,7 @@ class DatabaseBuilder:
                 kmers_list.append(
                     kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
                 )
+
         return kmers_list
 
     def _process_single_fasta_for_kmers(
@@ -437,6 +452,7 @@ class DatabaseBuilder:
         kmer_length: int,
         # num_total_strains: int, # No longer needed for this worker's direct task
     ) -> Tuple[str, int, Set[bytes]]:  # (strain_name, strain_idx, strain_kmers_set)
+
         """
         Extracts k-mers from a single FASTA file for one strain and returns them as a set.
 
@@ -465,15 +481,18 @@ class DatabaseBuilder:
                         "utf-8"
                     )  # Make sure this is compatible with _extract_kmers_from_bytes
 
+
                     # _extract_kmers_from_bytes now handles making sequence uppercase and canonical if Python fallback
                     kmers_from_seq = self._extract_kmers_from_bytes(
                         seq_bytes, kmer_length
                     )
                     strain_kmers.update(kmers_from_seq)  # update with list of bytes
+
         except Exception as e:
             logger.error(
                 f"Error processing FASTA file {genome_file} for strain {strain_name}: {e}"
             )
+
             # Depending on desired robustness, could return empty set or re-raise
             # For now, return empty set for this genome on error to not halt entire batch
             return strain_name, strain_idx, set()
@@ -481,6 +500,7 @@ class DatabaseBuilder:
         logger.debug(
             f"Extracted {len(strain_kmers)} unique k-mers for strain '{strain_name}'."
         )
+
         return strain_name, strain_idx, strain_kmers
 
     def _build_kmer_database_parallel(
@@ -510,6 +530,7 @@ class DatabaseBuilder:
         # A very rough threshold, e.g. 1 billion k-mers might take ~30GB for just kmer bytes
         if estimated_total_unique_kmers_approx > 500_000_000:  # 500 million k-mers
             logger.warning(
+
                 f"Processing {num_genomes} genomes. Estimated total unique k-mers could be very large, "
                 "potentially leading to high memory usage during in-memory aggregation. "
                 "Monitor memory closely."
@@ -530,6 +551,7 @@ class DatabaseBuilder:
             logger.info(
                 "Starting parallel k-mer extraction (results collected in memory)."
             )
+
             # Results from worker: (strain_name, strain_idx, strain_kmers_set)
             for result in tqdm(
                 pool.imap_unordered(worker_function, tasks),
@@ -548,10 +570,12 @@ class DatabaseBuilder:
             len(s_kmers) for _, _, s_kmers in extraction_results
         )
 
+
         for res_strain_name, res_strain_idx, strain_kmers_set in tqdm(
             extraction_results,
             total=len(extraction_results),  # This total is for number of genomes
             desc="Aggregating k-mers (genome by genome)",
+
         ):
             # Could make inner loop tqdm for kmer-level progress, but might be too verbose
             # for kmer_bytes in tqdm(strain_kmers_set, desc=f"Aggregating {res_strain_name}", leave=False):
@@ -674,6 +698,7 @@ def get_cli_parser() -> argparse.ArgumentParser:
         type=int,
         default=31,
         help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes.",
+
     )
     parser.add_argument(
         "-l",
@@ -715,11 +740,13 @@ def get_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="If set, k-mers containing 'N' (ambiguous) bases will be excluded from the database.",
     )
+
     return parser
 
 
 if __name__ == "__main__":
     logger.info("Strainr Database Building Script Started.")
+
 
     arg_parser = get_cli_parser()
     cli_args = arg_parser.parse_args()
