@@ -33,11 +33,12 @@ except ImportError as e:
 # Assuming these local modules are structured correctly within the 'strainr' package
 from .genomic_types import (
     CountVector,
-    ReadId,
+    ReadId,  # Changed to relative import
     StrainIndex,
 )  # Changed to relative import
 from .output import AbundanceCalculator
 from .utils import _get_sample_name
+
 
 
 # Type aliases for better readability
@@ -51,6 +52,7 @@ DEFAULT_ABUNDANCE_THRESHOLD = 0.001
 
 class KmerExtractor:
     """Handles k-mer extraction with fallback between Rust and Python implementations."""
+
     PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
     def __init__(self):
@@ -60,7 +62,7 @@ class KmerExtractor:
 
     def _initialize_extractor(self) -> None:
         """Initialize the k-mer extraction function with Rust fallback to Python."""
-        try:
+        try:  # Rust implementation
             from kmer_counter_rs import extract_kmers_rs
 
             self._extract_func = extract_kmers_rs
@@ -68,24 +70,37 @@ class KmerExtractor:
             logging.getLogger(__name__).info(
                 "Successfully imported Rust k-mer counter. Using Rust implementation."
             )
-        except ImportError:
+        except ImportError:  # Fallback to Python implementation
             self._extract_func = self._py_extract_canonical_kmers
             self._rust_available = False
             logging.getLogger(__name__).warning(
                 "Rust k-mer counter not found. Using Python fallback."
             )
-        except Exception as e:
+        except Exception as e:  # Fallback to Python implementation
             self._extract_func = self._py_extract_canonical_kmers
             self._rust_available = False
             logging.getLogger(__name__).error(
                 f"Error importing Rust k-mer counter: {e}. Using Python fallback."
             )
 
+    # @staticmethod
+    # def _py_reverse_complement(dna_sequence: bytes) -> bytes:
+    #     """Computes the reverse complement of a DNA sequence."""
+    #     complement_map = {
+    #         ord("A"): ord("T"),
+    #         ord("T"): ord("A"),
+    #         ord("C"): ord("G"),
+    #         ord("G"): ord("C"),
+    #         ord("N"): ord("N"),
+    #     }
+    #     return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
+
+    _RC_TABLE = bytes.maketrans(b"ACGTacgt", b"TGCAtgca")
+
     @staticmethod
-    def _py_reverse_complement(dna_sequence: bytes) -> bytes:
-        """Computes the reverse complement of a DNA sequence."""
-        # Assumes PY_RC_TRANSLATE_TABLE is defined at class level
-        return dna_sequence.translate(KmerExtractor.PY_RC_TRANSLATE_TABLE)[::-1]
+    def _py_reverse_complement(seq: bytes) -> bytes:
+        """Efficient reverse complement for DNA k-mers as bytes."""
+        return seq.translate(KmerExtractor._RC_TABLE)[::-1]
 
     def _py_extract_canonical_kmers(self, sequence: bytes, k: int) -> List[bytes]:
         """
@@ -285,7 +300,9 @@ class CliArgs(BaseModel):
         Pydantic calls this per field. The return type should be what Pydantic expects for that field
         after "before" validation, or Pydantic will attempt coercion.
         """
-        if v is None: # This case is for Optional fields like input_reverse if it's not provided.
+        if (
+            v is None
+        ):  # This case is for Optional fields like input_reverse if it's not provided.
             return None
 
         if isinstance(v, list):
@@ -310,12 +327,10 @@ class CliArgs(BaseModel):
     @model_validator(mode="after")
     def validate_paired_read_consistency(self) -> "CliArgs":
         """Validates consistency between forward and reverse read file lists."""
-        if self.input_reverse: # This is now Optional[List[pathlib.Path]]
+        if self.input_reverse:  # This is now Optional[List[pathlib.Path]]
             # self.input_forward is List[pathlib.Path]
             if len(self.input_forward) != len(self.input_reverse):
-                raise ValueError(
-                    "Number of forward and reverse read files must match."
-                )
+                raise ValueError("Number of forward and reverse read files must match.")
         return self
 
     # __init__ is not needed for Pydantic models unless custom logic beyond validation is required at instantiation.
@@ -553,6 +568,7 @@ class KmerClassificationWorkflow:
                         for strain_name_item in self.database.strain_names: # Corrected variable name
                             f_strains.write(f"{strain_name_item}\n")
                     self.logger.info(f"Strain names saved to: {strain_names_output_path}")
+
                 except Exception as e:
                     self.logger.error(f"Failed to save strain_names: {e}")
 
@@ -628,6 +644,7 @@ class KmerClassificationWorkflow:
                 print(f" --- Abundance Report for: {sample_name} ---")
                 # Make sure to use the reconstructed DataFrame
                 df_to_display_reconstructed = abundance_df_reconstructed[abundance_df_reconstructed["sample_hits"] > 0].copy()
+
                 unassigned_info_reconstructed = ""
                 if "NA" in df_to_display_reconstructed.index:
                     na_row_reconstructed = df_to_display_reconstructed.loc["NA"]
@@ -639,6 +656,7 @@ class KmerClassificationWorkflow:
 
                 # Default top_n=10 as in the original display_console_output method
                 print(df_to_display_reconstructed.head(10).to_string(float_format="%.4f"))
+
                 if unassigned_info_reconstructed:
                     print(unassigned_info_reconstructed)
                 print("--- End of Report ---")
@@ -753,9 +771,11 @@ def parse_cli_arguments() -> CliArgs:
         # argparse with nargs="*" ensures input_reverse is a list or None (if not provided).
         # No need to convert single-item lists to single items.
         cli_args = CliArgs(
-            input_forward=args.input_forward, # Directly pass the list from argparse
-            input_reverse=args.input_reverse if args.input_reverse else None, # Pass list or None
-            db_path=args.db, # This is a single path string from argparse
+            input_forward=args.input_forward,  # Directly pass the list from argparse
+            input_reverse=args.input_reverse
+            if args.input_reverse
+            else None,  # Pass list or None
+            db_path=args.db,  # This is a single path string from argparse
             num_processes=args.procs,
             output_dir=args.out,
             disambiguation_mode=args.mode,

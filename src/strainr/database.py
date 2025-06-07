@@ -97,6 +97,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
     def _read_and_validate_parquet_file(self) -> pd.DataFrame:
         """Reads and performs initial validation on the Parquet database file."""
+
         print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
         if not self.database_path.is_file():
             raise FileNotFoundError(f"Database file not found: {self.database_path}")

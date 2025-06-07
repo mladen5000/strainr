@@ -3,7 +3,7 @@ name = "strainr"
 version = "0.1.0"
 description = ""
 authors = ["mladen5000 <mladen.rasic@gmail.com>"]
-packages = [{include = "strainr", from = "src"}]  
+packages = [{include = "strainr", from = "src/strainr"}]  
 
 
 [tool.poetry.dependencies]
