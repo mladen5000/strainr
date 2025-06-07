@@ -29,16 +29,27 @@ K-mer Strategy:
   The `--skip-n-kmers` flag can be used to exclude such k-mers.
 - K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
   a common choice for bacterial genomes balancing specificity and sensitivity.
+
+K-mer Strategy:
+- Canonical K-mers: The database stores canonical k-mers (the lexicographically
+  smaller of a k-mer and its reverse complement) to ensure strand-insensitivity
+  during classification.
+- Ambiguous Bases ('N'): By default, k-mers containing 'N' bases are included.
+  The `--skip-n-kmers` flag can be used to exclude such k-mers.
+- K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
+  a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
 import argparse
 import logging
+import multiprocessing as mp  # Added
 import multiprocessing as mp  # Added
 import pathlib
 import sys
 import tempfile
 from collections import Counter, defaultdict
 from functools import partial
+from pathlib import Path
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -66,6 +77,7 @@ if not logger.handlers:
 try:
     from kmer_counter_rs import extract_kmers_rs
 
+
     _extract_kmers_func = extract_kmers_rs
     _RUST_KMER_COUNTER_AVAILABLE = True
     logger.info(
@@ -86,6 +98,7 @@ class DatabaseBuilder:
     This class encapsulates all steps from genome download to k-mer matrix
     generation and saving.
     """
+
 
     PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
@@ -416,8 +429,30 @@ class DatabaseBuilder:
         # classification tools are aligned, or add an explicit canonicalization step here
         # (though that would preferably be handled by the Rust library itself for performance).
         if _extract_kmers_func is not None:  # Rust path
+        # DEV NOTE / BIOINFORMATICS INTEGRITY:
+        # The Rust k-mer extraction function (`kmer_counter_rs.extract_kmers_rs`)
+        # is assumed to return CANONICAL k-mers (the lexicographically smaller of
+        # a k-mer and its reverse complement).
+        # This is crucial for consistency with the classification step, which typically
+        # processes reads by generating canonical k-mers to ensure strand-insensitivity.
+        # If the Rust implementation does not provide canonical k-mers, or provides
+        # raw k-mers, this could lead to mismatches during classification unless
+        # the k-mers from reads are also processed in the exact same (raw) way.
+        # The Python fallback in this script (`_py_extract_canonical_kmers` logic within
+        # `_extract_kmers_from_bytes`) *does* generate canonical k-mers.
+        # If kmer_counter_rs behavior is uncertain or needs to be raw, ensure downstream
+        # classification tools are aligned, or add an explicit canonicalization step here
+        # (though that would preferably be handled by the Rust library itself for performance).
+        if _extract_kmers_func is not None:  # Rust path
             try:
                 # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
+                kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
+                if self.args.skip_n_kmers:
+                    # Assuming kmer_counter_rs returns a list of bytes objects
+                    kmers_from_rust = [
+                        kmer for kmer in kmers_from_rust if b"N" not in kmer
+                    ]  # N is already uppercase due to upper_sequence_bytes
+                return kmers_from_rust
                 kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
                 if self.args.skip_n_kmers:
                     # Assuming kmer_counter_rs returns a list of bytes objects
@@ -450,6 +485,19 @@ class DatabaseBuilder:
                 kmers_list.append(
                     kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
                 )
+                kmer_candidate_bytes = seq_view[
+                    i : i + k
+                ].tobytes()  # kmer candidate before canonicalization
+
+                if (
+                    self.args.skip_n_kmers and b"N" in kmer_candidate_bytes
+                ):  # Check for 'N'
+                    continue
+
+                rc_kmer = self._py_reverse_complement_db(kmer_candidate_bytes)
+                kmers_list.append(
+                    kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
+                )
         return kmers_list
 
     def _process_single_fasta_for_kmers(
@@ -457,8 +505,12 @@ class DatabaseBuilder:
         genome_file_info: Tuple[
             pathlib.Path, str, int
         ],  # (file_path, strain_name, strain_idx)
+        genome_file_info: Tuple[
+            pathlib.Path, str, int
+        ],  # (file_path, strain_name, strain_idx)
         kmer_length: int,
         # num_total_strains: int, # No longer needed for this worker's direct task
+    ) -> Tuple[str, int, Set[bytes]]:  # (strain_name, strain_idx, strain_kmers_set)
     ) -> Tuple[str, int, Set[bytes]]:  # (strain_name, strain_idx, strain_kmers_set)
         """
         Extracts k-mers from a single FASTA file for one strain and returns them as a set.
@@ -487,8 +539,15 @@ class DatabaseBuilder:
                     seq_bytes = seq_str.encode(
                         "utf-8"
                     )  # Make sure this is compatible with _extract_kmers_from_bytes
+                    seq_bytes = seq_str.encode(
+                        "utf-8"
+                    )  # Make sure this is compatible with _extract_kmers_from_bytes
 
                     # _extract_kmers_from_bytes now handles making sequence uppercase and canonical if Python fallback
+                    kmers_from_seq = self._extract_kmers_from_bytes(
+                        seq_bytes, kmer_length
+                    )
+                    strain_kmers.update(kmers_from_seq)  # update with list of bytes
                     kmers_from_seq = self._extract_kmers_from_bytes(
                         seq_bytes, kmer_length
                     )
@@ -497,10 +556,16 @@ class DatabaseBuilder:
             logger.error(
                 f"Error processing FASTA file {genome_file} for strain {strain_name}: {e}"
             )
+            logger.error(
+                f"Error processing FASTA file {genome_file} for strain {strain_name}: {e}"
+            )
             # Depending on desired robustness, could return empty set or re-raise
             # For now, return empty set for this genome on error to not halt entire batch
             return strain_name, strain_idx, set()
 
+        logger.debug(
+            f"Extracted {len(strain_kmers)} unique k-mers for strain '{strain_name}'."
+        )
         logger.debug(
             f"Extracted {len(strain_kmers)} unique k-mers for strain '{strain_name}'."
         )
@@ -533,6 +598,8 @@ class DatabaseBuilder:
         # A very rough threshold, e.g. 1 billion k-mers might take ~30GB for just kmer bytes
         if estimated_total_unique_kmers_approx > 500_000_000:  # 500 million k-mers
             logger.warning(
+        if estimated_total_unique_kmers_approx > 500_000_000:  # 500 million k-mers
+            logger.warning(
                 f"Processing {num_genomes} genomes. Estimated total unique k-mers could be very large, "
                 "potentially leading to high memory usage during in-memory aggregation. "
                 "Monitor memory closely."
@@ -553,6 +620,9 @@ class DatabaseBuilder:
             logger.info(
                 "Starting parallel k-mer extraction (results collected in memory)."
             )
+            logger.info(
+                "Starting parallel k-mer extraction (results collected in memory)."
+            )
             # Results from worker: (strain_name, strain_idx, strain_kmers_set)
             for result in tqdm(
                 pool.imap_unordered(worker_function, tasks),
@@ -570,9 +640,14 @@ class DatabaseBuilder:
         total_kmers_to_aggregate = sum(
             len(s_kmers) for _, _, s_kmers in extraction_results
         )
+        total_kmers_to_aggregate = sum(
+            len(s_kmers) for _, _, s_kmers in extraction_results
+        )
 
         for res_strain_name, res_strain_idx, strain_kmers_set in tqdm(
             extraction_results,
+            total=len(extraction_results),  # This total is for number of genomes
+            desc="Aggregating k-mers (genome by genome)",
             total=len(extraction_results),  # This total is for number of genomes
             desc="Aggregating k-mers (genome by genome)",
         ):
@@ -697,6 +772,11 @@ def get_cli_parser() -> argparse.ArgumentParser:
         type=int,
         default=31,
         help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes.",
+        "-k",
+        "--kmerlen",
+        type=int,
+        default=31,
+        help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes.",
     )
     parser.add_argument(
         "-l",
@@ -738,10 +818,16 @@ def get_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="If set, k-mers containing 'N' (ambiguous) bases will be excluded from the database.",
     )
+    parser.add_argument(
+        "--skip-n-kmers",
+        action="store_true",
+        help="If set, k-mers containing 'N' (ambiguous) bases will be excluded from the database.",
+    )
     return parser
 
 
 if __name__ == "__main__":
+    logger.info("Strainr Database Building Script Started.")
     logger.info("Strainr Database Building Script Started.")
 
     arg_parser = get_cli_parser()
