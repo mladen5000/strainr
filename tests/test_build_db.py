@@ -11,7 +11,7 @@ import shutil # For copying file objects
 REAL_READ_CSV = pd.read_csv
 
 # Import the class/functions to be tested
-from src.strainr.build_db import DatabaseBuilder
+from strainr.build_db import DatabaseBuilder
 # from src.strainr.utils import open_file_transparently # This is used internally by SeqIO.parse
 
 # Helper function for creating gzipped FASTA files
@@ -253,7 +253,7 @@ GCA_001,101,100,non_existent_GCA_001.fna.gz
 
     # Test methods for k-mer generation in _process_single_fasta_for_kmers
     # Patch 'open_file_transparently' which is used by SeqIO.parse inside the target function
-    @patch('src.strainr.build_db.open_file_transparently', new_callable=mock_open)
+    @patch('strainr.build_db.open_file_transparently', new_callable=mock_open)
     def test_process_single_fasta_for_kmers_writes_correct_kmers(self, mock_actual_open):
         # Setup mock for open_file_transparently to return FASTA content
         # This mock will be used by SeqIO.parse(f_handle, "fasta")
@@ -291,7 +291,7 @@ GCA_001,101,100,non_existent_GCA_001.fna.gz
         if temp_kmer_file_path.exists(): # Cleanup this specific file
              temp_kmer_file_path.unlink()
 
-    @patch('src.strainr.build_db.open_file_transparently', new_callable=mock_open)
+    @patch('strainr.build_db.open_file_transparently', new_callable=mock_open)
     def test_process_single_fasta_kmers_seq_shorter_than_kmerlen(self, mock_actual_open):
         mock_actual_open.return_value = StringIO(">seq1\nATG\n") # kmerlen is 5
         
@@ -309,7 +309,7 @@ GCA_001,101,100,non_existent_GCA_001.fna.gz
 
         if temp_kmer_file_path.exists(): temp_kmer_file_path.unlink()
 
-    @patch('src.strainr.build_db.open_file_transparently', new_callable=mock_open)
+    @patch('strainr.build_db.open_file_transparently', new_callable=mock_open)
     def test_process_single_fasta_kmers_seq_equals_kmerlen(self, mock_actual_open):
         mock_actual_open.return_value = StringIO(">seq1\nATGCG\n") # kmerlen is 5
         
@@ -465,7 +465,7 @@ GCA_001,101,100,non_existent_GCA_001.fna.gz
             self.fail(f"Kmer {kmer_ccccc_bytes.decode()} not found in database index")
 
 
-    @patch('src.strainr.build_db.ngd.download')
+    @patch('strainr.build_db.ngd.download')
     def test_create_database_ncbi_mocked(self, mock_ngd_download):
         # 1. Setup: Configure args for NCBI download
         self.builder.args.taxid = "12345" # Example taxid
