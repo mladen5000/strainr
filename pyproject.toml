@@ -3,19 +3,20 @@ name = "strainr"
 version = "0.1.0"
 description = ""
 authors = ["mladen5000 <mladen.rasic@gmail.com>"]
-packages = [{include = "strainr", from = "src/strainr"}]  
+packages = [{include = "strainr", from = "src"}]
 
 
 [tool.poetry.dependencies]
 python = ">3.10,<=3.14"
 numpy = "^2.2.6"
 scipy = "^1.15.3"
-pandas = "^2.2.3"
+# pandas = "~2.2.0" # Commented out again
 tqdm = "^4.67.1"
 biopython = "^1.85"
 ncbi-genome-download = "^0.3.3"
 
 [tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0" # Ensuring pytest is a dev dependency
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
