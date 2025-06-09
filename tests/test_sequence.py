@@ -7,7 +7,7 @@ and 'src' is a subdirectory.
 import pytest
 
 
-from src.strainr.sequence import (
+from strainr.sequence import (
     GenomicSequence,
     extract_kmers_from_sequence,
 )
