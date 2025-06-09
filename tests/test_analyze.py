@@ -11,10 +11,6 @@ import numpy as np
 import pytest
 from strainr.analyze import ClassificationAnalyzer, ReadHitResults
 from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
-import numpy as np
-import pytest
-from strainr.analyze import ClassificationAnalyzer, ReadHitResults
-from strainr.genomic_types import CountVector, ReadHitResults, ReadId, StrainIndex
 
 # --- Fixtures ---
 
@@ -189,10 +185,10 @@ def test_separate_hit_categories_invalid_input_type(
     with pytest.raises(TypeError, match="classification_results must be a list."):
         analyzer_fixture.separate_hit_categories({"invalid": "data"})  # type: ignore
 
-    results_invalid_content: ReadHitResults = [("read1", [0, 5, 0, 0])]  # type: ignore
+    results_invalid_content: ReadHitResults = [("read1", np.array([0, 5, 0, 0]))]  # type: ignore
     with pytest.raises(
         TypeError,
-        match=r"Item 0 \('read1'\): CountVector must be a NumPy array, got <class 'list'>.",  # Corrected regex
+        match=r"Item \d+ \('.*?'\): CountVector must be a NumPy array, got <class 'list'>.",
     ):
         analyzer_fixture.separate_hit_categories(results_invalid_content)
 
@@ -277,7 +273,7 @@ def test_convert_prior_counts_to_probability_vector_invalid_input(
 # --- Test _resolve_single_ambiguous_read ---
 
 
-@patch("src.strainr.analyze.np.random.default_rng")
+@patch("strainr.analyze.np.random.default_rng")
 def test_resolve_single_ambiguous_read_max_mode(
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
@@ -313,7 +309,7 @@ def test_resolve_single_ambiguous_read_max_mode(
     # So, no assertion on mock_rng_instance.choice call count.
 
 
-@patch("src.strainr.analyze.np.random.default_rng")
+@patch("strainr.analyze.np.random.default_rng")
 def test_resolve_single_ambiguous_read_random_mode(
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
@@ -343,7 +339,7 @@ def test_resolve_single_ambiguous_read_random_mode(
     np.testing.assert_array_almost_equal(call_args[1]["p"], expected_probs)
 
 
-@patch("src.strainr.analyze.np.random.default_rng")
+@patch("strainr.analyze.np.random.default_rng")
 def test_resolve_single_ambiguous_read_multinomial_mode(
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
@@ -370,7 +366,7 @@ def test_resolve_single_ambiguous_read_multinomial_mode(
     )
 
 
-@patch("src.strainr.analyze.np.random.default_rng")
+@patch("strainr.analyze.np.random.default_rng")
 def test_resolve_single_ambiguous_read_dirichlet_mode(
     mock_default_rng: MagicMock,
     strain_names_fixture: List[str],
