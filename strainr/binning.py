@@ -1,6 +1,5 @@
 # Standard library imports
 import gzip  # For writing gzipped example files
-import multiprocessing as mp
 import pathlib
 import traceback  # For more detailed error info in main example
 from typing import Optional, Dict, List, Set, Tuple, Union
@@ -320,7 +319,9 @@ def _extract_reads_for_strain(
             )
             # Removed redundant/misplaced print and except blocks that caused syntax errors.
 
+
 # Removed _extract_reads_for_strain function as its logic is integrated into _write_reads_to_bins_single_pass
+
 
 def _detect_sequence_format(file_path: pathlib.Path) -> str:
     """Detects sequence file format (fasta or fastq) based on the first character."""
@@ -374,15 +375,18 @@ def _write_reads_to_bins_single_pass(
     # Ensure read_to_strain_assignment_table index is string type for matching with read IDs
     if not pd.api.types.is_string_dtype(read_to_strain_assignment_table.index.dtype):
         try:
-            read_to_strain_assignment_table.index = read_to_strain_assignment_table.index.astype(str)
+            read_to_strain_assignment_table.index = (
+                read_to_strain_assignment_table.index.astype(str)
+            )
         except Exception as e:
             raise TypeError(f"Could not convert assignment table index to string: {e}")
-
 
     try:
         # Open output file handles for each strain and read type (R1/R2)
         for strain_name in strains_to_bin:
-            safe_strain_filename = strain_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            safe_strain_filename = (
+                strain_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            )
 
             r1_binned_path = output_bin_dir / f"bin.{safe_strain_filename}_R1.fastq"
             # Output as fastq regardless of input, common practice for binned reads
@@ -404,13 +408,15 @@ def _write_reads_to_bins_single_pass(
         if reverse_fastq_path:
             rev_format = _detect_sequence_format(reverse_fastq_path)
             if fwd_format != rev_format:
-                raise ValueError("Forward and reverse read files have mismatched formats.")
+                raise ValueError(
+                    "Forward and reverse read files have mismatched formats."
+                )
 
         # Process reads
         with open_file_transparently(forward_fastq_path, "rt") as fwd_fh:
             fwd_iter = SeqIO.parse(fwd_fh, fwd_format)
             rev_iter = None
-            rev_fh = None # ensure it's defined for finally block
+            rev_fh = None  # ensure it's defined for finally block
 
             if reverse_fastq_path:
                 rev_fh = open_file_transparently(reverse_fastq_path, "rt")
@@ -423,33 +429,47 @@ def _write_reads_to_bins_single_pass(
                     try:
                         rev_record = next(rev_iter)
                         # Basic check for read ID consistency in pairs
-                        if rev_record.id.split('/')[0].split(' ')[0] != read_id.split('/')[0].split(' ')[0]:
-                            print(f"Warning: Mismatched read IDs: '{read_id}' (R1) and '{rev_record.id}' (R2). Skipping R2 for this pair.")
-                            rev_record = None # Treat as single-end for this problematic pair
+                        if (
+                            rev_record.id.split("/")[0].split(" ")[0]
+                            != read_id.split("/")[0].split(" ")[0]
+                        ):
+                            print(
+                                f"Warning: Mismatched read IDs: '{read_id}' (R1) and '{rev_record.id}' (R2). Skipping R2 for this pair."
+                            )
+                            rev_record = (
+                                None  # Treat as single-end for this problematic pair
+                            )
                     except StopIteration:
-                        print(f"Warning: Reverse reads ended before forward reads at R1 ID: {read_id}")
-                        rev_iter = None # Stop trying to fetch reverse reads
+                        print(
+                            f"Warning: Reverse reads ended before forward reads at R1 ID: {read_id}"
+                        )
+                        rev_iter = None  # Stop trying to fetch reverse reads
 
                 if read_id in read_to_strain_assignment_table.index:
                     assignments = read_to_strain_assignment_table.loc[read_id]
                     for strain_name in strains_to_bin:
                         if strain_name in assignments and assignments[strain_name] == 1:
                             r1_out_handle, r2_out_handle = output_handles[strain_name]
-                            SeqIO.write(fwd_record, r1_out_handle, "fastq") # Write as FASTQ
+                            SeqIO.write(
+                                fwd_record, r1_out_handle, "fastq"
+                            )  # Write as FASTQ
                             binned_read_counts[strain_name]["R1"] += 1
                             if rev_record and r2_out_handle:
-                                SeqIO.write(rev_record, r2_out_handle, "fastq") # Write as FASTQ
+                                SeqIO.write(
+                                    rev_record, r2_out_handle, "fastq"
+                                )  # Write as FASTQ
                                 binned_read_counts[strain_name]["R2"] += 1
-                            break # Found assignment, no need to check other strains for this read
+                            break  # Found assignment, no need to check other strains for this read
             if rev_fh:
                 rev_fh.close()
 
     except Exception as e:
         print(f"Error during single-pass binning: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
-        for strain_name_key in output_handles: # strain_name_key is strain_name
+        for strain_name_key in output_handles:  # strain_name_key is strain_name
             r1_h, r2_h = output_handles[strain_name_key]
             if r1_h:
                 r1_h.close()
@@ -457,10 +477,10 @@ def _write_reads_to_bins_single_pass(
                 r2_h.close()
 
     for strain_name, counts in binned_read_counts.items():
-        if counts["R1"] > 0 :
-             print(f"Strain {strain_name}: Binned {counts['R1']} R1 reads.")
+        if counts["R1"] > 0:
+            print(f"Strain {strain_name}: Binned {counts['R1']} R1 reads.")
         if reverse_fastq_path and counts["R2"] > 0:
-             print(f"Strain {strain_name}: Binned {counts['R2']} R2 reads.")
+            print(f"Strain {strain_name}: Binned {counts['R2']} R2 reads.")
 
     return binned_read_counts
 
@@ -473,7 +493,7 @@ def create_binned_fastq_files(
     output_dir: pathlib.Path,
     num_bins_to_create: int = 2,
     unassigned_marker: str = "NA",
-) -> Tuple[Set[str], Dict[str, Dict[str, int]]]: # Return type changed
+) -> Tuple[Set[str], Dict[str, Dict[str, int]]]:  # Return type changed
     """Orchestrates binning of reads for the top N identified strains using a single pass."""
 
     # Validations (largely unchanged)
@@ -520,14 +540,17 @@ def create_binned_fastq_files(
     strains_to_process: List[str] = []
     if num_bins_to_create > 0 and top_strain_names:
         valid_strains_for_binning = [
-            s_name for s_name in top_strain_names
+            s_name
+            for s_name in top_strain_names
             if s_name and (s_name != unassigned_marker if unassigned_marker else True)
         ]
         strains_to_process = valid_strains_for_binning[:num_bins_to_create]
 
     if not strains_to_process:
-        print(f"No strains selected for binning (num_bins_to_create={num_bins_to_create}, "
-              f"top strains identified: {len(top_strain_names)}, valid for binning: {len(strains_to_process)}).")
+        print(
+            f"No strains selected for binning (num_bins_to_create={num_bins_to_create}, "
+            f"top strains identified: {len(top_strain_names)}, valid for binning: {len(strains_to_process)})."
+        )
         return set(), {}
 
     print(
@@ -535,15 +558,20 @@ def create_binned_fastq_files(
     )
 
     # Ensure all strains_to_process are actual columns in the table
-    valid_strains_in_table = [s for s in strains_to_process if s in read_to_strain_assignment_table.columns]
+    valid_strains_in_table = [
+        s for s in strains_to_process if s in read_to_strain_assignment_table.columns
+    ]
     if len(valid_strains_in_table) != len(strains_to_process):
         missing_strains = set(strains_to_process) - set(valid_strains_in_table)
-        print(f"Warning: The following strains selected for binning are not in the assignment table columns and will be skipped: {missing_strains}")
+        print(
+            f"Warning: The following strains selected for binning are not in the assignment table columns and will be skipped: {missing_strains}"
+        )
         strains_to_process = valid_strains_in_table
         if not strains_to_process:
-            print("No valid strains left to process after checking assignment table columns.")
+            print(
+                "No valid strains left to process after checking assignment table columns."
+            )
             return set(), {}
-
 
     binned_read_counts = _write_reads_to_bins_single_pass(
         read_to_strain_assignment_table=read_to_strain_assignment_table,
@@ -553,7 +581,11 @@ def create_binned_fastq_files(
         output_bin_dir=bin_output_dir,
     )
 
-    binned_strain_names_set = {strain for strain, counts in binned_read_counts.items() if counts["R1"] > 0 or counts["R2"] > 0}
+    binned_strain_names_set = {
+        strain
+        for strain, counts in binned_read_counts.items()
+        if counts["R1"] > 0 or counts["R2"] > 0
+    }
 
     # Multiprocessing is removed for now. The function returns the set of names for which bins were created
     # and the counts of reads binned.
@@ -606,10 +638,12 @@ def run_binning_pipeline(
     )
 
     # Ensure ReadId index for fast lookup
-    if read_to_strain_assignment_table.index.name != 'ReadId':
-         # If ReadId is a column, set it as index. Otherwise, assume index is already ReadId.
-        if 'ReadId' in read_to_strain_assignment_table.columns:
-            read_to_strain_assignment_table = read_to_strain_assignment_table.set_index('ReadId')
+    if read_to_strain_assignment_table.index.name != "ReadId":
+        # If ReadId is a column, set it as index. Otherwise, assume index is already ReadId.
+        if "ReadId" in read_to_strain_assignment_table.columns:
+            read_to_strain_assignment_table = read_to_strain_assignment_table.set_index(
+                "ReadId"
+            )
         # else: we assume the user has provided a table with ReadId as index if the column isn't named 'ReadId'
 
     has_actual_assignments = any(
@@ -638,9 +672,7 @@ def run_binning_pipeline(
             print(
                 "Info: Read-to-strain assignment table is empty as there are no actual read assignments (only unassigned or empty final_assignments)."
             )
-        elif (
-            all_strain_names and has_actual_assignments
-        ):
+        elif all_strain_names and has_actual_assignments:
             print(
                 "Warning: Read-to-strain assignment table is unexpectedly empty despite assignments and strain names. Binning may not produce results."
             )
@@ -657,14 +689,16 @@ def run_binning_pipeline(
         )
 
     # 3. Create binned FASTQ files (now single-pass, no multiprocessing list)
-    binned_strains_set, binned_read_counts = create_binned_fastq_files( # Return type changed
-        top_strain_names=top_strains,
-        read_to_strain_assignment_table=read_to_strain_assignment_table,
-        forward_fastq_path=fwd_fastq_path,
-        reverse_fastq_path=rev_fastq_path,
-        output_dir=out_dir_path,
-        num_bins_to_create=num_top_strains_to_bin,
-        unassigned_marker=unassigned_marker,
+    binned_strains_set, binned_read_counts = (
+        create_binned_fastq_files(  # Return type changed
+            top_strain_names=top_strains,
+            read_to_strain_assignment_table=read_to_strain_assignment_table,
+            forward_fastq_path=fwd_fastq_path,
+            reverse_fastq_path=rev_fastq_path,
+            output_dir=out_dir_path,
+            num_bins_to_create=num_top_strains_to_bin,
+            unassigned_marker=unassigned_marker,
+        )
     )
 
     # No processes to join anymore with the single-process approach
@@ -676,7 +710,9 @@ def run_binning_pipeline(
         )
         for strain_name, counts in binned_read_counts.items():
             if counts["R1"] > 0 or (counts["R2"] > 0 if rev_fastq_path else False):
-                 print(f"  Strain {strain_name}: Total {counts['R1']} R1 reads, {counts['R2']} R2 reads binned.")
+                print(
+                    f"  Strain {strain_name}: Total {counts['R1']} R1 reads, {counts['R2']} R2 reads binned."
+                )
     else:
         print(
             "Binning pipeline finished. No strains were selected for binning or no reads could be binned."

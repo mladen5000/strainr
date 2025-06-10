@@ -20,7 +20,7 @@ K-mer Strategy:
   The `--skip-n-kmers` flag can be used to exclude such k-mers.
 - K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
   a common choice for bacterial genomes balancing specificity and sensitivity.
-  
+
 K-mer Strategy:
 - Canonical K-mers: The database stores canonical k-mers (the lexicographically
   smaller of a k-mer and its reverse complement) to ensure strand-insensitivity
@@ -37,7 +37,6 @@ import multiprocessing as mp  # Added
 
 import pathlib
 import sys
-import tempfile
 from collections import Counter, defaultdict
 from functools import partial
 from pathlib import Path
@@ -67,7 +66,6 @@ if not logger.handlers:
 try:
     from kmer_counter_rs import extract_kmers_rs
 
-
     _extract_kmers_func = extract_kmers_rs
     _RUST_KMER_COUNTER_AVAILABLE = True
     logger.info(
@@ -88,7 +86,6 @@ class DatabaseBuilder:
     This class encapsulates all steps from genome download to k-mer matrix
     generation and saving.
     """
-
 
     PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
@@ -169,10 +166,12 @@ class DatabaseBuilder:
             genome_output_dir / f"metadata_summary_{genome_target_dir_suffix}.tsv"
         )
 
-        ncbi_kwargs.update({
-            "output": genome_output_dir,
-            "metadata_table": metadata_table_path,
-        })
+        ncbi_kwargs.update(
+            {
+                "output": genome_output_dir,
+                "metadata_table": metadata_table_path,
+            }
+        )
 
         logger.info(
             f"Downloading genomes to: {genome_output_dir} with metadata to {metadata_table_path}"
@@ -452,7 +451,6 @@ class DatabaseBuilder:
         kmer_length: int,
         # num_total_strains: int, # No longer needed for this worker's direct task
     ) -> Tuple[str, int, Set[bytes]]:  # (strain_name, strain_idx, strain_kmers_set)
-
         """
         Extracts k-mers from a single FASTA file for one strain and returns them as a set.
 
@@ -480,7 +478,6 @@ class DatabaseBuilder:
                     seq_bytes = seq_str.encode(
                         "utf-8"
                     )  # Make sure this is compatible with _extract_kmers_from_bytes
-
 
                     # _extract_kmers_from_bytes now handles making sequence uppercase and canonical if Python fallback
                     kmers_from_seq = self._extract_kmers_from_bytes(
@@ -530,7 +527,6 @@ class DatabaseBuilder:
         # A very rough threshold, e.g. 1 billion k-mers might take ~30GB for just kmer bytes
         if estimated_total_unique_kmers_approx > 500_000_000:  # 500 million k-mers
             logger.warning(
-
                 f"Processing {num_genomes} genomes. Estimated total unique k-mers could be very large, "
                 "potentially leading to high memory usage during in-memory aggregation. "
                 "Monitor memory closely."
@@ -570,12 +566,10 @@ class DatabaseBuilder:
             len(s_kmers) for _, _, s_kmers in extraction_results
         )
 
-
         for res_strain_name, res_strain_idx, strain_kmers_set in tqdm(
             extraction_results,
             total=len(extraction_results),  # This total is for number of genomes
             desc="Aggregating k-mers (genome by genome)",
-
         ):
             # Could make inner loop tqdm for kmer-level progress, but might be too verbose
             # for kmer_bytes in tqdm(strain_kmers_set, desc=f"Aggregating {res_strain_name}", leave=False):
@@ -698,7 +692,6 @@ def get_cli_parser() -> argparse.ArgumentParser:
         type=int,
         default=31,
         help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes.",
-
     )
     parser.add_argument(
         "-l",
@@ -746,7 +739,6 @@ def get_cli_parser() -> argparse.ArgumentParser:
 
 if __name__ == "__main__":
     logger.info("Strainr Database Building Script Started.")
-
 
     arg_parser = get_cli_parser()
     cli_args = arg_parser.parse_args()

@@ -2,7 +2,6 @@
 Sequence handling and k-mer extraction functionality.
 """
 
-import pathlib
 from dataclasses import dataclass, field
 from typing import List, Set
 

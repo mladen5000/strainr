@@ -5,7 +5,6 @@ import pathlib
 import pickle
 import sys
 import logging
-from typing import Tuple, List, Dict, Union
 
 # It's good practice to ensure src directory is in PYTHONPATH if running from root,
 # or use relative imports if the runner is structured as part of a package.
@@ -297,16 +296,18 @@ def main():
         )
 
         if assignments_file.exists() and strains_file.exists():
-            processed_samples_data.append({
-                "sample_name": sample_name_for_output,
-                "fwd_reads": fwd_read_file,
-                "rev_reads": rev_read_file
-                if (args.classify_input_reverse and i < num_rev_files)
-                else None,
-                "assignments_pkl": assignments_file,
-                "strain_names_txt": strains_file,
-                "classify_out_dir": classify_out_dir_path,
-            })
+            processed_samples_data.append(
+                {
+                    "sample_name": sample_name_for_output,
+                    "fwd_reads": fwd_read_file,
+                    "rev_reads": rev_read_file
+                    if (args.classify_input_reverse and i < num_rev_files)
+                    else None,
+                    "assignments_pkl": assignments_file,
+                    "strain_names_txt": strains_file,
+                    "classify_out_dir": classify_out_dir_path,
+                }
+            )
         else:
             logger.warning(
                 f"Output files for binning not found for sample {sample_name_for_output}. Skipping binning for this sample."

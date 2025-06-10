@@ -4,7 +4,7 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
-from typing import Dict, IO, List, Tuple, Union, Any, TextIO, BinaryIO
+from typing import Dict, List, Tuple, Union, TextIO, BinaryIO
 
 import numpy as np  # For type hinting np.ndarray
 import pandas as pd
@@ -45,7 +45,8 @@ def open_file_transparently(
     #     more explicit for callers.
     #   - Adding more comprehensive tests for various mode combinations
     #     and file types.
-    file_path: Union[str, pathlib.Path], mode: str = "rt"
+    file_path: Union[str, pathlib.Path],
+    mode: str = "rt",
 ) -> Union[TextIO, BinaryIO]:
     """Opens a file, transparently handling gzip compression.
 

@@ -155,22 +155,24 @@ def test_get_top_strain_names_include_unassigned(
 # --- Tests for _extract_reads_for_strain ---
 
 
-@patch("strainr.binning.open_file_transparently", new_callable=mock_open) # Patched where it's looked up
+@patch(
+    "strainr.binning.open_file_transparently", new_callable=mock_open
+)  # Patched where it's looked up
 @patch("strainr.binning.SeqIO.parse")
 @patch("strainr.binning.SeqIO.write")
-@patch("pathlib.Path.is_file") # Effectively mock_path_is_file, the first arg
+@patch("pathlib.Path.is_file")  # Effectively mock_path_is_file, the first arg
 def test_extract_reads_for_strain_r1_only(
-    mock_path_is_file: MagicMock,      # from @patch("pathlib.Path.is_file")
-    mock_seqio_write_actual: MagicMock,       # from @patch("strainr.binning.SeqIO.write")
-    mock_seqio_parse_actual: MagicMock,       # from @patch("strainr.binning.SeqIO.parse")
-    mock_open_transparently_actual: MagicMock, # from @patch("strainr.binning.open_file_transparently")
-    tmp_output_dir: pathlib.Path,      # Fixture
-    mock_fastq_paths: Dict[str, pathlib.Path], # Fixture
+    mock_path_is_file: MagicMock,  # from @patch("pathlib.Path.is_file")
+    mock_seqio_write_actual: MagicMock,  # from @patch("strainr.binning.SeqIO.write")
+    mock_seqio_parse_actual: MagicMock,  # from @patch("strainr.binning.SeqIO.parse")
+    mock_open_transparently_actual: MagicMock,  # from @patch("strainr.binning.open_file_transparently")
+    tmp_output_dir: pathlib.Path,  # Fixture
+    mock_fastq_paths: Dict[str, pathlib.Path],  # Fixture
 ):
     r1_path = mock_fastq_paths["r1"]
     # mock_path_is_file is active due to the decorator
     # Configure it if specific return values per call are needed, otherwise it's a MagicMock
-    mock_path_is_file.return_value = True # Default for any is_file call
+    mock_path_is_file.return_value = True  # Default for any is_file call
 
     read_ids_for_strain = {"read_A1", "read_A2"}
     all_seq_records = [

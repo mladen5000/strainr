@@ -173,7 +173,8 @@ def test_db_init_kmer_length_mismatch_error(  # Renamed test, checking for error
 
 def test_db_init_file_not_found():
     with pytest.raises(
-        FileNotFoundError, match=r"Database file not found: .*/non_existent_file_for_db.parquet"
+        FileNotFoundError,
+        match=r"Database file not found: .*/non_existent_file_for_db.parquet",
     ):
         StrainKmerDatabase(
             "non_existent_file_for_db.parquet", expected_kmer_length=5
@@ -200,7 +201,10 @@ def test_db_init_not_a_dataframe_error(
     mock_read_parquet.return_value = {"not_a_df": True}
     db_path = tmp_path / "not_df_db.parquet"
     db_path.touch()
-    with pytest.raises(TypeError, match=r"Data loaded from .*not_df_db.parquet is not a pandas DataFrame \(type: <class 'dict'>\)\."):
+    with pytest.raises(
+        TypeError,
+        match=r"Data loaded from .*not_df_db.parquet is not a pandas DataFrame \(type: <class 'dict'>\)\.",
+    ):
         StrainKmerDatabase(db_path, expected_kmer_length=5)
 
 
@@ -287,8 +291,8 @@ def test_db_init_non_numeric_data_in_df_error(
     parquet_db_file_db: pathlib.Path, default_kmer_length_db: int
 ):
     with pytest.raises(
-        RuntimeError, # The final error raised after internal TypeError
-        match=r"Failed to convert DataFrame to NumPy array: Non-numeric data found in DataFrame values. Cannot convert to count matrix. Error: could not convert string to float: 'X'"
+        RuntimeError,  # The final error raised after internal TypeError
+        match=r"Failed to convert DataFrame to NumPy array: Non-numeric data found in DataFrame values. Cannot convert to count matrix. Error: could not convert string to float: 'X'",
     ):
         StrainKmerDatabase(
             parquet_db_file_db, expected_kmer_length=default_kmer_length_db

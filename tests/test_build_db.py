@@ -530,10 +530,12 @@ GCA_001,101,100,non_existent_GCA_001.fna.gz
         # Verify column names (strain identifiers)
         # Default naming from _get_genome_names_for_files uses filename without extension
         # It also appends _1, _2 if names are duplicated, but here they should be unique.
-        expected_strain_names = sorted([
-            "strainA",
-            "strainB",
-        ])  # build_db sorts file list, so names might be sorted
+        expected_strain_names = sorted(
+            [
+                "strainA",
+                "strainB",
+            ]
+        )  # build_db sorts file list, so names might be sorted
         actual_strain_names = sorted(list(db_df.columns))
         self.assertListEqual(actual_strain_names, expected_strain_names)
 

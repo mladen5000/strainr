@@ -112,11 +112,13 @@ class TestExtractKmerRs(unittest.TestCase):
             os.remove(temp_fasta)
 
     def test_multiple_sequences_in_file(self):
-        temp_fasta = self._create_temp_fasta_file([
-            ("seq1", "AAAAA"),  # AAAA: 2
-            ("seq2", "GATTACA"),  # GATT, ATTA, TTAC, TACA -> GATT, TAAT, GTAA, TACA
-            # GATT:1, TAAT:1, GTAA:1, TACA:1
-        ])
+        temp_fasta = self._create_temp_fasta_file(
+            [
+                ("seq1", "AAAAA"),  # AAAA: 2
+                ("seq2", "GATTACA"),  # GATT, ATTA, TTAC, TACA -> GATT, TAAT, GTAA, TACA
+                # GATT:1, TAAT:1, GTAA:1, TACA:1
+            ]
+        )
         try:
             result = extract_kmer_rs(temp_fasta)
             expected = {
@@ -134,9 +136,9 @@ class TestExtractKmerRs(unittest.TestCase):
         # Needletail should skip kmers with N
         # "AAANTTT" -> AAA (skip AAN, ANT, NTT), TTT
         # Canonical: AAA, AAA
-        temp_fasta = self._create_temp_fasta_file([
-            ("seq1", "AAANTTTT")
-        ])  # AAAN, AANT, ANTT, NTTT, TTTT
+        temp_fasta = self._create_temp_fasta_file(
+            [("seq1", "AAANTTTT")]
+        )  # AAAN, AANT, ANTT, NTTT, TTTT
         # Kmers from needletail: TTTT (AAAA)
         # If k=4, AAAN, AANT, ANTT, NTTT are skipped by needletail.
         # Only TTTT processed.

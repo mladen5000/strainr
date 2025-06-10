@@ -174,11 +174,11 @@ def test_convert_assignments_default_unassigned_marker_na(
 
     with pytest.raises(
         ValueError,
-        match=f"String assignment 'UnknownStrainXYZ' for ReadId 'read_unknown_str' is not a recognized strain name or the unassigned_marker \\('NA'\\).",
+        match="String assignment 'UnknownStrainXYZ' for ReadId 'read_unknown_str' is not a recognized strain name or the unassigned_marker \\('NA'\\).",
     ):
-        calculator_fixture.convert_assignments_to_strain_names({
-            "read_unknown_str": "UnknownStrainXYZ"
-        })
+        calculator_fixture.convert_assignments_to_strain_names(
+            {"read_unknown_str": "UnknownStrainXYZ"}
+        )
     with pytest.raises(
         ValueError,
         match=f"StrainIndex 99 for ReadId 'read_invalid_idx' is out of bounds \\[0, {len(calculator_fixture.strain_names) - 1}\\].",
@@ -187,11 +187,11 @@ def test_convert_assignments_default_unassigned_marker_na(
 
     with pytest.raises(
         ValueError,
-        match=f"String assignment 'UnknownStrainXYZ' for ReadId 'read_unknown_str' is not a recognized strain name or the unassigned_marker \\('NA'\\).",
+        match="String assignment 'UnknownStrainXYZ' for ReadId 'read_unknown_str' is not a recognized strain name or the unassigned_marker \\('NA'\\).",
     ):
-        calculator_fixture.convert_assignments_to_strain_names({
-            "read_unknown_str": "UnknownStrainXYZ"
-        })
+        calculator_fixture.convert_assignments_to_strain_names(
+            {"read_unknown_str": "UnknownStrainXYZ"}
+        )
 
 
 def test_convert_assignments_empty_input(calculator_fixture: AbundanceCalculator):
@@ -235,11 +235,13 @@ def test_calculate_raw_abundances_typical(
         exclude_unassigned=False,
         unassigned_marker=unassigned_marker_fixture,
     )
-    assert raw_counts_with_unassigned == Counter({
-        "StrainA": 2,
-        "StrainB": 1,
-        unassigned_marker_fixture: 1,
-    })
+    assert raw_counts_with_unassigned == Counter(
+        {
+            "StrainA": 2,
+            "StrainB": 1,
+            unassigned_marker_fixture: 1,
+        }
+    )
 
 
 def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
@@ -258,11 +260,13 @@ def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator)
         exclude_unassigned=False,
         unassigned_marker=unassigned_marker_fixture,
     )
-    assert raw_counts_with_unassigned == Counter({
-        "StrainA": 2,
-        "StrainB": 1,
-        unassigned_marker_fixture: 1,
-    })
+    assert raw_counts_with_unassigned == Counter(
+        {
+            "StrainA": 2,
+            "StrainB": 1,
+            unassigned_marker_fixture: 1,
+        }
+    )
 
 
 def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
@@ -281,11 +285,13 @@ def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator)
         exclude_unassigned=False,
         unassigned_marker=unassigned_marker_fixture,
     )
-    assert raw_counts_with_unassigned == Counter({
-        "StrainA": 2,
-        "StrainB": 1,
-        unassigned_marker_fixture: 1,
-    })
+    assert raw_counts_with_unassigned == Counter(
+        {
+            "StrainA": 2,
+            "StrainB": 1,
+            unassigned_marker_fixture: 1,
+        }
+    )
 
 
 def test_calculate_raw_abundances_empty(calculator_fixture: AbundanceCalculator):
@@ -337,9 +343,11 @@ def test_apply_threshold_and_format_all_below_threshold(
     assert calculator_fixture.apply_threshold_and_format(rel_ab) == {}
 
 
-def test_apply_threshold_and_format_sort_by_name(calculator_fixture: AbundanceCalculator): # Added fixture
+def test_apply_threshold_and_format_sort_by_name(
+    calculator_fixture: AbundanceCalculator,
+):  # Added fixture
     rel_ab = {"StrainC": 0.3, "StrainA": 0.5, "StrainB": 0.2}
-    formatted = calculator_fixture.apply_threshold_and_format( # Used instance
+    formatted = calculator_fixture.apply_threshold_and_format(  # Used instance
         rel_ab, sort_by_abundance=False
     )
     # Expected order: StrainA, StrainB, StrainC (alphabetical)

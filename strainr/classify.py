@@ -11,8 +11,7 @@ import gzip
 import logging
 import pathlib
 import pickle
-from collections import Counter
-from typing import Callable, Dict, Generator, List, Optional, TextIO, Tuple, Union
+from typing import Callable, Generator, List, Optional, TextIO, Tuple, Union
 
 import pandas as pd
 
@@ -34,11 +33,9 @@ except ImportError as e:
 from .genomic_types import (
     CountVector,
     ReadId,  # Changed to relative import
-    StrainIndex,
-)  # Changed to relative import
+    )  # Changed to relative import
 from .output import AbundanceCalculator
 from .utils import _get_sample_name
-
 
 
 # Type aliases for better readability
@@ -552,35 +549,52 @@ class KmerClassificationWorkflow:
                 )
 
                 # Save final_assignments and strain_names for potential downstream use (e.g., binning)
-                self.logger.info("Saving final_assignments and strain_names for downstream use.")
+                self.logger.info(
+                    "Saving final_assignments and strain_names for downstream use."
+                )
 
-                assignments_output_path = self.args.output_dir / f"{sample_name}_final_assignments.pkl"
+                assignments_output_path = (
+                    self.args.output_dir / f"{sample_name}_final_assignments.pkl"
+                )
                 try:
                     with open(assignments_output_path, "wb") as f_assign:
                         pickle.dump(final_assignments, f_assign)
-                    self.logger.info(f"Final assignments pickled to: {assignments_output_path}")
+                    self.logger.info(
+                        f"Final assignments pickled to: {assignments_output_path}"
+                    )
                 except Exception as e:
                     self.logger.error(f"Failed to pickle final_assignments: {e}")
 
-                strain_names_output_path = self.args.output_dir / f"{sample_name}_strain_names.txt"
+                strain_names_output_path = (
+                    self.args.output_dir / f"{sample_name}_strain_names.txt"
+                )
                 try:
                     with open(strain_names_output_path, "w") as f_strains:
-                        for strain_name_item in self.database.strain_names: # Corrected variable name
+                        for (
+                            strain_name_item
+                        ) in self.database.strain_names:  # Corrected variable name
                             f_strains.write(f"{strain_name_item}\n")
-                    self.logger.info(f"Strain names saved to: {strain_names_output_path}")
+                    self.logger.info(
+                        f"Strain names saved to: {strain_names_output_path}"
+                    )
 
                 except Exception as e:
                     self.logger.error(f"Failed to save strain_names: {e}")
 
                 # 3. Calculate and output abundances
                 # New sequence using output.AbundanceCalculator:
-                final_named_assignments = abundance_calc.convert_assignments_to_strain_names(
-                    final_assignments, unassigned_marker="NA" # Assuming "NA" is the marker
+                final_named_assignments = (
+                    abundance_calc.convert_assignments_to_strain_names(
+                        final_assignments,
+                        unassigned_marker="NA",  # Assuming "NA" is the marker
+                    )
                 )
 
                 # To replicate the old abundance_df structure:
                 raw_counts = abundance_calc.calculate_raw_abundances(
-                    final_named_assignments, exclude_unassigned=False, unassigned_marker="NA" # Get all counts including NA
+                    final_named_assignments,
+                    exclude_unassigned=False,
+                    unassigned_marker="NA",  # Get all counts including NA
                 )
 
                 # Prepare data for DataFrame similar to the original one in classify.py's AbundanceCalculator
@@ -590,7 +604,9 @@ class KmerClassificationWorkflow:
                 # Calculate sum of hits for strains passing threshold for intra_relab calculation
                 sum_hits_passing_threshold = 0
                 if total_reads_for_relab > 0:
-                    for strain_name_iter in self.database.strain_names: # Iterate through known strains
+                    for (
+                        strain_name_iter
+                    ) in self.database.strain_names:  # Iterate through known strains
                         count = raw_counts.get(strain_name_iter, 0)
                         sample_relab_temp = count / total_reads_for_relab
                         if sample_relab_temp >= self.args.abundance_threshold:
@@ -612,7 +628,11 @@ class KmerClassificationWorkflow:
 
                 for strain_name_for_df in unique_keys_for_df:
                     raw_hits = raw_counts.get(strain_name_for_df, 0)
-                    sample_relab = raw_hits / total_reads_for_relab if total_reads_for_relab > 0 else 0.0
+                    sample_relab = (
+                        raw_hits / total_reads_for_relab
+                        if total_reads_for_relab > 0
+                        else 0.0
+                    )
 
                     intra_relab = 0.0
                     # Original logic for intra_relab:
@@ -620,30 +640,47 @@ class KmerClassificationWorkflow:
                     #    if sum_hits_passing_threshold > 0: # sum_hits_passing_threshold calculated above
                     #        intra_relab = raw_hits / sum_hits_passing_threshold
                     # The self.args.abundance_threshold is from the workflow args
-                    if strain_name_for_df != "NA" and sample_relab >= self.args.abundance_threshold:
+                    if (
+                        strain_name_for_df != "NA"
+                        and sample_relab >= self.args.abundance_threshold
+                    ):
                         if sum_hits_passing_threshold > 0:
                             intra_relab = raw_hits / sum_hits_passing_threshold
 
-                    table_data.append({
-                        "strain_name": strain_name_for_df,
-                        "sample_hits": raw_hits,
-                        "sample_relab": sample_relab,
-                        "intra_relab": intra_relab, # ensure NA has 0.0 as per original logic due to strain_name_for_df != "NA"
-                    })
+                    table_data.append(
+                        {
+                            "strain_name": strain_name_for_df,
+                            "sample_hits": raw_hits,
+                            "sample_relab": sample_relab,
+                            "intra_relab": intra_relab,  # ensure NA has 0.0 as per original logic due to strain_name_for_df != "NA"
+                        }
+                    )
 
-                abundance_df_reconstructed = pd.DataFrame(table_data).set_index("strain_name")
-                abundance_df_reconstructed = abundance_df_reconstructed.sort_values(by="sample_hits", ascending=False)
+                abundance_df_reconstructed = pd.DataFrame(table_data).set_index(
+                    "strain_name"
+                )
+                abundance_df_reconstructed = abundance_df_reconstructed.sort_values(
+                    by="sample_hits", ascending=False
+                )
 
                 # Now save and display this reconstructed DataFrame
-                output_path = self.args.output_dir / f"{sample_name}_abundance_report.tsv"
-                abundance_df_reconstructed.to_csv(output_path, sep="	", float_format="%.6f")
+                output_path = (
+                    self.args.output_dir / f"{sample_name}_abundance_report.tsv"
+                )
+                abundance_df_reconstructed.to_csv(
+                    output_path, sep="	", float_format="%.6f"
+                )
                 self.logger.info(f"Abundance report saved to: {output_path}")
 
                 # Display to console (replicate KmerClassificationWorkflow.AbundanceCalculator.display_console_output)
-                self.logger.info(f"Displaying top 10 abundances for sample: {sample_name}")
+                self.logger.info(
+                    f"Displaying top 10 abundances for sample: {sample_name}"
+                )
                 print(f" --- Abundance Report for: {sample_name} ---")
                 # Make sure to use the reconstructed DataFrame
-                df_to_display_reconstructed = abundance_df_reconstructed[abundance_df_reconstructed["sample_hits"] > 0].copy()
+                df_to_display_reconstructed = abundance_df_reconstructed[
+                    abundance_df_reconstructed["sample_hits"] > 0
+                ].copy()
 
                 unassigned_info_reconstructed = ""
                 if "NA" in df_to_display_reconstructed.index:
@@ -652,10 +689,14 @@ class KmerClassificationWorkflow:
                         f"Unassigned Reads: {int(na_row_reconstructed['sample_hits'])} "
                         f"({na_row_reconstructed['sample_relab']:.4f})"
                     )
-                    df_to_display_reconstructed = df_to_display_reconstructed.drop(index="NA")
+                    df_to_display_reconstructed = df_to_display_reconstructed.drop(
+                        index="NA"
+                    )
 
                 # Default top_n=10 as in the original display_console_output method
-                print(df_to_display_reconstructed.head(10).to_string(float_format="%.4f"))
+                print(
+                    df_to_display_reconstructed.head(10).to_string(float_format="%.4f")
+                )
 
                 if unassigned_info_reconstructed:
                     print(unassigned_info_reconstructed)

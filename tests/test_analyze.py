@@ -5,7 +5,7 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 
 from collections import Counter
 from typing import Dict, List, Union
-from unittest.mock import MagicMock, call, patch  # Added call
+from unittest.mock import MagicMock, patch  # Added call
 
 import numpy as np
 import pytest
@@ -372,12 +372,14 @@ def test_resolve_single_ambiguous_read_dirichlet_mode(
     strain_names_fixture: List[str],
 ):
     mock_rng_instance = MagicMock()
-    mock_dirichlet_sample = np.array([
-        0.6,
-        0.0,
-        0.4,
-        0.0,
-    ])
+    mock_dirichlet_sample = np.array(
+        [
+            0.6,
+            0.0,
+            0.4,
+            0.0,
+        ]
+    )
     mock_rng_instance.dirichlet = MagicMock(return_value=mock_dirichlet_sample)
     mock_rng_instance.choice = MagicMock(return_value=0)
     mock_default_rng.return_value = mock_rng_instance
