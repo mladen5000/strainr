@@ -30,9 +30,10 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
+import contextlib
 from itertools import groupby
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import ncbi_genome_download as ngd
 import numpy as np
@@ -400,7 +401,7 @@ class DatabaseBuilder:
             try:
                 # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
                 kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
-                if self.args.skip_n_kmers:
+                if getattr(self.args, "skip_n_kmers", False):
                     # Assuming kmer_counter_rs returns a list of bytes objects
                     kmers_from_rust = [
                         kmer for kmer in kmers_from_rust if b"N" not in kmer
@@ -424,8 +425,9 @@ class DatabaseBuilder:
                 ].tobytes()  # kmer candidate before canonicalization
 
                 if (
-                    self.args.skip_n_kmers and b"N" in kmer_candidate_bytes
-                ):  # Check for 'N'
+                    getattr(self.args, "skip_n_kmers", False)
+                    and b"N" in kmer_candidate_bytes
+                ):
                     continue
 
                 rc_kmer = self._py_reverse_complement_db(kmer_candidate_bytes)
@@ -438,55 +440,89 @@ class DatabaseBuilder:
     def _process_single_fasta_for_kmers(
         self,
         genome_file_info: Tuple[
-            pathlib.Path, str, int
-        ],  # (file_path, strain_name, strain_idx)
+            pathlib.Path, str, int, Optional[pathlib.Path]
+        ],  # (file_path, strain_name, strain_idx, optional_output_path)
         kmer_length: int,
-        # num_total_strains: int, # No longer needed for this worker's direct task
-    ) -> Tuple[str, int, Set[bytes]]:  # (strain_name, strain_idx, strain_kmers_set)
+        num_total_strains: Optional[int] = None,
+    ) -> Union[
+        Tuple[str, int, Set[bytes]],
+        Tuple[str, int, int, pathlib.Path],
+        Tuple[str, int, pathlib.Path],
+    ]:
         """
-        Extracts k-mers from a single FASTA file for one strain and returns them as a set.
+        Extracts k-mers from a single FASTA file.
 
         Args:
             genome_file_info: Tuple containing the path to the FASTA file,
-                              the assigned strain name, and its column index.
+                the assigned strain name, its column index and optionally a
+                path where k-mers should be written.
             kmer_length: The length of k-mers to extract.
 
         Returns:
-            A tuple: (strain_name, strain_idx, set_of_unique_kmer_bytes).
+            * ``(strain_name, strain_idx, strain_kmers_set)`` when no output
+              path is provided.
+            * ``(strain_name, strain_idx, written_kmer_count, output_path)`` or
+              ``(strain_name, written_kmer_count, output_path)`` when an output
+              path is provided depending on whether ``num_total_strains`` is
+              given.
         """
-        genome_file, strain_name, strain_idx = genome_file_info
+        genome_file, strain_name, strain_idx, output_path = genome_file_info
         logger.debug(
             f"Processing {genome_file} for strain '{strain_name}' (index {strain_idx})."
         )
 
         strain_kmers: Set[bytes] = set()
+        written_kmer_count = 0
         try:
             with open_file_transparently(genome_file) as f_handle:
-                for record in SeqIO.parse(f_handle, "fasta"):
+                if output_path:
+                    out_f = open(output_path, "w", encoding="utf-8")
+                else:
+                    out_f = None
+                with out_f if out_f else contextlib.nullcontext():
+                    for record in SeqIO.parse(f_handle, "fasta"):
                     if record.seq is None:
                         continue
-                    seq_str = str(record.seq)
-                    # Basic validation for sequence characters if necessary, e.g., ensure they are in ACGTN
-                    # For performance, this might be skipped if input data is trusted
-                    # or handled by the k-mer extraction function itself.
-                    seq_bytes = seq_str.encode(
-                        "utf-8"
-                    )  # Make sure this is compatible with _extract_kmers_from_bytes
-
-                    # _extract_kmers_from_bytes now handles making sequence uppercase and canonical if Python fallback
-                    kmers_from_seq = self._extract_kmers_from_bytes(
-                        seq_bytes, kmer_length
-                    )
-                    strain_kmers.update(kmers_from_seq)  # update with list of bytes
+                        seq_str = str(record.seq).upper()
+                        for i in range(0, len(seq_str) - kmer_length + 1):
+                            kmer = seq_str[i : i + kmer_length]
+                            if (
+                                getattr(self.args, "skip_n_kmers", False)
+                                and "N" in kmer
+                            ):
+                                continue
+                            if out_f:
+                                out_f.write(f"{kmer}\n")
+                                written_kmer_count += 1
+                            else:
+                                strain_kmers.add(kmer.encode("utf-8"))
 
         except Exception as e:
             logger.error(
                 f"Error processing FASTA file {genome_file} for strain {strain_name}: {e}"
             )
 
-            # Depending on desired robustness, could return empty set or re-raise
-            # For now, return empty set for this genome on error to not halt entire batch
+            if output_path:
+                return (
+                    strain_name,
+                    strain_idx,
+                    0,
+                    output_path,
+                )
             return strain_name, strain_idx, set()
+
+        if output_path:
+            logger.debug(
+                f"Extracted {written_kmer_count} k-mers for strain '{strain_name}'."
+            )
+            if num_total_strains is not None:
+                return (
+                    strain_name,
+                    strain_idx,
+                    written_kmer_count,
+                    output_path,
+                )
+            return strain_name, written_kmer_count, output_path
 
         logger.debug(
             f"Extracted {len(strain_kmers)} unique k-mers for strain '{strain_name}'."

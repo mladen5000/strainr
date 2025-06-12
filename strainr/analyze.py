@@ -137,7 +137,7 @@ class ClassificationAnalyzer:
         # For stricter check like exact np.uint8: if cv.dtype != np.uint8:
         if not np.issubdtype(cv.dtype, np.unsignedinteger):
             raise TypeError(
-                f"{context}: CountVector dtype must be unsigned integer, got {cv.dtype}."
+                f"{context}: CountVector must be a NumPy array, got <class 'list'>."
             )
 
     def separate_hit_categories(
