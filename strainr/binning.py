@@ -3,6 +3,7 @@ import gzip  # For writing gzipped example files
 import pathlib
 import traceback  # For more detailed error info in main example
 from typing import Optional, Dict, List, Set, Tuple, Union
+import multiprocessing as mp
 
 # Third-party imports
 import numpy as np  # Added missing import
@@ -573,23 +574,27 @@ def create_binned_fastq_files(
             )
             return set(), {}
 
-    binned_read_counts = _write_reads_to_bins_single_pass(
-        read_to_strain_assignment_table=read_to_strain_assignment_table,
-        strains_to_bin=strains_to_process,
-        forward_fastq_path=forward_fastq_path,
-        reverse_fastq_path=reverse_fastq_path,
-        output_bin_dir=bin_output_dir,
-    )
+    processes: List[mp.Process] = []
+    for strain_name in strains_to_process:
+        read_ids_for_strain = set(
+            read_to_strain_assignment_table.index[
+                read_to_strain_assignment_table[strain_name] == 1
+            ]
+        )
+        proc = mp.Process(
+            target=_extract_reads_for_strain,
+            args=(
+                strain_name,
+                read_ids_for_strain,
+                forward_fastq_path,
+                reverse_fastq_path,
+                bin_output_dir,
+            ),
+        )
+        processes.append(proc)
+        proc.start()
 
-    binned_strain_names_set = {
-        strain
-        for strain, counts in binned_read_counts.items()
-        if counts["R1"] > 0 or counts["R2"] > 0
-    }
-
-    # Multiprocessing is removed for now. The function returns the set of names for which bins were created
-    # and the counts of reads binned.
-    return binned_strain_names_set, binned_read_counts
+    return set(strains_to_process), processes
 
 
 def run_binning_pipeline(
@@ -689,8 +694,12 @@ def run_binning_pipeline(
         )
 
     # 3. Create binned FASTQ files (now single-pass, no multiprocessing list)
+    read_to_strain_assignment_table = generate_table(
+        final_assignments, all_strain_names
+    )
+
     binned_strains_set, binned_read_counts = (
-        create_binned_fastq_files(  # Return type changed
+        create_binned_fastq_files(
             top_strain_names=top_strains,
             read_to_strain_assignment_table=read_to_strain_assignment_table,
             forward_fastq_path=fwd_fastq_path,
