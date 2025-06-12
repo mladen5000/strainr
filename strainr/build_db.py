@@ -23,14 +23,14 @@ K-mer Strategy:
 """
 
 import argparse
+import contextlib
 import logging
-import multiprocessing as mp  # Added
+import multiprocessing as mp
 import pathlib
 import shutil
 import subprocess
 import sys
 from collections import Counter
-import contextlib
 from itertools import groupby
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -481,8 +481,10 @@ class DatabaseBuilder:
                     out_f = None
                 with out_f if out_f else contextlib.nullcontext():
                     for record in SeqIO.parse(f_handle, "fasta"):
-                    if record.seq is None:
-                        continue
+                        if record is None:
+                            continue
+                        if record.seq is None:
+                            continue
                         seq_str = str(record.seq).upper()
                         for i in range(0, len(seq_str) - kmer_length + 1):
                             kmer = seq_str[i : i + kmer_length]
@@ -605,19 +607,22 @@ class DatabaseBuilder:
             all_parts_file = temp_dir / "all_kmer_parts.tsv"
             sorted_parts_file = temp_dir / "all_kmer_parts.sorted.tsv"
 
-            logger.info(f"Concatenating temporary files into {all_parts_file}...")
-            with open(all_parts_file, "wb") as f_dest:
-                for part_file in tqdm(
-                    list(temp_dir.glob("*.part")), desc="Concatenating"
-                ):
-                    with open(part_file, "rb") as f_src:
-                        shutil.copyfileobj(f_src, f_dest)
+            logger.info(f"Fast concatenating temporary files into {all_parts_file}...")
+            # Optimized concatenation using system commands (much faster than Python shutil)
+            part_files = list(temp_dir.glob("*.part.gz"))
+            if len(part_files) > 100:  # For many files, use find + zcat
+                concat_command = f"find {temp_dir} -name '*.part.gz' -exec zcat {{}} + > {all_parts_file}"
+            else:  # For fewer files, direct zcat
+                part_paths = " ".join(str(f) for f in part_files)
+                concat_command = f"zcat {part_paths} > {all_parts_file}"
+            
+            subprocess.run(concat_command, shell=True, check=True)
 
-            logger.info("Sorting all k-mer parts on disk (this may take a while)...")
-            # Using shell sort; highly optimized for large files.
-            # The LC_ALL=C ensures byte-wise sorting, which is fastest.
+            logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
+            # Use parallel sort with memory buffer and compression for much better performance
             sort_command = (
-                f"LC_ALL=C sort -k1,1 {all_parts_file} -o {sorted_parts_file}"
+                f"LC_ALL=C sort -k1,1 --parallel={self.args.procs} "
+                f"-S 2G --compress-program=gzip {all_parts_file} -o {sorted_parts_file}"
             )
             process = subprocess.run(
                 sort_command, shell=True, check=True, capture_output=True, text=True
@@ -627,30 +632,34 @@ class DatabaseBuilder:
                 raise RuntimeError("Disk-based sort command failed.")
             logger.info("Sort phase completed.")
 
-            # --- 3. REDUCE PHASE ---
-            # Group sorted k-mers and write to Parquet file incrementally.
+            # --- 3. REDUCE PHASE (OPTIMIZED) ---
+            # Group sorted k-mers and write to Parquet file in batches.
             output_path = self.base_path / (self.output_db_name + ".db.parquet")
             logger.info(f"Aggregating sorted k-mers into Parquet file: {output_path}")
 
             # Define the schema for the output Parquet file.
-            # K-mers will be the index when loaded, but are a column here.
             schema_fields = [pa.field("kmer", pa.binary())]
             for name in strain_names:
                 schema_fields.append(pa.field(name, pa.bool_()))
             schema = pa.schema(schema_fields)
 
+            # Batch processing for much better performance
+            BATCH_SIZE = 10000  # Process 10k k-mers at a time
+            batch_data = {field.name: [] for field in schema_fields}
+            
             with pq.ParquetWriter(output_path, schema) as writer:
                 with open(sorted_parts_file, "r") as f:
-                    # Group by the first column (the k-mer)
                     grouped_iterator = groupby(
                         f, key=lambda line: line.split("\t", 1)[0]
                     )
+                    
+                    batch_count = 0
                     for kmer_hex, group in tqdm(
                         grouped_iterator, desc="Aggregating k-mers (Reduce)"
                     ):
                         presence_vector = np.zeros(num_genomes, dtype=bool)
 
-                        # The group iterator includes the line that formed the key
+                        # Process all lines for this k-mer
                         for line in group:
                             try:
                                 strain_idx = int(line.strip().split("\t")[1])
@@ -661,14 +670,24 @@ class DatabaseBuilder:
                                 )
                                 continue
 
-                        kmer_bytes = bytes.fromhex(kmer_hex)
-
-                        # Create a pyarrow Table for this single row and write it
-                        row_data = {"kmer": [kmer_bytes]}
+                        # Add to batch
+                        batch_data["kmer"].append(bytes.fromhex(kmer_hex))
                         for i, name in enumerate(strain_names):
-                            row_data[name] = [presence_vector[i]]
-
-                        table = pa.Table.from_pydict(row_data, schema=schema)
+                            batch_data[name].append(presence_vector[i])
+                        
+                        batch_count += 1
+                        
+                        # Write batch when full
+                        if batch_count >= BATCH_SIZE:
+                            table = pa.Table.from_pydict(batch_data, schema=schema)
+                            writer.write_table(table)
+                            # Clear batch
+                            batch_data = {field.name: [] for field in schema_fields}
+                            batch_count = 0
+                    
+                    # Write final batch if any remaining
+                    if batch_count > 0:
+                        table = pa.Table.from_pydict(batch_data, schema=schema)
                         writer.write_table(table)
 
             logger.info(
@@ -753,86 +772,112 @@ class DatabaseBuilder:
     @staticmethod
     def _process_and_write_kmers_worker(task_tuple) -> pathlib.Path:
         """Worker function for multiprocessing that extracts k-mers and writes to temp file."""
-        genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = task_tuple
-        
+        genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = (
+            task_tuple
+        )
+
         # Initialize a local extractor
         try:
             from kmer_counter_rs import extract_kmers_rs
+
             extract_func = extract_kmers_rs
         except ImportError:
             extract_func = None
-        
+
         # Process the genome file
         strain_kmers = set()
         try:
             from .utils import open_file_transparently
             from Bio import SeqIO
-            
+
             with open_file_transparently(genome_file) as f_handle:
                 for record in SeqIO.parse(f_handle, "fasta"):
+                    if record is None:
+                        continue
                     if record.seq is None:
                         continue
                     seq_str = str(record.seq)
                     seq_bytes = seq_str.encode("utf-8")
-                    
+
                     if extract_func is not None:
                         try:
-                            kmers_from_seq = extract_func(seq_bytes.upper(), kmer_length)
+                            kmers_from_seq = extract_func(
+                                seq_bytes.upper(), kmer_length
+                            )
                             if skip_n_kmers:
-                                kmers_from_seq = [kmer for kmer in kmers_from_seq if b"N" not in kmer]
+                                kmers_from_seq = [
+                                    kmer for kmer in kmers_from_seq if b"N" not in kmer
+                                ]
                             strain_kmers.update(kmers_from_seq)
                         except Exception:
                             # Fallback to Python implementation
-                            kmers_from_seq = DatabaseBuilder._py_extract_canonical_kmers_static(seq_bytes, kmer_length, skip_n_kmers)
+                            kmers_from_seq = (
+                                DatabaseBuilder._py_extract_canonical_kmers_static(
+                                    seq_bytes, kmer_length, skip_n_kmers
+                                )
+                            )
                             strain_kmers.update(kmers_from_seq)
                     else:
-                        kmers_from_seq = DatabaseBuilder._py_extract_canonical_kmers_static(seq_bytes, kmer_length, skip_n_kmers)
+                        kmers_from_seq = (
+                            DatabaseBuilder._py_extract_canonical_kmers_static(
+                                seq_bytes, kmer_length, skip_n_kmers
+                            )
+                        )
                         strain_kmers.update(kmers_from_seq)
-                        
+
         except Exception as e:
             logger.error(f"Error processing {genome_file}: {e}")
-            
-        # Write to temp file
-        temp_file_path = temp_dir / f"{strain_idx}.part"
-        with open(temp_file_path, "w") as f_out:
+
+        # Write to compressed temp file for better I/O performance
+        temp_file_path = temp_dir / f"{strain_idx}.part.gz"
+        import gzip
+        with gzip.open(temp_file_path, "wt") as f_out:
             for kmer_bytes in strain_kmers:
                 f_out.write(f"{kmer_bytes.hex()}\t{strain_idx}\n")
-        
+
         return temp_file_path
 
     @staticmethod
-    def _py_extract_canonical_kmers_static(sequence_bytes: bytes, k: int, skip_n_kmers: bool) -> List[bytes]:
+    def _py_extract_canonical_kmers_static(
+        sequence_bytes: bytes, k: int, skip_n_kmers: bool
+    ) -> List[bytes]:
         """Static version of canonical k-mer extraction for multiprocessing."""
         PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
-        
+
         def _py_reverse_complement_static(kmer_bytes: bytes) -> bytes:
             return kmer_bytes.translate(PY_RC_TRANSLATE_TABLE)[::-1]
-        
+
         kmers_list = []
         upper_sequence_bytes = sequence_bytes.upper()
-        
+
         if len(upper_sequence_bytes) < k:
             return kmers_list
-            
+
         with memoryview(upper_sequence_bytes) as seq_view:
             for i in range(len(upper_sequence_bytes) - k + 1):
                 kmer_candidate_bytes = seq_view[i : i + k].tobytes()
-                
+
                 if skip_n_kmers and b"N" in kmer_candidate_bytes:
                     continue
-                    
+
                 rc_kmer = _py_reverse_complement_static(kmer_candidate_bytes)
                 kmers_list.append(
                     kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
                 )
-        
+
         return kmers_list
 
-    def _process_and_write_kmers(self, genome_file_info, kmer_length, temp_dir) -> pathlib.Path:
+    def _process_and_write_kmers(
+        self, genome_file_info, kmer_length, temp_dir
+    ) -> pathlib.Path:
         """
         Legacy method - now redirects to static worker for consistency.
         """
-        return self._process_and_write_kmers_worker(genome_file_info)
+        # Reconstruct task tuple for worker
+        genome_file, strain_name, strain_idx = genome_file_info[:3]
+        task_tuple = (genome_file, strain_name, strain_idx, kmer_length, 
+                     getattr(self.args, 'skip_n_kmers', False), temp_dir)
+        return self._process_and_write_kmers_worker(task_tuple)
 
 
 def get_cli_parser() -> argparse.ArgumentParser:
