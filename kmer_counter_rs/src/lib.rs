@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
+use pyo3::types::PyBytes;
 use needletail::{parse_fastx_file, Sequence};
 use std::collections::HashMap;
 
@@ -41,8 +42,47 @@ fn extract_kmer_rs(file_path: &str) -> PyResult<HashMap<Vec<u8>, usize>> {
     Ok(kmer_counts)
 }
 
+#[pyfunction]
+fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<Vec<Vec<u8>>> {
+    let seq_bytes = sequence_bytes.as_bytes();
+    let mut kmers = Vec::new();
+    
+    if seq_bytes.len() < k {
+        return Ok(kmers);
+    }
+    
+    // Convert sequence to a temporary FASTA-like format for needletail
+    let seq_str = std::str::from_utf8(seq_bytes).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid UTF-8 sequence: {}", e))
+    })?;
+    
+    // Create a simple sequence record
+    let fasta_content = format!(">temp\n{}", seq_str);
+    let mut cursor = std::io::Cursor::new(fasta_content.as_bytes());
+    
+    let mut reader = match needletail::parse_fastx_reader(&mut cursor) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse sequence: {}", e)));
+        }
+    };
+    
+    while let Some(record) = reader.next() {
+        let seqrec = record.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e)))?;
+        let norm_seq = seqrec.normalize(false);
+        let rc = norm_seq.reverse_complement();
+        
+        for (_, kmer, _) in norm_seq.canonical_kmers(k as u8, &rc) {
+            kmers.push(kmer.to_vec());
+        }
+    }
+    
+    Ok(kmers)
+}
+
 #[pymodule]
 fn kmer_counter_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_kmer_rs, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_kmers_rs, m)?)?;
     Ok(())
 }

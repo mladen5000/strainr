@@ -7,13 +7,19 @@ classifies them against a k-mer database, resolves ambiguous assignments,
 calculates strain abundances, and outputs the results.
 """
 
+import argparse
 import gzip
 import logging
+import multiprocessing as mp
 import pathlib
 import pickle
-from typing import Callable, Generator, List, Optional, TextIO, Tuple, Union
+import sys
+from typing import Callable, Generator, List, Optional, Set, TextIO, Tuple, Union
 
+import numpy as np
 import pandas as pd
+
+from strainr import ClassificationAnalyzer, StrainKmerDatabase
 
 try:
     from Bio import SeqIO
@@ -30,13 +36,10 @@ except ImportError as e:
     ) from e
 
 # Assuming these local modules are structured correctly within the 'strainr' package
-from .genomic_types import (
-    CountVector,
-    ReadId,  # Changed to relative import
-    )  # Changed to relative import
+from .genomic_types import CountVector  # Changed to relative import
+from .genomic_types import ReadId  # Changed to relative import
 from .output import AbundanceCalculator
 from .utils import _get_sample_name
-
 
 # Type aliases for better readability
 ReadHitResults = List[Tuple[ReadId, CountVector]]
@@ -170,14 +173,14 @@ class SequenceFileProcessor:
         fwd_id = (
             getattr(fwd_record, "id", "")
             if hasattr(fwd_record, "id")
-            else fwd_record[0]
+            else (fwd_record[0] if isinstance(fwd_record, (tuple, list)) else str(fwd_record))
         )
         if not isinstance(fwd_id, str):
             fwd_id = str(fwd_id)
         fwd_seq_str = (
             str(getattr(fwd_record, "seq", ""))
             if hasattr(fwd_record, "seq")
-            else fwd_record[1]
+            else (fwd_record[1] if isinstance(fwd_record, (tuple, list)) and len(fwd_record) > 1 else "")
         )
         fwd_seq_bytes = fwd_seq_str.encode("utf-8")
         rev_seq_bytes = b""
@@ -187,7 +190,7 @@ class SequenceFileProcessor:
                 rev_seq_str = (
                     str(getattr(rev_record, "seq", ""))
                     if hasattr(rev_record, "seq")
-                    else rev_record[1]
+                    else (rev_record[1] if isinstance(rev_record, (tuple, list)) and len(rev_record) > 1 else "")
                 )
                 rev_seq_bytes = rev_seq_str.encode("utf-8")
             except StopIteration:
@@ -373,30 +376,33 @@ class KmerClassificationWorkflow:
         all_kmers: Set[bytes] = set()
         # Process forward sequence
         if fwd_seq_bytes:
-            kmers_fwd = KMER_EXTRACTOR.extract_kmers(
-                fwd_seq_bytes, self.database.kmer_length
-            )
+            kmer_len: int = (self.database.kmer_length 
+                           if self.database and hasattr(self.database, 'kmer_length') and self.database.kmer_length is not None
+                           else 31)
+            kmers_fwd = KMER_EXTRACTOR.extract_kmers(fwd_seq_bytes, kmer_len)
             all_kmers.update(kmers_fwd)
         # Process reverse sequence
         if rev_seq_bytes:
-            kmers_rev = KMER_EXTRACTOR.extract_kmers(
-                rev_seq_bytes, self.database.kmer_length
-            )
+            kmer_len: int = (self.database.kmer_length 
+                           if self.database and hasattr(self.database, 'kmer_length') and self.database.kmer_length is not None
+                           else 31)
+            kmers_rev = KMER_EXTRACTOR.extract_kmers(rev_seq_bytes, kmer_len)
             all_kmers.update(kmers_rev)
         # Count strain hits
-        strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
         if self.database is None:
             raise RuntimeError(
                 "Database is not initialized before accessing its attributes."
             )
+        strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
         for kmer_bytes in all_kmers:
-            kmer_strain_counts = self.database.get_strain_counts_for_kmer(kmer_bytes)
-            if kmer_strain_counts is not None:
-                strain_counts += kmer_strain_counts
+            if self.database and hasattr(self.database, 'get_strain_counts_for_kmer'):
+                kmer_strain_counts = self.database.get_strain_counts_for_kmer(kmer_bytes)
+                if kmer_strain_counts is not None:
+                    strain_counts += kmer_strain_counts
         # Ensure read_id is str
         if not isinstance(read_id, str):
             read_id = str(read_id)
-        return read_id, strain_counts
+        return read_id, strain_counts.astype(np.uint8)
 
     def _classify_reads_parallel(
         self,
@@ -429,15 +435,17 @@ class KmerClassificationWorkflow:
             return
         self.logger.info(f"Saving raw k-mer hit counts for sample: {sample_name}")
         # Prepare data for DataFrame
-        df_data = []
         if self.database is None:
             raise RuntimeError(
                 "Database is not initialized before accessing its attributes."
             )
+        df_data = []
         for read_id, count_vector in raw_hit_results:
             row = {"read_id": read_id}
-            for i, strain_name in enumerate(self.database.strain_names):
-                row[strain_name] = count_vector[i]
+            strain_names = self.database.strain_names if self.database and hasattr(self.database, 'strain_names') else []
+            for i, strain_name in enumerate(strain_names):
+                if i < len(count_vector):
+                    row[strain_name] = count_vector[i]
             df_data.append(row)
         df = pd.DataFrame(df_data)
         # Save to CSV
@@ -570,9 +578,8 @@ class KmerClassificationWorkflow:
                 )
                 try:
                     with open(strain_names_output_path, "w") as f_strains:
-                        for (
-                            strain_name_item
-                        ) in self.database.strain_names:  # Corrected variable name
+                        strain_names = self.database.strain_names if self.database and hasattr(self.database, 'strain_names') else []
+                        for strain_name_item in strain_names:  # Corrected variable name
                             f_strains.write(f"{strain_name_item}\n")
                     self.logger.info(
                         f"Strain names saved to: {strain_names_output_path}"
@@ -585,7 +592,7 @@ class KmerClassificationWorkflow:
                 # New sequence using output.AbundanceCalculator:
                 final_named_assignments = (
                     abundance_calc.convert_assignments_to_strain_names(
-                        final_assignments,
+                        {k: v for k, v in final_assignments.items()},  # Convert to proper dict type
                         unassigned_marker="NA",  # Assuming "NA" is the marker
                     )
                 )
@@ -606,7 +613,7 @@ class KmerClassificationWorkflow:
                 if total_reads_for_relab > 0:
                     for (
                         strain_name_iter
-                    ) in self.database.strain_names:  # Iterate through known strains
+                    ) in (self.database.strain_names if self.database else []):  # Iterate through known strains
                         count = raw_counts.get(strain_name_iter, 0)
                         sample_relab_temp = count / total_reads_for_relab
                         if sample_relab_temp >= self.args.abundance_threshold:
@@ -614,7 +621,7 @@ class KmerClassificationWorkflow:
 
                 # Ensure all strains and NA are in the df. Use a combined list of known strain names and any potentially new names from raw_counts (e.g. "NA" or others if they appear)
                 # However, the original logic iterated self.database.strain_names + ["NA"], so we stick to that to replicate behavior.
-                all_strain_keys_for_df = self.database.strain_names + ["NA"]
+                all_strain_keys_for_df = (self.database.strain_names if self.database else []) + ["NA"]
                 # Deduplicate if "NA" is somehow in self.database.strain_names (though unlikely)
                 processed_keys = set()
                 unique_keys_for_df = []
@@ -647,14 +654,12 @@ class KmerClassificationWorkflow:
                         if sum_hits_passing_threshold > 0:
                             intra_relab = raw_hits / sum_hits_passing_threshold
 
-                    table_data.append(
-                        {
-                            "strain_name": strain_name_for_df,
-                            "sample_hits": raw_hits,
-                            "sample_relab": sample_relab,
-                            "intra_relab": intra_relab,  # ensure NA has 0.0 as per original logic due to strain_name_for_df != "NA"
-                        }
-                    )
+                    table_data.append({
+                        "strain_name": strain_name_for_df,
+                        "sample_hits": raw_hits,
+                        "sample_relab": sample_relab,
+                        "intra_relab": intra_relab,  # ensure NA has 0.0 as per original logic due to strain_name_for_df != "NA"
+                    })
 
                 abundance_df_reconstructed = pd.DataFrame(table_data).set_index(
                     "strain_name"
