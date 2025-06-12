@@ -20,31 +20,25 @@ K-mer Strategy:
   The `--skip-n-kmers` flag can be used to exclude such k-mers.
 - K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
   a common choice for bacterial genomes balancing specificity and sensitivity.
-
-K-mer Strategy:
-- Canonical K-mers: The database stores canonical k-mers (the lexicographically
-  smaller of a k-mer and its reverse complement) to ensure strand-insensitivity
-  during classification.
-- Ambiguous Bases ('N'): By default, k-mers containing 'N' bases are included.
-  The `--skip-n-kmers` flag can be used to exclude such k-mers.
-- K-mer Length: The default k-mer length is 31 (configurable via `--kmerlen`),
-  a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
 import argparse
 import logging
 import multiprocessing as mp  # Added
-
 import pathlib
+import shutil
+import subprocess
 import sys
-from collections import Counter, defaultdict
-from functools import partial
+from collections import Counter
+from itertools import groupby
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import ncbi_genome_download as ngd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from Bio import SeqIO
 from tqdm import tqdm
 
@@ -166,12 +160,10 @@ class DatabaseBuilder:
             genome_output_dir / f"metadata_summary_{genome_target_dir_suffix}.tsv"
         )
 
-        ncbi_kwargs.update(
-            {
-                "output": genome_output_dir,
-                "metadata_table": metadata_table_path,
-            }
-        )
+        ncbi_kwargs.update({
+            "output": genome_output_dir,
+            "metadata_table": metadata_table_path,
+        })
 
         logger.info(
             f"Downloading genomes to: {genome_output_dir} with metadata to {metadata_table_path}"
@@ -471,6 +463,8 @@ class DatabaseBuilder:
         try:
             with open_file_transparently(genome_file) as f_handle:
                 for record in SeqIO.parse(f_handle, "fasta"):
+                    if record.seq is None:
+                        continue
                     seq_str = str(record.seq)
                     # Basic validation for sequence characters if necessary, e.g., ensure they are in ACGTN
                     # For performance, this might be skipped if input data is trusted
@@ -502,13 +496,31 @@ class DatabaseBuilder:
 
     def _build_kmer_database_parallel(
         self, genome_files: List[pathlib.Path], strain_names: List[str]
-    ) -> pd.DataFrame:
+    ) -> Optional[pathlib.Path]:
         """
-        Extracts k-mers from genomes in parallel and aggregates them in memory.
+        Extracts k-mers from genomes in parallel and builds the Parquet database
+        using a memory-scalable disk-based sort-reduce strategy.
+
+        This method avoids loading all k-mers into memory at once.
+        1.  Map: Each worker process extracts k-mers from one genome and writes
+            (k-mer, strain_id) pairs to a temporary file.
+        2.  Sort: All temporary files are concatenated and sorted on disk using
+            the system's `sort` command.
+        3.  Reduce: The large sorted file is read line-by-line, and k-mers are
+            grouped to build presence/absence vectors, which are written
+            incrementally to the final Parquet file.
+
+        Args:
+            genome_files: List of paths to genome FASTA files.
+            strain_names: List of corresponding strain names for columns.
+
+        Returns:
+            The path to the newly created Parquet database file.
         """
         if not genome_files:
             logger.warning("No genome files provided to build database.")
-            return pd.DataFrame()
+            return None
+
         if len(genome_files) != len(strain_names):
             raise ValueError(
                 "Mismatch between number of genome files and strain names."
@@ -516,89 +528,134 @@ class DatabaseBuilder:
 
         num_genomes = len(genome_files)
         logger.info(
-            f"Starting k-mer extraction for {num_genomes} genomes using {self.args.procs} processes."
+            f"Starting scalable k-mer extraction for {num_genomes} genomes using {self.args.procs} processes."
         )
 
-        # Rough estimate for memory warning
-        # Assuming average 2 million unique k-mers per bacterial genome (highly variable)
-        # and kmer_length around 30 (30 bytes per kmer).
-        # This doesn't account for Python object overhead or the master_kmer_dict structure itself.
-        estimated_total_unique_kmers_approx = num_genomes * 2_000_000
-        # A very rough threshold, e.g. 1 billion k-mers might take ~30GB for just kmer bytes
-        if estimated_total_unique_kmers_approx > 500_000_000:  # 500 million k-mers
-            logger.warning(
-                f"Processing {num_genomes} genomes. Estimated total unique k-mers could be very large, "
-                "potentially leading to high memory usage during in-memory aggregation. "
-                "Monitor memory closely."
+        # --- Setup Temporary Directory ---
+        temp_dir = self.output_db_dir / "tmp_kmer_parts"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        temp_dir.mkdir(parents=True)
+
+        # --- 1. MAP PHASE ---
+        # Each worker extracts k-mers and writes to a unique temp file.
+        tasks = [
+            (
+                genome_files[i],
+                strain_names[i],
+                i,
+                self.args.kmerlen,
+                self.args.skip_n_kmers,
+                temp_dir,
             )
+            for i in range(num_genomes)
+        ]
 
-        tasks = []
-        for i in range(num_genomes):
-            tasks.append((genome_files[i], strain_names[i], i))
-
-        worker_function = partial(
-            self._process_single_fasta_for_kmers,
-            kmer_length=self.args.kmerlen,
-            # num_total_strains is no longer passed to the worker
-        )
-
-        extraction_results: List[Tuple[str, int, Set[bytes]]] = []
+        logger.info("Starting parallel k-mer extraction (writing to disk)...")
         with mp.Pool(processes=self.args.procs) as pool:
-            logger.info(
-                "Starting parallel k-mer extraction (results collected in memory)."
-            )
-
-            # Results from worker: (strain_name, strain_idx, strain_kmers_set)
-            for result in tqdm(
-                pool.imap_unordered(worker_function, tasks),
+            # We use imap_unordered for progress but don't need the results.
+            for _ in tqdm(
+                pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
                 total=len(tasks),
-                desc="Extracting k-mers",
+                desc="Extracting k-mers (Map)",
             ):
-                extraction_results.append(result)
+                pass
 
-        logger.info("Aggregating k-mers into database matrix (in-memory).")
-        master_kmer_dict: Dict[bytes, np.ndarray] = defaultdict(
-            lambda: np.zeros(len(strain_names), dtype=bool)
-        )
+        logger.info("Map phase completed. All k-mers written to temporary files.")
 
-        # Sum of lengths of all kmer sets for a more accurate progress bar for aggregation
-        total_kmers_to_aggregate = sum(
-            len(s_kmers) for _, _, s_kmers in extraction_results
-        )
+        try:
+            # --- 2. SORT PHASE ---
+            # Concatenate and sort the temporary files on disk.
+            all_parts_file = temp_dir / "all_kmer_parts.tsv"
+            sorted_parts_file = temp_dir / "all_kmer_parts.sorted.tsv"
 
-        for res_strain_name, res_strain_idx, strain_kmers_set in tqdm(
-            extraction_results,
-            total=len(extraction_results),  # This total is for number of genomes
-            desc="Aggregating k-mers (genome by genome)",
-        ):
-            # Could make inner loop tqdm for kmer-level progress, but might be too verbose
-            # for kmer_bytes in tqdm(strain_kmers_set, desc=f"Aggregating {res_strain_name}", leave=False):
-            for kmer_bytes in strain_kmers_set:
-                master_kmer_dict[kmer_bytes][res_strain_idx] = True
+            logger.info(f"Concatenating temporary files into {all_parts_file}...")
+            with open(all_parts_file, "wb") as f_dest:
+                for part_file in tqdm(
+                    list(temp_dir.glob("*.part")), desc="Concatenating"
+                ):
+                    with open(part_file, "rb") as f_src:
+                        shutil.copyfileobj(f_src, f_dest)
 
-        # No temporary directory or files to clean up.
-
-        if not master_kmer_dict:
-            logger.warning(
-                "No k-mers were extracted or aggregated. Resulting database will be empty."
+            logger.info("Sorting all k-mer parts on disk (this may take a while)...")
+            # Using shell sort; highly optimized for large files.
+            # The LC_ALL=C ensures byte-wise sorting, which is fastest.
+            sort_command = (
+                f"LC_ALL=C sort -k1,1 {all_parts_file} -o {sorted_parts_file}"
             )
-            return pd.DataFrame(columns=strain_names)
+            process = subprocess.run(
+                sort_command, shell=True, check=True, capture_output=True, text=True
+            )
+            if process.returncode != 0:
+                logger.error(f"Sorting failed. Stderr: {process.stderr}")
+                raise RuntimeError("Disk-based sort command failed.")
+            logger.info("Sort phase completed.")
 
-        logger.info(f"Total unique k-mers found: {len(master_kmer_dict)}")
+            # --- 3. REDUCE PHASE ---
+            # Group sorted k-mers and write to Parquet file incrementally.
+            output_path = self.base_path / (self.output_db_name + ".db.parquet")
+            logger.info(f"Aggregating sorted k-mers into Parquet file: {output_path}")
 
-        # Convert the master dictionary to a DataFrame
-        # Sort k-mers (index) for consistent database output, though this can be slow for many k-mers
-        # sorted_kmer_keys = sorted(master_kmer_dict.keys())
-        # Using dict directly is faster if order doesn't strictly matter or can be handled later
-        kmer_matrix_df = pd.DataFrame.from_dict(
-            master_kmer_dict,
-            orient="index",  # k-mers as rows
-            columns=strain_names,  # strains as columns
-            dtype=bool,  # Ensure boolean type
-        )
-        # kmer_matrix_df = kmer_matrix_df.reindex(sorted_kmer_keys) # Apply sort if using sorted_kmer_keys
+            # Define the schema for the output Parquet file.
+            # K-mers will be the index when loaded, but are a column here.
+            schema_fields = [pa.field("kmer", pa.binary())]
+            for name in strain_names:
+                schema_fields.append(pa.field(name, pa.bool_()))
+            schema = pa.schema(schema_fields)
 
-        return kmer_matrix_df
+            with pq.ParquetWriter(output_path, schema) as writer:
+                with open(sorted_parts_file, "r") as f:
+                    # Group by the first column (the k-mer)
+                    grouped_iterator = groupby(
+                        f, key=lambda line: line.split("\t", 1)[0]
+                    )
+                    for kmer_hex, group in tqdm(
+                        grouped_iterator, desc="Aggregating k-mers (Reduce)"
+                    ):
+                        presence_vector = np.zeros(num_genomes, dtype=bool)
+
+                        # The group iterator includes the line that formed the key
+                        for line in group:
+                            try:
+                                strain_idx = int(line.strip().split("\t")[1])
+                                presence_vector[strain_idx] = True
+                            except (IndexError, ValueError) as e:
+                                logger.warning(
+                                    f"Skipping malformed line in sorted file: '{line.strip()}'. Error: {e}"
+                                )
+                                continue
+
+                        kmer_bytes = bytes.fromhex(kmer_hex)
+
+                        # Create a pyarrow Table for this single row and write it
+                        row_data = {"kmer": [kmer_bytes]}
+                        for i, name in enumerate(strain_names):
+                            row_data[name] = [presence_vector[i]]
+
+                        table = pa.Table.from_pydict(row_data, schema=schema)
+                        writer.write_table(table)
+
+            logger.info(
+                "Reduce phase completed. Parquet database created successfully."
+            )
+            # Set the Parquet index upon loading
+            # We can't set the index during writing, but pandas can do it on read.
+            # For consistency, we'll now load it, set index, and save again.
+            # This is a one-time memory cost but ensures the final format is perfect.
+            logger.info("Setting 'kmer' column as index in final Parquet file...")
+            final_df = pd.read_parquet(output_path)
+            final_df = final_df.set_index("kmer")
+            final_df.to_parquet(
+                output_path, index=True
+            )  # Overwrite with indexed version
+            logger.info("Index set and final database saved.")
+
+            return output_path
+
+        finally:
+            # --- Cleanup ---
+            logger.info(f"Cleaning up temporary directory: {temp_dir}")
+            shutil.rmtree(temp_dir)
 
     def _save_database_to_parquet(self, database_df: pd.DataFrame) -> None:
         """
@@ -635,22 +692,111 @@ class DatabaseBuilder:
             logger.error("Could not determine strain identifiers for genome files.")
             return
 
-        kmer_database_df = self._build_kmer_database_parallel(
-            genome_files, strain_identifiers
-        )
+        # This method now handles file creation and returns the path.
+        # It no longer returns a DataFrame.
+        db_path = self._build_kmer_database_parallel(genome_files, strain_identifiers)
 
-        if kmer_database_df.empty:
-            logger.warning(
-                "K-mer database construction resulted in an empty DataFrame."
+        if not db_path or not db_path.exists():
+            logger.error(
+                "K-mer database construction failed to produce an output file."
             )
         else:
+            # The logging about saving is now handled inside the build method.
+            # We can just log the final success message.
+            df_info = pd.read_parquet(
+                db_path, columns=[]
+            )  # Read only metadata for shape
             logger.info(
-                f"Constructed k-mer database DataFrame with shape: {kmer_database_df.shape} "
+                f"Successfully constructed and saved k-mer database to {db_path} "
+                f"with shape: ({len(df_info.index)}, {len(df_info.columns)}) "
                 f"(kmers x strains)."
             )
 
-        self._save_database_to_parquet(kmer_database_df)
         logger.info("K-mer database creation workflow finished.")
+
+    @staticmethod
+    def _process_and_write_kmers_worker(task_tuple) -> pathlib.Path:
+        """Worker function for multiprocessing that extracts k-mers and writes to temp file."""
+        genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = task_tuple
+        
+        # Initialize a local extractor
+        try:
+            from kmer_counter_rs import extract_kmers_rs
+            extract_func = extract_kmers_rs
+        except ImportError:
+            extract_func = None
+        
+        # Process the genome file
+        strain_kmers = set()
+        try:
+            from .utils import open_file_transparently
+            from Bio import SeqIO
+            
+            with open_file_transparently(genome_file) as f_handle:
+                for record in SeqIO.parse(f_handle, "fasta"):
+                    if record.seq is None:
+                        continue
+                    seq_str = str(record.seq)
+                    seq_bytes = seq_str.encode("utf-8")
+                    
+                    if extract_func is not None:
+                        try:
+                            kmers_from_seq = extract_func(seq_bytes.upper(), kmer_length)
+                            if skip_n_kmers:
+                                kmers_from_seq = [kmer for kmer in kmers_from_seq if b"N" not in kmer]
+                            strain_kmers.update(kmers_from_seq)
+                        except Exception:
+                            # Fallback to Python implementation
+                            kmers_from_seq = DatabaseBuilder._py_extract_canonical_kmers_static(seq_bytes, kmer_length, skip_n_kmers)
+                            strain_kmers.update(kmers_from_seq)
+                    else:
+                        kmers_from_seq = DatabaseBuilder._py_extract_canonical_kmers_static(seq_bytes, kmer_length, skip_n_kmers)
+                        strain_kmers.update(kmers_from_seq)
+                        
+        except Exception as e:
+            logger.error(f"Error processing {genome_file}: {e}")
+            
+        # Write to temp file
+        temp_file_path = temp_dir / f"{strain_idx}.part"
+        with open(temp_file_path, "w") as f_out:
+            for kmer_bytes in strain_kmers:
+                f_out.write(f"{kmer_bytes.hex()}\t{strain_idx}\n")
+        
+        return temp_file_path
+
+    @staticmethod
+    def _py_extract_canonical_kmers_static(sequence_bytes: bytes, k: int, skip_n_kmers: bool) -> List[bytes]:
+        """Static version of canonical k-mer extraction for multiprocessing."""
+        PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
+        
+        def _py_reverse_complement_static(kmer_bytes: bytes) -> bytes:
+            return kmer_bytes.translate(PY_RC_TRANSLATE_TABLE)[::-1]
+        
+        kmers_list = []
+        upper_sequence_bytes = sequence_bytes.upper()
+        
+        if len(upper_sequence_bytes) < k:
+            return kmers_list
+            
+        with memoryview(upper_sequence_bytes) as seq_view:
+            for i in range(len(upper_sequence_bytes) - k + 1):
+                kmer_candidate_bytes = seq_view[i : i + k].tobytes()
+                
+                if skip_n_kmers and b"N" in kmer_candidate_bytes:
+                    continue
+                    
+                rc_kmer = _py_reverse_complement_static(kmer_candidate_bytes)
+                kmers_list.append(
+                    kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
+                )
+        
+        return kmers_list
+
+    def _process_and_write_kmers(self, genome_file_info, kmer_length, temp_dir) -> pathlib.Path:
+        """
+        Legacy method - now redirects to static worker for consistency.
+        """
+        return self._process_and_write_kmers_worker(genome_file_info)
 
 
 def get_cli_parser() -> argparse.ArgumentParser:

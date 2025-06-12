@@ -6,7 +6,7 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 import pathlib
 
 # import pickle # Pickle is no longer used directly for db files
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 from unittest.mock import MagicMock, patch
 
 import numpy as np

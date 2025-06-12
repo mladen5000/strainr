@@ -1,12 +1,20 @@
 from dataclasses import dataclass, field
 from typing import ClassVar, Union
+import pathlib
 
 import mmh3
 import numpy as np
 import pandas as pd
 
 from Bio.Seq import Seq
-from nptyping import NDArray, Shape, UInt8
+try:
+    from nptyping import NDArray, Shape, UInt8
+except ImportError:
+    # Fallback type hints if nptyping is not available
+    from typing import Any
+    NDArray = Any
+    Shape = Any
+    UInt8 = Any
 
 CountVector = NDArray[Shape["*"], UInt8]
 Kmer = Union[memoryview, bytes]

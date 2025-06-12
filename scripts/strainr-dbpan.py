@@ -5,7 +5,7 @@ import gzip
 import logging
 import pathlib
 
-# import pickle # Will be removed if pickle_db function is removed or no longer uses it.
+import pickle
 import sys
 import csv
 import shutil
