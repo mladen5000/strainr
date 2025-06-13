@@ -1,9 +1,10 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use pyo3::types::PyBytes;
+// Use the same imports as extract_kmer_rs for Sequence
 use needletail::{parse_fastx_file, Sequence};
 use std::collections::HashMap;
-use log::{info, warn, debug};
+use log::{info, debug};
 use std::sync::Once;
 
 static INIT: Once = Once::new();
@@ -52,6 +53,34 @@ fn extract_kmer_rs(file_path: &str) -> PyResult<HashMap<Vec<u8>, usize>> {
     Ok(kmer_counts)
 }
 
+// Helper function for reverse complement
+fn reverse_complement_dna(dna: &[u8]) -> Vec<u8> {
+    let mut rc = Vec::with_capacity(dna.len());
+    for &base in dna.iter().rev() {
+        rc.push(match base {
+            b'A' | b'a' => b'T',
+            b'C' | b'c' => b'G',
+            b'G' | b'g' => b'C',
+            b'T' | b't' => b'A',
+            b'N' | b'n' => b'N', // Keep Ns as Ns in reverse complement
+            _ => b'N', // For any other character, treat as N
+        });
+    }
+    rc
+}
+
+// Helper function to check for valid DNA characters (ACGTacgt)
+fn is_valid_dna(kmer_slice: &[u8]) -> bool {
+    for &base in kmer_slice {
+        match base {
+            b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't' => (), // valid
+            _ => return false, // invalid character found (e.g., 'N')
+        }
+    }
+    true
+}
+
+
 #[pyfunction]
 fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<Vec<Vec<u8>>> {
     init_logging();
@@ -59,55 +88,63 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<V
     let seq_bytes = sequence_bytes.as_bytes();
     let mut kmers = Vec::new();
     
+    if k == 0 { // k=0 is problematic, return empty or error? Let's return empty.
+        debug!("k cannot be 0, returning empty list.");
+        return Ok(kmers);
+    }
     if seq_bytes.len() < k {
         debug!("Sequence too short ({} bp) for k={}", seq_bytes.len(), k);
         return Ok(kmers);
     }
     
-    debug!("Processing sequence of {} bytes with k={}", seq_bytes.len(), k);
+    debug!("Manually processing sequence of {} bytes with k={}", seq_bytes.len(), k);
     
-    // Convert sequence to a temporary FASTA-like format for needletail
-    let seq_str = std::str::from_utf8(seq_bytes).map_err(|e| {
-        warn!("Invalid UTF-8 sequence: {}", e);
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid UTF-8 sequence: {}", e))
-    })?;
-    
-    // Create a simple sequence record
-    let fasta_content = format!(">temp\n{}", seq_str);
-    let mut cursor = std::io::Cursor::new(fasta_content.as_bytes());
-    
-    let mut reader = match needletail::parse_fastx_reader(&mut cursor) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("Failed to parse sequence: {}", e);
-            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse sequence: {}", e)));
+    let mut total_kmers_considered = 0;
+    let mut actual_kmers_extracted = 0;
+    let mut num_skipped_kmers = 0;
+
+    for i in 0..=(seq_bytes.len() - k) {
+        let kmer_slice = &seq_bytes[i..i+k];
+        total_kmers_considered += 1;
+
+        if !is_valid_dna(kmer_slice) {
+            num_skipped_kmers += 1;
+            // Optionally log each skipped k-mer, but this can be very verbose:
+            // debug!("Skipping k-mer with non-DNA char: {:?}", std::str::from_utf8(kmer_slice).unwrap_or("invalid utf8"));
+            continue;
         }
-    };
-    
-    let mut total_kmers_processed = 0;
-    let expected_kmers = if seq_str.len() >= k { seq_str.len() - k + 1 } else { 0 };
-    
-    while let Some(record) = reader.next() {
-        let seqrec = record.map_err(|e| {
-            warn!("Invalid record: {}", e);
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e))
-        })?;
-        let norm_seq = seqrec.normalize(false);
-        let rc = norm_seq.reverse_complement();
         
-        for (_, kmer, _) in norm_seq.canonical_kmers(k as u8, &rc) {
-            kmers.push(kmer.to_vec());
-            total_kmers_processed += 1;
+        let rc_kmer_vec = reverse_complement_dna(kmer_slice);
+
+        // Determine canonical k-mer
+        // Need to compare &[u8] with Vec<u8>. Can convert kmer_slice to Vec or rc_kmer_vec to slice.
+        // Or, more efficiently, compare slices directly if possible.
+        // kmer_slice vs rc_kmer_vec.as_slice()
+        if kmer_slice <= rc_kmer_vec.as_slice() {
+            kmers.push(kmer_slice.to_vec());
+        } else {
+            kmers.push(rc_kmer_vec);
+        }
+        actual_kmers_extracted += 1;
             
-            // Log progress every 100k k-mers
-            if total_kmers_processed % 100000 == 0 {
-                debug!("Processed {} k-mers so far", total_kmers_processed);
-            }
+        if actual_kmers_extracted % 100000 == 0 && actual_kmers_extracted > 0 {
+            debug!("Processed {} valid k-mers so far ({} considered)", actual_kmers_extracted, total_kmers_considered);
         }
     }
     
-    info!("Extracted {} unique k-mers from {} bp sequence (expected ~{})", 
-          kmers.len(), seq_str.len(), expected_kmers);
+    if num_skipped_kmers > 0 {
+        debug!("Skipped {} k-mers containing non-ACGTacgt characters.", num_skipped_kmers);
+    }
+
+    let expected_kmers_if_all_valid = if seq_bytes.len() >= k { seq_bytes.len() - k + 1 } else { 0 };
+    info!(
+        "Extracted {} k-mers from {} bp sequence ({} windows considered, {} skipped, ~{} expected if all valid DNA)",
+        kmers.len(),
+        seq_bytes.len(),
+        total_kmers_considered,
+        num_skipped_kmers,
+        expected_kmers_if_all_valid
+    );
     
     Ok(kmers)
 }

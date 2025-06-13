@@ -806,25 +806,30 @@ class DatabaseBuilder:
                             kmers_from_seq = extract_func(
                                 seq_bytes.upper(), kmer_length
                             )
+                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})")
                             if skip_n_kmers:
                                 kmers_from_seq = [
                                     kmer for kmer in kmers_from_seq if b"N" not in kmer
                                 ]
                             strain_kmers.update(kmers_from_seq)
-                        except Exception:
+                        except Exception as rust_exc:
+                            logger.warning(f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python.")
                             # Fallback to Python implementation
                             kmers_from_seq = (
                                 DatabaseBuilder._py_extract_canonical_kmers_static(
                                     seq_bytes, kmer_length, skip_n_kmers
                                 )
                             )
+                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})")
                             strain_kmers.update(kmers_from_seq)
                     else:
+                        # Python only path
                         kmers_from_seq = (
                             DatabaseBuilder._py_extract_canonical_kmers_static(
                                 seq_bytes, kmer_length, skip_n_kmers
                             )
                         )
+                        logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python for {genome_file} (record: {record.id})")
                         strain_kmers.update(kmers_from_seq)
 
         except Exception as e:
