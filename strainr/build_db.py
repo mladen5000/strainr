@@ -22,6 +22,7 @@ K-mer Strategy:
   a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
+# %%
 import argparse
 import contextlib
 import logging
@@ -591,14 +592,16 @@ class DatabaseBuilder:
 
         logger.info("Starting parallel k-mer extraction (writing to disk)...")
         with mp.Pool(processes=self.args.procs) as pool:
-            # We use imap_unordered for progress but don't need the results.
-            for _ in tqdm(
-                pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
-                total=len(tasks),
-                desc="Extracting k-mers (Map)",
-            ):
-                pass
-
+            # Collect all results to ensure pool workers finish and avoid deadlock
+            list(
+                tqdm(
+                    pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
+                    total=len(tasks),
+                    desc="Extracting k-mers (Map)",
+                )
+            )
+            pool.close()
+            pool.join()
         logger.info("Map phase completed. All k-mers written to temporary files.")
 
         try:
@@ -615,7 +618,7 @@ class DatabaseBuilder:
             else:  # For fewer files, direct zcat
                 part_paths = " ".join(str(f) for f in part_files)
                 concat_command = f"zcat {part_paths} > {all_parts_file}"
-            
+
             subprocess.run(concat_command, shell=True, check=True)
 
             logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
@@ -646,13 +649,13 @@ class DatabaseBuilder:
             # Batch processing for much better performance
             BATCH_SIZE = 10000  # Process 10k k-mers at a time
             batch_data = {field.name: [] for field in schema_fields}
-            
+
             with pq.ParquetWriter(output_path, schema) as writer:
                 with open(sorted_parts_file, "r") as f:
                     grouped_iterator = groupby(
                         f, key=lambda line: line.split("\t", 1)[0]
                     )
-                    
+
                     batch_count = 0
                     for kmer_hex, group in tqdm(
                         grouped_iterator, desc="Aggregating k-mers (Reduce)"
@@ -674,9 +677,9 @@ class DatabaseBuilder:
                         batch_data["kmer"].append(bytes.fromhex(kmer_hex))
                         for i, name in enumerate(strain_names):
                             batch_data[name].append(presence_vector[i])
-                        
+
                         batch_count += 1
-                        
+
                         # Write batch when full
                         if batch_count >= BATCH_SIZE:
                             table = pa.Table.from_pydict(batch_data, schema=schema)
@@ -684,7 +687,7 @@ class DatabaseBuilder:
                             # Clear batch
                             batch_data = {field.name: [] for field in schema_fields}
                             batch_count = 0
-                    
+
                     # Write final batch if any remaining
                     if batch_count > 0:
                         table = pa.Table.from_pydict(batch_data, schema=schema)
@@ -770,11 +773,10 @@ class DatabaseBuilder:
         logger.info("K-mer database creation workflow finished.")
 
     @staticmethod
-    def _process_and_write_kmers_worker(task_tuple) -> pathlib.Path:
-        """Worker function for multiprocessing that extracts k-mers and writes to temp file."""
-        genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = (
-            task_tuple
-        )
+    def _process_and_write_kmers_worker(task):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Worker starting for {task}")
+        genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = task
 
         # Initialize a local extractor
         try:
@@ -831,10 +833,12 @@ class DatabaseBuilder:
         # Write to compressed temp file for better I/O performance
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
         import gzip
+
         with gzip.open(temp_file_path, "wt") as f_out:
             for kmer_bytes in strain_kmers:
                 f_out.write(f"{kmer_bytes.hex()}\t{strain_idx}\n")
 
+        logger.info(f"Worker finished for {task}")
         return temp_file_path
 
     @staticmethod
@@ -875,8 +879,14 @@ class DatabaseBuilder:
         """
         # Reconstruct task tuple for worker
         genome_file, strain_name, strain_idx = genome_file_info[:3]
-        task_tuple = (genome_file, strain_name, strain_idx, kmer_length, 
-                     getattr(self.args, 'skip_n_kmers', False), temp_dir)
+        task_tuple = (
+            genome_file,
+            strain_name,
+            strain_idx,
+            kmer_length,
+            getattr(self.args, "skip_n_kmers", False),
+            temp_dir,
+        )
         return self._process_and_write_kmers_worker(task_tuple)
 
 
@@ -980,3 +990,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     logger.info("StrainR Database Building Script Finished Successfully.")
+
+# %%

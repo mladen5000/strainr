@@ -3,6 +3,16 @@ use pyo3::wrap_pyfunction;
 use pyo3::types::PyBytes;
 use needletail::{parse_fastx_file, Sequence};
 use std::collections::HashMap;
+use log::{info, warn, debug};
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+fn init_logging() {
+    INIT.call_once(|| {
+        env_logger::init();
+    });
+}
 
 #[pyfunction]
 fn extract_kmer_rs(file_path: &str) -> PyResult<HashMap<Vec<u8>, usize>> {
@@ -44,15 +54,21 @@ fn extract_kmer_rs(file_path: &str) -> PyResult<HashMap<Vec<u8>, usize>> {
 
 #[pyfunction]
 fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<Vec<Vec<u8>>> {
+    init_logging();
+    
     let seq_bytes = sequence_bytes.as_bytes();
     let mut kmers = Vec::new();
     
     if seq_bytes.len() < k {
+        debug!("Sequence too short ({} bp) for k={}", seq_bytes.len(), k);
         return Ok(kmers);
     }
     
+    debug!("Processing sequence of {} bytes with k={}", seq_bytes.len(), k);
+    
     // Convert sequence to a temporary FASTA-like format for needletail
     let seq_str = std::str::from_utf8(seq_bytes).map_err(|e| {
+        warn!("Invalid UTF-8 sequence: {}", e);
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid UTF-8 sequence: {}", e))
     })?;
     
@@ -63,26 +79,52 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<V
     let mut reader = match needletail::parse_fastx_reader(&mut cursor) {
         Ok(r) => r,
         Err(e) => {
+            warn!("Failed to parse sequence: {}", e);
             return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse sequence: {}", e)));
         }
     };
     
+    let mut total_kmers_processed = 0;
+    let expected_kmers = if seq_str.len() >= k { seq_str.len() - k + 1 } else { 0 };
+    
     while let Some(record) = reader.next() {
-        let seqrec = record.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e)))?;
+        let seqrec = record.map_err(|e| {
+            warn!("Invalid record: {}", e);
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e))
+        })?;
         let norm_seq = seqrec.normalize(false);
         let rc = norm_seq.reverse_complement();
         
         for (_, kmer, _) in norm_seq.canonical_kmers(k as u8, &rc) {
             kmers.push(kmer.to_vec());
+            total_kmers_processed += 1;
+            
+            // Log progress every 100k k-mers
+            if total_kmers_processed % 100000 == 0 {
+                debug!("Processed {} k-mers so far", total_kmers_processed);
+            }
         }
     }
     
+    info!("Extracted {} unique k-mers from {} bp sequence (expected ~{})", 
+          kmers.len(), seq_str.len(), expected_kmers);
+    
     Ok(kmers)
+}
+
+#[pyfunction]
+fn enable_logging(level: Option<&str>) -> PyResult<()> {
+    let log_level = level.unwrap_or("info");
+    std::env::set_var("RUST_LOG", format!("kmer_counter_rs={}", log_level));
+    init_logging();
+    info!("Rust logging enabled at {} level", log_level);
+    Ok(())
 }
 
 #[pymodule]
 fn kmer_counter_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_kmer_rs, m)?)?;
     m.add_function(wrap_pyfunction!(extract_kmers_rs, m)?)?;
+    m.add_function(wrap_pyfunction!(enable_logging, m)?)?;
     Ok(())
 }
