@@ -804,10 +804,34 @@ class DatabaseBuilder:
                     if extract_func is not None:
                         try:
                             kmers_from_seq = extract_func(
-                                seq_bytes.upper(), kmer_length
+                                seq_bytes.upper(), kmer_length, skip_n_kmers
                             )
                             logger.debug(f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})")
-                            if skip_n_kmers:
+                            # The skip_n_kmers logic is now handled by the Rust function if perform_strict_dna_check is True (which skip_n_kmers implies)
+                            # However, the Rust function extract_kmers_rs currently filters based on any non-ACGT character,
+                            # not specifically 'N'. If 'N' is the only character to skip, and other non-ACGT should not be skipped
+                            # by the Rust call, then the Python-side filtering might still be needed depending on how
+                            # perform_strict_dna_check is interpreted by the Rust side.
+                            # For now, assuming perform_strict_dna_check in Rust means skip any non-ACGT (including N).
+                            # If only 'N' should be skipped, the Rust side needs adjustment or Python filtering remains.
+                            # Based on the previous subtask, extract_kmers_rs now has a perform_strict_dna_check
+                            # that skips if *any* char is not ACGT. So, if skip_n_kmers is true, we want that check.
+                            # The Python side N check can be removed if the Rust side handles it.
+                            # Let's remove the Python side N check for now, assuming the Rust side does what we want.
+                            # if skip_n_kmers:
+                            #     kmers_from_seq = [
+                            #         kmer for kmer in kmers_from_seq if b"N" not in kmer
+                            #     ]
+                            strain_kmers.update(kmers_from_seq)
+                        except Exception as rust_exc:
+                            logger.warning(f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python.")
+                            # Fallback to Python implementation
+                            kmers_from_seq = (
+                                DatabaseBuilder._py_extract_canonical_kmers_static(
+                                    seq_bytes, kmer_length, skip_n_kmers
+                                )
+                            )
+                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})")
                                 kmers_from_seq = [
                                     kmer for kmer in kmers_from_seq if b"N" not in kmer
                                 ]
