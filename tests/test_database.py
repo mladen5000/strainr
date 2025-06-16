@@ -384,3 +384,141 @@ def test_db_validate_kmer_length(
 
     assert db.validate_kmer_length("12345") is True
     assert db.validate_kmer_length(b"A" * default_kmer_length_db) is True
+
+
+# --- Tests for Parquet Metadata Reading ---
+
+def create_parquet_with_metadata(
+    filepath: pathlib.Path,
+    kmer_data: List[Union[str, bytes]],
+    strain_names: List[str],
+    counts: Optional[np.ndarray] = None,
+    metadata: Optional[dict] = None,
+    kmer_col_name: str = "kmer" # Ensure consistency with how build_db writes it
+) -> None:
+    """Helper to create a Parquet file with specified data and Arrow schema metadata."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    if counts is None:
+        counts = np.random.randint(0, 255, size=(len(kmer_data), len(strain_names)), dtype=np.uint8)
+
+    # Create pandas DataFrame first, ensuring 'kmer' is a column
+    df = pd.DataFrame(counts, columns=strain_names)
+    df[kmer_col_name] = kmer_data # Add kmer data as a column
+
+    # Ensure 'kmer' column is first for consistency if desired, though not strictly necessary for metadata
+    df = df[[kmer_col_name] + strain_names]
+
+    # Convert to Arrow Table with metadata
+    arrow_table = pa.Table.from_pandas(df, preserve_index=False)
+
+    if metadata:
+        # Add metadata to the schema
+        updated_schema = arrow_table.schema.with_metadata(metadata)
+        arrow_table = arrow_table.replace_schema_metadata(updated_schema.metadata)
+
+    pq.write_table(arrow_table, filepath)
+
+
+@pytest.fixture
+def parquet_file_with_metadata(tmp_path: pathlib.Path, request) -> pathlib.Path:
+    """
+    Creates a Parquet file with specified k-mers, strains, counts, and Arrow schema metadata.
+    `request.param` can include:
+        'kmer_len_meta': int value for strainr_kmerlen metadata.
+        'skip_n_meta': bool value for strainr_skip_n_kmers metadata.
+        'kmer_data': list of k-mers (str or bytes) for the 'kmer' column.
+        'actual_kmer_len': the actual length of k-mers in kmer_data.
+    """
+    params = getattr(request, "param", {})
+    kmer_len_meta_val = params.get("kmer_len_meta")
+    skip_n_meta_val = params.get("skip_n_meta")
+    actual_kmer_len = params.get("actual_kmer_len", KMER_LEN_FOR_TESTS) # Length of k-mers in data
+
+    # Default kmer_data based on actual_kmer_len
+    default_kmer_data = [b"A" * actual_kmer_len, b"C" * actual_kmer_len]
+    kmer_data_val = params.get("kmer_data", default_kmer_data)
+
+    strain_names_val = ["s1", "s2"]
+    filepath = tmp_path / "metadata_test.parquet"
+
+    arrow_metadata = {}
+    if kmer_len_meta_val is not None:
+        arrow_metadata[b"strainr_kmerlen"] = str(kmer_len_meta_val).encode('utf-8')
+    if skip_n_meta_val is not None:
+        arrow_metadata[b"strainr_skip_n_kmers"] = str(skip_n_meta_val).encode('utf-8')
+
+    create_parquet_with_metadata(filepath, kmer_data_val, strain_names_val, metadata=arrow_metadata if arrow_metadata else None)
+    return filepath
+
+# Scenario 1: Metadata Present and Correct
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"kmer_len_meta": 5, "skip_n_meta": True, "actual_kmer_len": 5}], indirect=True)
+def test_db_reads_metadata_correctly(parquet_file_with_metadata: pathlib.Path):
+    db = StrainKmerDatabase(parquet_file_with_metadata)
+    assert db.kmer_length == 5
+    assert db.db_kmer_length == 5
+    assert db.db_skip_n_kmers is True
+    assert db.data_derived_kmer_length == 5 # Should also match
+
+# Scenario 2: Metadata Present, expected_kmer_length Matches
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"kmer_len_meta": 5, "skip_n_meta": False, "actual_kmer_len": 5}], indirect=True)
+def test_db_metadata_matches_expected_len(parquet_file_with_metadata: pathlib.Path, caplog):
+    db = StrainKmerDatabase(parquet_file_with_metadata, expected_kmer_length=5)
+    assert db.kmer_length == 5
+    assert db.db_kmer_length == 5
+    assert db.db_skip_n_kmers is False
+    assert not any("differs from k-mer length in database metadata" in record.message for record in caplog.records)
+
+# Scenario 3: Metadata Present, expected_kmer_length Mismatches (metadata takes precedence)
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"kmer_len_meta": 5, "skip_n_meta": True, "actual_kmer_len": 5}], indirect=True)
+def test_db_metadata_overrides_mismatched_expected_len(parquet_file_with_metadata: pathlib.Path, caplog):
+    with caplog.at_level(logging.WARNING):
+        db = StrainKmerDatabase(parquet_file_with_metadata, expected_kmer_length=7)
+    assert db.kmer_length == 5 # Metadata (5) overrides expected (7)
+    assert db.db_kmer_length == 5
+    assert any("differs from k-mer length in database metadata" in record.message for record in caplog.records)
+
+# Scenario 4: Metadata kmerlen Absent, expected_kmer_length Provided and matches data
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"actual_kmer_len": 5}], indirect=True) # No kmer_len_meta
+def test_db_expected_len_used_if_meta_absent_matches_data(parquet_file_with_metadata: pathlib.Path):
+    db = StrainKmerDatabase(parquet_file_with_metadata, expected_kmer_length=5)
+    assert db.kmer_length == 5
+    assert db.db_kmer_length is None
+    assert db.data_derived_kmer_length == 5
+
+# Scenario 5: Metadata kmerlen Absent, No expected_kmer_length (Inference from data)
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"actual_kmer_len": 7}], indirect=True) # No kmer_len_meta
+def test_db_kmer_length_inferred_from_data_if_all_absent(parquet_file_with_metadata: pathlib.Path):
+    db = StrainKmerDatabase(parquet_file_with_metadata)
+    assert db.kmer_length == 7 # Inferred from actual_kmer_len
+    assert db.db_kmer_length is None
+    assert db.data_derived_kmer_length == 7
+
+# Scenario 6: Error - expected_kmer_length Mismatches Data-Inferred (No Metadata kmerlen)
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"actual_kmer_len": 5}], indirect=True) # k-mers are length 5
+def test_db_error_expected_mismatches_data_no_meta(parquet_file_with_metadata: pathlib.Path):
+    with pytest.raises(ValueError, match="differs from k-mer length inferred from data"):
+        StrainKmerDatabase(parquet_file_with_metadata, expected_kmer_length=7)
+
+# Scenario 7: Error - Metadata kmerlen Mismatches Data-Inferred
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"kmer_len_meta": 7, "actual_kmer_len": 5}], indirect=True) # Meta says 7, data is 5
+def test_db_error_meta_mismatches_data(parquet_file_with_metadata: pathlib.Path):
+    with pytest.raises(ValueError, match="does not match k-mer length from database metadata"):
+        StrainKmerDatabase(parquet_file_with_metadata)
+
+# Scenario 8: skip_n_kmers metadata absent
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"kmer_len_meta": 5, "actual_kmer_len": 5}], indirect=True) # skip_n_meta not set
+def test_db_skip_n_kmers_meta_absent(parquet_file_with_metadata: pathlib.Path):
+    db = StrainKmerDatabase(parquet_file_with_metadata)
+    assert db.db_skip_n_kmers is None # Should be None if not in metadata
+    assert db.kmer_length == 5
+
+# Scenario 9: Only skip_n_kmers metadata present (kmerlen inferred)
+@pytest.mark.parametrize("parquet_file_with_metadata", [{"skip_n_meta": True, "actual_kmer_len": 5}], indirect=True)
+def test_db_only_skip_n_meta_present_kmerlen_inferred(parquet_file_with_metadata: pathlib.Path):
+    db = StrainKmerDatabase(parquet_file_with_metadata)
+    assert db.db_skip_n_kmers is True
+    assert db.kmer_length == 5 # Inferred from data
+    assert db.db_kmer_length is None # kmerlen meta was not set
+    assert db.data_derived_kmer_length == 5

@@ -82,7 +82,7 @@ fn is_valid_dna(kmer_slice: &[u8]) -> bool {
 
 
 #[pyfunction]
-fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<Vec<Vec<u8>>> {
+fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_strict_dna_check: bool) -> PyResult<Vec<Vec<u8>>> {
     init_logging();
     
     let seq_bytes = sequence_bytes.as_bytes();
@@ -107,11 +107,13 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize) -> PyResult<V
         let kmer_slice = &seq_bytes[i..i+k];
         total_kmers_considered += 1;
 
-        if !is_valid_dna(kmer_slice) {
-            num_skipped_kmers += 1;
-            // Optionally log each skipped k-mer, but this can be very verbose:
-            // debug!("Skipping k-mer with non-DNA char: {:?}", std::str::from_utf8(kmer_slice).unwrap_or("invalid utf8"));
-            continue;
+        if perform_strict_dna_check {
+            if !is_valid_dna(kmer_slice) {
+                num_skipped_kmers += 1;
+                // Optionally log each skipped k-mer, but this can be very verbose:
+                // debug!("Skipping k-mer with non-DNA char: {:?}", std::str::from_utf8(kmer_slice).unwrap_or("invalid utf8"));
+                continue;
+            }
         }
         
         let rc_kmer_vec = reverse_complement_dna(kmer_slice);
@@ -164,4 +166,172 @@ fn kmer_counter_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_kmers_rs, m)?)?;
     m.add_function(wrap_pyfunction!(enable_logging, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use pyo3::types::PyBytes;
+    use pyo3::Python;
+
+    #[test]
+    fn test_extract_kmers_rs_with_n_no_strict_check() {
+        Python::with_gil(|py| {
+            let seq_str = "ACNGT"; // Sequence with 'N'
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 3;
+            let perform_strict_dna_check = false;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed with error: {:?}", result.err());
+            let kmers = result.unwrap();
+
+            // Expected k-mers (canonical):
+            // "ACN" (original) vs "NGT" (rev-comp of "ACN") -> "ACN" (N is N, A < N, T > N - this depends on how 'N' is handled in RC and comparison)
+            //   Let's assume 'N' is treated as itself in RC.
+            //   ACN -> NGT. ACN vs NGT. 'A' vs 'N'. If 'A' < 'N', then ACN is canonical.
+            // "CNG" (original) vs "NCA" (rev-comp of "CNG") -> "CNG"
+            //   CNG -> NCA. CNG vs NCA. 'C' vs 'N'. If 'C' < 'N', then CNG is canonical.
+            // "NGT" (original) vs "ACN" (rev-comp of "NGT") -> "ACN"
+            //   NGT -> ACN. NGT vs ACN. 'N' vs 'A'. If 'A' < 'N', then ACN is canonical.
+            // The reverse_complement_dna function treats N as N.
+            // Comparison is lexicographical. b'A' (65), b'C' (67), b'G' (71), b'N' (78), b'T' (84)
+            // So ACN vs NGT => ACN is canonical
+            //    CNG vs NCA => CNG is canonical
+            //    NGT vs ACN => ACN is canonical
+            let expected_kmers: Vec<Vec<u8>> = vec![
+                b"ACN".to_vec(),
+                b"CNG".to_vec(),
+                b"ACN".to_vec(),
+            ];
+
+            assert_eq!(kmers, expected_kmers, "K-mers with 'N' not handled as expected when strict check is off.");
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_with_n_strict_check() {
+        Python::with_gil(|py| {
+            let seq_str = "ACNGT"; // Sequence with 'N'
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 3;
+            let perform_strict_dna_check = true; // Strict check is ON
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed with error: {:?}", result.err());
+            let kmers = result.unwrap();
+
+            // Expected: No k-mers should be extracted because 'N' makes them invalid with strict checking
+            let expected_kmers: Vec<Vec<u8>> = Vec::new();
+
+            assert_eq!(kmers, expected_kmers, "K-mers with 'N' should be skipped when strict check is on.");
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_valid_dna_no_strict_check() {
+        Python::with_gil(|py| {
+            let seq_str = "ACGTA";
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 3;
+            let perform_strict_dna_check = false;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            let kmers = result.unwrap();
+
+            // ACG (rev-comp CGT) -> ACG
+            // CGT (rev-comp ACG) -> ACG
+            // GTA (rev-comp TAC) -> GTA
+            let expected_kmers: Vec<Vec<u8>> = vec![
+                b"ACG".to_vec(),
+                b"ACG".to_vec(),
+                b"GTA".to_vec(),
+            ];
+            assert_eq!(kmers, expected_kmers);
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_valid_dna_strict_check() {
+        Python::with_gil(|py| {
+            let seq_str = "ACGTA";
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 3;
+            let perform_strict_dna_check = true;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            let kmers = result.unwrap();
+            // Expected k-mers are the same as without strict check because DNA is valid
+            let expected_kmers: Vec<Vec<u8>> = vec![
+                b"ACG".to_vec(),
+                b"ACG".to_vec(),
+                b"GTA".to_vec(),
+            ];
+            assert_eq!(kmers, expected_kmers);
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_empty_sequence() {
+        Python::with_gil(|py| {
+            let seq_str = "";
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 3;
+            let perform_strict_dna_check = false;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            let kmers = result.unwrap();
+            assert!(kmers.is_empty(), "Expected empty k-mer list for empty sequence");
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_k_too_large() {
+        Python::with_gil(|py| {
+            let seq_str = "ACG";
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 4;
+            let perform_strict_dna_check = false;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            let kmers = result.unwrap();
+            assert!(kmers.is_empty(), "Expected empty k-mer list when k is larger than sequence length");
+        });
+    }
+
+    #[test]
+    fn test_extract_kmers_rs_k_zero() {
+        Python::with_gil(|py| {
+            let seq_str = "ACGT";
+            let py_bytes = PyBytes::new_bound(py, seq_str.as_bytes());
+            let k = 0;
+            let perform_strict_dna_check = false;
+
+            let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
+            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            let kmers = result.unwrap();
+            assert!(kmers.is_empty(), "Expected empty k-mer list for k=0");
+        });
+    }
+
+     #[test]
+    fn test_is_valid_dna_helper() {
+        assert!(super::is_valid_dna(b"ACGT"));
+        assert!(super::is_valid_dna(b"acgt"));
+        assert!(!super::is_valid_dna(b"ACGTN"));
+        assert!(!super::is_valid_dna(b"ACGTX"));
+        assert!(super::is_valid_dna(b"")); // Empty slice is valid
+    }
+
+    #[test]
+    fn test_reverse_complement_dna_helper() {
+        assert_eq!(super::reverse_complement_dna(b"ACGTN"), b"NACGT");
+        assert_eq!(super::reverse_complement_dna(b"acgtn"), b"nacgt");
+        assert_eq!(super::reverse_complement_dna(b""), b"");
+        assert_eq!(super::reverse_complement_dna(b"GATTACA"), b"TGTAATC");
+        assert_eq!(super::reverse_complement_dna(b"XxNn"), b"nNXX"); // X treated as N
+    }
 }

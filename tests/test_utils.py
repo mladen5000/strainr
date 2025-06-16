@@ -21,6 +21,7 @@ from strainr.utils import (
     open_file_transparently,
     pickle_intermediate_results,
     save_classification_results_to_dataframe,
+    check_external_commands, # Added import
 )
 
 # Assuming these types might be used in dummy data for pickle_intermediate_results
@@ -338,6 +339,86 @@ def test_save_results_to_dataframe_pickling_error_mocked(  # Renamed
             sample_final_assignments_utils,
             sample_strain_names_utils,
         )
+
+# --- Tests for check_external_commands ---
+
+@patch("shutil.which")
+def test_check_external_commands_all_exist(mock_shutil_which: MagicMock):
+    """Test that no error is raised if all commands exist."""
+    mock_shutil_which.side_effect = lambda cmd: f"/usr/bin/{cmd}" # Simulate command found
+    commands_to_check = ["sort", "zcat", "grep"]
+
+    try:
+        check_external_commands(commands_to_check)
+    except FileNotFoundError:
+        pytest.fail("check_external_commands raised FileNotFoundError unexpectedly.")
+
+    assert mock_shutil_which.call_count == len(commands_to_check)
+    for cmd in commands_to_check:
+        mock_shutil_which.assert_any_call(cmd)
+
+@patch("shutil.which")
+def test_check_external_commands_one_missing(mock_shutil_which: MagicMock):
+    """Test that FileNotFoundError is raised if one command is missing."""
+    def side_effect_func(cmd):
+        if cmd == "missing_cmd":
+            return None
+        return f"/usr/bin/{cmd}"
+
+    mock_shutil_which.side_effect = side_effect_func
+    commands_to_check = ["sort", "missing_cmd", "grep"]
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        check_external_commands(commands_to_check)
+
+    assert "missing_cmd" in str(excinfo.value)
+    assert "sort" not in str(excinfo.value) # Check that found commands are not listed
+    assert "grep" not in str(excinfo.value)
+    assert "The following required external command(s) were not found in PATH: missing_cmd." in str(excinfo.value)
+
+
+@patch("shutil.which")
+def test_check_external_commands_multiple_missing(mock_shutil_which: MagicMock):
+    """Test that FileNotFoundError is raised with all missing commands listed."""
+    def side_effect_func(cmd):
+        if cmd in ["missing_cmd1", "missing_cmd2"]:
+            return None
+        return f"/usr/bin/{cmd}"
+
+    mock_shutil_which.side_effect = side_effect_func
+    commands_to_check = ["sort", "missing_cmd1", "grep", "missing_cmd2"]
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        check_external_commands(commands_to_check)
+
+    error_message = str(excinfo.value)
+    assert "missing_cmd1" in error_message
+    assert "missing_cmd2" in error_message
+    assert "sort" not in error_message
+    # Check the full message format if possible, e.g. "missing_cmd1, missing_cmd2"
+    assert "The following required external command(s) were not found in PATH: missing_cmd1, missing_cmd2." in error_message
+
+
+@patch("shutil.which")
+def test_check_external_commands_empty_list(mock_shutil_which: MagicMock):
+    """Test that no error is raised for an empty list of commands."""
+    try:
+        check_external_commands([])
+    except FileNotFoundError:
+        pytest.fail("check_external_commands raised FileNotFoundError for an empty list.")
+    mock_shutil_which.assert_not_called()
+
+@patch("shutil.which")
+def test_check_external_commands_none_missing(mock_shutil_which: MagicMock):
+    """Test with a command that is typically present, ensuring it passes if found."""
+    # This test relies on 'ls' being present, which is very likely.
+    # We mock 'shutil.which' to control the environment precisely.
+    mock_shutil_which.return_value = "/bin/ls" # Simulate 'ls' is found
+    try:
+        check_external_commands(["ls"])
+    except FileNotFoundError:
+        pytest.fail("check_external_commands raised FileNotFoundError for 'ls' when it should be found (mocked).")
+    mock_shutil_which.assert_called_once_with("ls")
 
 
 @patch(

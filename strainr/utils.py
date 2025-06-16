@@ -4,6 +4,7 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
+import shutil # Added for shutil.which
 from typing import Dict, List, Tuple, Union, TextIO, BinaryIO
 
 import numpy as np  # For type hinting np.ndarray
@@ -223,3 +224,25 @@ def save_classification_results_to_dataframe(
         raise IOError(
             f"Error saving classification results to DataFrame at {output_dir}: {e}"
         ) from e
+
+
+def check_external_commands(commands: List[str]) -> None:
+    """
+    Checks if specified external commands are available in the system's PATH.
+
+    Args:
+        commands: A list of command names (strings) to check.
+
+    Raises:
+        FileNotFoundError: If any of the specified commands are not found.
+    """
+    missing_commands = []
+    for cmd in commands:
+        if shutil.which(cmd) is None:
+            missing_commands.append(cmd)
+
+    if missing_commands:
+        raise FileNotFoundError(
+            f"The following required external command(s) were not found in PATH: {', '.join(missing_commands)}. "
+            "Please ensure they are installed and accessible."
+        )
