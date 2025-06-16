@@ -22,7 +22,6 @@ K-mer Strategy:
   a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
-# %%
 import argparse
 import contextlib
 import logging
@@ -62,8 +61,10 @@ if not logger.handlers:
 try:
     from kmer_counter_rs import extract_kmers_rs
 
-    _extract_kmers_func = extract_kmers_rs
-    _RUST_KMER_COUNTER_AVAILABLE = True
+    # _extract_kmers_func = extract_kmers_rs
+    # _RUST_KMER_COUNTER_AVAILABLE = True
+    _extract_kmers_func = None
+    _RUST_KMER_COUNTER_AVAILABLE = False
     logger.info(
         "Successfully imported Rust k-mer counter. Using Rust implementation for k-mer extraction."
     )
@@ -789,8 +790,9 @@ class DatabaseBuilder:
         # Process the genome file
         strain_kmers = set()
         try:
-            from .utils import open_file_transparently
             from Bio import SeqIO
+
+            from .utils import open_file_transparently
 
             with open_file_transparently(genome_file) as f_handle:
                 for record in SeqIO.parse(f_handle, "fasta"):
@@ -806,21 +808,27 @@ class DatabaseBuilder:
                             kmers_from_seq = extract_func(
                                 seq_bytes.upper(), kmer_length
                             )
-                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})")
+                            logger.debug(
+                                f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})"
+                            )
                             if skip_n_kmers:
                                 kmers_from_seq = [
                                     kmer for kmer in kmers_from_seq if b"N" not in kmer
                                 ]
                             strain_kmers.update(kmers_from_seq)
                         except Exception as rust_exc:
-                            logger.warning(f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python.")
+                            logger.warning(
+                                f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python."
+                            )
                             # Fallback to Python implementation
                             kmers_from_seq = (
                                 DatabaseBuilder._py_extract_canonical_kmers_static(
                                     seq_bytes, kmer_length, skip_n_kmers
                                 )
                             )
-                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})")
+                            logger.debug(
+                                f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})"
+                            )
                             strain_kmers.update(kmers_from_seq)
                     else:
                         # Python only path
@@ -829,7 +837,9 @@ class DatabaseBuilder:
                                 seq_bytes, kmer_length, skip_n_kmers
                             )
                         )
-                        logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python for {genome_file} (record: {record.id})")
+                        logger.debug(
+                            f"Received {len(kmers_from_seq)} k-mers from Python for {genome_file} (record: {record.id})"
+                        )
                         strain_kmers.update(kmers_from_seq)
 
         except Exception as e:
