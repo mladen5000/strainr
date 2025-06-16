@@ -23,7 +23,6 @@ K-mer Strategy:
 """
 
 # %%
-import argparse
 import contextlib
 import logging
 import multiprocessing as mp
@@ -34,7 +33,7 @@ import sys
 from collections import Counter
 from itertools import groupby
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Literal
 
 import ncbi_genome_download as ngd
 import numpy as np
@@ -43,8 +42,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from Bio import SeqIO
 from tqdm import tqdm
+from pydantic import BaseModel, Field, FilePath, DirectoryPath, model_validator
+import typer
+from typing_extensions import Annotated
 
-from .utils import open_file_transparently
+
+from .utils import open_file_transparently, check_external_commands
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -74,6 +77,36 @@ except Exception as e:  # pragma: no cover - rust module optional
         f"Rust k-mer counter not available ({e}). Falling back to Python implementation."
     )
 
+# --- Pydantic Model for CLI Arguments ---
+class BuildDBArgs(BaseModel):
+    taxid: Optional[str] = Field(None, description="Species taxonomic ID from NCBI.")
+    assembly_accessions: Optional[FilePath] = Field(None, description="Path to a file listing assembly accessions.")
+    genus: Optional[str] = Field(None, description="Genus name for NCBI download.")
+    custom: Optional[DirectoryPath] = Field(None, description="Path to folder with custom genome FASTA files.")
+
+    kmerlen: int = Field(31, description="Length of k-mers.", gt=0)
+    assembly_levels: Literal["complete", "chromosome", "scaffold", "contig"] = Field(
+        "complete", description="Assembly level(s) for NCBI download."
+    )
+    source: Literal["refseq", "genbank"] = Field(
+        "refseq", description="NCBI database source."
+    )
+    procs: int = Field(4, description="Number of processor cores.", gt=0)
+    out: str = Field("strainr_kmer_database", description="Output name prefix for the database file.")
+    unique_taxid: bool = Field(False, description="Filter NCBI genomes for unique strain-level taxID.")
+    skip_n_kmers: bool = Field(False, description="Exclude k-mers with 'N' bases.")
+
+    @model_validator(mode='after')
+    def check_genome_source(cls, values):
+        sources = [values.taxid, values.assembly_accessions, values.genus, values.custom]
+        if sum(s is not None for s in sources) != 1:
+            raise ValueError("Exactly one of --taxid, --assembly_accessions, --genus, or --custom must be specified.")
+        if values.assembly_accessions and not values.assembly_accessions.is_file():
+             raise ValueError(f"Assembly accessions file not found: {values.assembly_accessions}")
+        if values.custom and not values.custom.is_dir():
+            raise ValueError(f"Custom genome directory not found: {values.custom}")
+        return values
+
 
 class DatabaseBuilder:
     """
@@ -85,9 +118,9 @@ class DatabaseBuilder:
 
     PY_RC_TRANSLATE_TABLE = bytes.maketrans(b"ACGTN", b"TGCAN")
 
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: BuildDBArgs) -> None:
         logger.info("Initializing DatabaseBuilder.")
-        self.args: argparse.Namespace = args
+        self.args: BuildDBArgs = args
         self.base_path: pathlib.Path = pathlib.Path().cwd()
         self.output_db_name: str = self.args.out
         self.output_db_dir: pathlib.Path = self.base_path / (
@@ -100,20 +133,26 @@ class DatabaseBuilder:
         Determines the assembly level string for ncbi-genome-download.
         """
         logger.debug(f"Parsing assembly level: {self.args.assembly_levels}")
-        level_choice = self.args.assembly_levels
+        # For ncbi-genome-download, if assembly_accessions are provided,
+        # the assembly_levels parameter is effectively ignored by ngd,
+        # and it downloads whatever accessions are specified.
+        # So, we can simplify this.
         if self.args.assembly_accessions:
             return "all"
 
-        if level_choice == "complete":
-            return "complete"
-        elif level_choice == "chromosome":
-            return "complete,chromosome"
-        elif level_choice == "scaffold":
-            return "complete,chromosome,scaffold"
-        elif level_choice == "contig":
-            return "complete,chromosome,scaffold,contig"
+        # For other cases (taxid, genus), map the Pydantic literal to ngd's expected string.
+        level_mapping = {
+            "complete": "complete",
+            "chromosome": "complete,chromosome",
+            "scaffold": "complete,chromosome,scaffold",
+            "contig": "complete,chromosome,scaffold,contig",
+        }
+        selected_level = self.args.assembly_levels
+        if selected_level in level_mapping:
+            return level_mapping[selected_level]
         else:
-            raise ValueError(f"Invalid assembly level selected: {level_choice}")
+            # This case should ideally not be reached if Pydantic validation is correct
+            raise ValueError(f"Invalid assembly level selected: {selected_level}")
 
     def _download_genomes_from_ncbi(self) -> Tuple[pathlib.Path, pathlib.Path]:
         """
@@ -123,37 +162,27 @@ class DatabaseBuilder:
         assembly_level_str = self._parse_assembly_level()
 
         ncbi_kwargs: Dict[str, Any] = {
-            "flat_output": True,
-            "groups": "bacteria",
+            "flat_output": True, # Keep downloaded files in a flat directory structure
+            "groups": "bacteria", # Assuming we are always downloading bacteria
             "file_formats": "fasta",
-            "section": self.args.source,
+            "section": self.args.source, # 'refseq' or 'genbank'
             "parallel": self.args.procs,
             "assembly_levels": assembly_level_str,
         }
 
         genome_target_dir_suffix: str = ""
+        # Pydantic model validation ensures exactly one of these is set
         if self.args.taxid:
-            if self.args.assembly_accessions:
-                raise ValueError(
-                    "Cannot specify both --taxid and --assembly_accessions."
-                )
             ncbi_kwargs["species_taxids"] = self.args.taxid
             genome_target_dir_suffix = f"s{self.args.taxid}"
         elif self.args.assembly_accessions:
-            accessions_file = pathlib.Path(self.args.assembly_accessions)
-            if not accessions_file.is_file():
-                raise FileNotFoundError(
-                    f"Assembly accessions file not found: {accessions_file}"
-                )
-            ncbi_kwargs["assembly_accessions"] = str(accessions_file)
-            genome_target_dir_suffix = f"acc_{accessions_file.stem}"
+            # Pydantic ensures this is a FilePath and exists
+            ncbi_kwargs["assembly_accessions"] = str(self.args.assembly_accessions)
+            genome_target_dir_suffix = f"acc_{self.args.assembly_accessions.stem}"
         elif self.args.genus:
             ncbi_kwargs["genera"] = self.args.genus
             genome_target_dir_suffix = f"g{self.args.genus.replace(' ', '_')}"
-        else:
-            raise ValueError(
-                "Must specify one of --taxid, --assembly_accessions, or --genus for NCBI download."
-            )
+        # No 'else' needed due to Pydantic validation
 
         genome_output_dir = (
             self.output_db_dir / f"ncbi_genomes_{genome_target_dir_suffix}"
@@ -241,20 +270,16 @@ class DatabaseBuilder:
         Determines the list of genome FASTA files to process.
         """
         if self.args.custom:
-            custom_path = pathlib.Path(self.args.custom)
-            if not custom_path.is_dir():
-                raise NotADirectoryError(
-                    f"Custom genome directory not found: {custom_path}"
-                )
-            logger.info(f"Using custom genome files from: {custom_path}")
-            genome_files = list(custom_path.glob("*.fna")) + list(
-                custom_path.glob("*.fna.gz")
+            # Pydantic ensures this is a DirectoryPath and exists
+            logger.info(f"Using custom genome files from: {self.args.custom}")
+            genome_files = list(self.args.custom.glob("*.fna")) + list(
+                self.args.custom.glob("*.fna.gz")
             )
             return genome_files, None
         else:
             genome_download_dir, metadata_file = self._download_genomes_from_ncbi()
             all_downloaded_files = list(genome_download_dir.glob("*fna.gz"))
-            if self.args.unique_taxid:
+            if self.args.unique_taxid: # This attribute comes from BuildDBArgs
                 return self._filter_genomes_by_unique_taxid(
                     genome_download_dir, metadata_file
                 ), metadata_file
@@ -443,7 +468,8 @@ class DatabaseBuilder:
         genome_file_info: Tuple[
             pathlib.Path, str, int, Optional[pathlib.Path]
         ],  # (file_path, strain_name, strain_idx, optional_output_path)
-        kmer_length: int,
+        kmer_length: int, # This comes from self.args.kmerlen
+        skip_n_kmers: bool, # This comes from self.args.skip_n_kmers
         num_total_strains: Optional[int] = None,
     ) -> Union[
         Tuple[str, int, Set[bytes]],
@@ -458,6 +484,7 @@ class DatabaseBuilder:
                 the assigned strain name, its column index and optionally a
                 path where k-mers should be written.
             kmer_length: The length of k-mers to extract.
+            skip_n_kmers: Boolean, whether to skip k-mers with 'N'.
 
         Returns:
             * ``(strain_name, strain_idx, strain_kmers_set)`` when no output
@@ -489,10 +516,7 @@ class DatabaseBuilder:
                         seq_str = str(record.seq).upper()
                         for i in range(0, len(seq_str) - kmer_length + 1):
                             kmer = seq_str[i : i + kmer_length]
-                            if (
-                                getattr(self.args, "skip_n_kmers", False)
-                                and "N" in kmer
-                            ):
+                            if skip_n_kmers and "N" in kmer:
                                 continue
                             if out_f:
                                 out_f.write(f"{kmer}\n")
@@ -580,12 +604,12 @@ class DatabaseBuilder:
         # Each worker extracts k-mers and writes to a unique temp file.
         tasks = [
             (
-                genome_files[i],
-                strain_names[i],
-                i,
-                self.args.kmerlen,
-                self.args.skip_n_kmers,
-                temp_dir,
+                genome_files[i], # genome_file path
+                strain_names[i], # strain_name string
+                i,               # strain_idx integer
+                self.args.kmerlen, # kmer_length integer
+                self.args.skip_n_kmers, # skip_n_kmers boolean
+                temp_dir,        # temp_dir path
             )
             for i in range(num_genomes)
         ]
@@ -644,7 +668,14 @@ class DatabaseBuilder:
             schema_fields = [pa.field("kmer", pa.binary())]
             for name in strain_names:
                 schema_fields.append(pa.field(name, pa.bool_()))
-            schema = pa.schema(schema_fields)
+
+            # Add custom metadata
+            custom_metadata = {
+                b"strainr_kmerlen": str(self.args.kmerlen).encode('utf-8'),
+                b"strainr_skip_n_kmers": str(self.args.skip_n_kmers).encode('utf-8')
+            }
+            schema = pa.schema(schema_fields, metadata=custom_metadata)
+            logger.info(f"Parquet schema metadata set with: {custom_metadata}")
 
             # Batch processing for much better performance
             BATCH_SIZE = 10000  # Process 10k k-mers at a time
@@ -694,19 +725,12 @@ class DatabaseBuilder:
                         writer.write_table(table)
 
             logger.info(
-                "Reduce phase completed. Parquet database created successfully."
+                "Reduce phase completed. Parquet database created successfully at: " + str(output_path)
             )
-            # Set the Parquet index upon loading
-            # We can't set the index during writing, but pandas can do it on read.
-            # For consistency, we'll now load it, set index, and save again.
-            # This is a one-time memory cost but ensures the final format is perfect.
-            logger.info("Setting 'kmer' column as index in final Parquet file...")
-            final_df = pd.read_parquet(output_path)
-            final_df = final_df.set_index("kmer")
-            final_df.to_parquet(
-                output_path, index=True
-            )  # Overwrite with indexed version
-            logger.info("Index set and final database saved.")
+            # The 'kmer' column is written as a regular column.
+            # The StrainKmerDatabase class will handle setting this as index upon loading.
+            # Metadata (kmerlen, skip_n_kmers) is already written with the schema.
+            # No re-loading and re-saving needed here, which saves memory.
 
             return output_path
 
@@ -735,6 +759,15 @@ class DatabaseBuilder:
         Main public method to orchestrate the entire database creation process.
         """
         logger.info("Starting k-mer database creation workflow.")
+
+        # Check for required external commands first
+        try:
+            check_external_commands(['sort', 'zcat'])
+            logger.info("External commands 'sort' and 'zcat' found.")
+        except FileNotFoundError as e:
+            logger.error(f"Missing required external command: {e}")
+            # Depending on desired behavior, you might re-raise or sys.exit
+            raise  # Re-raise to stop execution if commands are critical
 
         genome_files, metadata_file_path = self._get_genome_file_list()
         if not genome_files:
@@ -832,22 +865,14 @@ class DatabaseBuilder:
                                 )
                             )
                             logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})")
-                                kmers_from_seq = [
-                                    kmer for kmer in kmers_from_seq if b"N" not in kmer
-                                ]
                             strain_kmers.update(kmers_from_seq)
-                        except Exception as rust_exc:
-                            logger.warning(f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python.")
-                            # Fallback to Python implementation
-                            kmers_from_seq = (
-                                DatabaseBuilder._py_extract_canonical_kmers_static(
-                                    seq_bytes, kmer_length, skip_n_kmers
-                                )
-                            )
-                            logger.debug(f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})")
-                            strain_kmers.update(kmers_from_seq)
-                    else:
-                        # Python only path
+                        except Exception as rust_exc: # This is a nested try-except, which is a bit confusing.
+                            # This block is hit if the first rust_exc leads to another error during Python fallback.
+                            logger.warning(f"Python fallback k-mer extraction also failed for {genome_file} (record: {record.id}) after Rust failure: {rust_exc}")
+                            # Ensure strain_kmers remains as it was before this attempt or is empty
+                            # No specific action to add k-mers here as it failed.
+                    else: # This 'else' corresponds to 'if extract_func is not None'
+                        # Python only path (Rust not available at all)
                         kmers_from_seq = (
                             DatabaseBuilder._py_extract_canonical_kmers_static(
                                 seq_bytes, kmer_length, skip_n_kmers
@@ -912,112 +937,82 @@ class DatabaseBuilder:
             genome_file,
             strain_name,
             strain_idx,
-            kmer_length,
-            getattr(self.args, "skip_n_kmers", False),
+            kmer_length, # kmer_length is passed directly
+            self.args.skip_n_kmers, # skip_n_kmers from pydantic model
             temp_dir,
         )
         return self._process_and_write_kmers_worker(task_tuple)
 
+# Typer application
+app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 
-def get_cli_parser() -> argparse.ArgumentParser:
+@app.command(
+    name="build-db",
+    help="StrainR Database Builder: Downloads genomes and creates a k-mer presence/absence database.",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+def main(
+    taxid: Annotated[Optional[str], typer.Option(help="Species taxonomic ID from NCBI.")] = None,
+    assembly_accessions: Annotated[Optional[Path], typer.Option(
+        help="Path to a file listing assembly accessions (one per line).",
+        exists=True, file_okay=True, dir_okay=False, readable=True, resolve_path=True
+    )] = None,
+    genus: Annotated[Optional[str], typer.Option(help="Genus name for NCBI download.")] = None,
+    custom: Annotated[Optional[Path], typer.Option(
+        help="Path to a folder containing custom genome FASTA files.",
+        exists=True, file_okay=False, dir_okay=True, readable=True, resolve_path=True
+    )] = None,
+    kmerlen: Annotated[int, typer.Option(help="Length of k-mers.")] = 31,
+    assembly_levels: Annotated[str, typer.Option(help="Assembly level(s) for NCBI download (complete, chromosome, scaffold, contig).")] = "complete",
+    source: Annotated[str, typer.Option(help="NCBI database source (refseq, genbank).")] = "refseq",
+    procs: Annotated[int, typer.Option(help="Number of processor cores.")] = 4,
+    out: Annotated[str, typer.Option(help="Output name prefix for the database file.")] = "strainr_kmer_database",
+    unique_taxid: Annotated[bool, typer.Option("--unique-taxid", help="Filter NCBI genomes for unique strain-level taxID.")] = False,
+    skip_n_kmers: Annotated[bool, typer.Option("--skip-n-kmers", help="Exclude k-mers with 'N' bases.")] = False,
+):
     """
-    Configures and returns the ArgumentParser for the script.
+    Main CLI entry point for building the StrainR database.
+    Uses Typer for argument parsing and Pydantic for validation.
     """
-    parser = argparse.ArgumentParser(
-        description="StrainR Database Builder: Downloads genomes and creates a k-mer presence/absence database.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    genome_source_group = parser.add_mutually_exclusive_group(required=True)
-    genome_source_group.add_argument(
-        "-t",
-        "--taxid",
-        type=str,
-        help="Species taxonomic ID from NCBI from which all strains will be downloaded.",
-    )
-    genome_source_group.add_argument(
-        "-f",
-        "--assembly_accessions",
-        type=str,
-        help="Path to a file listing assembly accessions (one per line) to download from NCBI.",
-    )
-    genome_source_group.add_argument(
-        "-g",
-        "--genus",
-        type=str,
-        help="Genus name for which to download genomes from NCBI.",
-    )
-    genome_source_group.add_argument(
-        "--custom",
-        type=str,
-        help="Path to a folder containing custom genome FASTA files (.fna, .fna.gz) for database creation.",
-    )
-
-    parser.add_argument(
-        "-k",
-        "--kmerlen",
-        type=int,
-        default=31,
-        help="Length of k-mers to extract. Default: 31, suitable for bacterial genomes.",
-    )
-    parser.add_argument(
-        "-l",
-        "--assembly_levels",
-        choices=["complete", "chromosome", "scaffold", "contig"],
-        type=str,
-        default="complete",
-        help="Assembly level(s) of genomes to download from NCBI (e.g., 'contig' includes 'complete', 'chromosome', 'scaffold').",
-    )
-    parser.add_argument(
-        "-s",
-        "--source",
-        choices=["refseq", "genbank"],
-        type=str,
-        default="refseq",
-        help="NCBI database source for downloads (refseq or genbank).",
-    )
-    parser.add_argument(
-        "-p",
-        "--procs",
-        type=int,
-        default=4,
-        help="Number of processor cores to use for parallel tasks.",
-    )
-    parser.add_argument(
-        "-o",
-        "--out",
-        type=str,
-        default="strainr_kmer_database",
-        help="Output name prefix for the database file (e.g., 'my_db' -> 'my_db.db.parquet').",
-    )
-    parser.add_argument(
-        "--unique-taxid",
-        action="store_true",
-        help="Flag to only include genomes from NCBI that have a unique strain-level taxonomic ID.",
-    )
-    parser.add_argument(
-        "--skip-n-kmers",
-        action="store_true",
-        help="If set, k-mers containing 'N' (ambiguous) bases will be excluded from the database.",
-    )
-
-    return parser
-
-
-if __name__ == "__main__":
-    logger.info("Strainr Database Building Script Started.")
-
-    arg_parser = get_cli_parser()
-    cli_args = arg_parser.parse_args()
+    logger.info("StrainR Database Building Script Started.")
 
     try:
-        builder = DatabaseBuilder(args=cli_args)
+        # Convert Typer args to Pydantic model
+        # Typer ensures file/dir existence for paths, Pydantic model will re-validate logic
+        build_args = BuildDBArgs(
+            taxid=taxid,
+            assembly_accessions=assembly_accessions,
+            genus=genus,
+            custom=custom,
+            kmerlen=kmerlen,
+            assembly_levels=assembly_levels,
+            source=source,
+            procs=procs,
+            out=out,
+            unique_taxid=unique_taxid,
+            skip_n_kmers=skip_n_kmers,
+        )
+
+        builder = DatabaseBuilder(args=build_args)
         builder.create_database()
+
+    except ValueError as ve: # Catch Pydantic validation errors specifically
+        logger.critical(f"Configuration error: {ve}", exc_info=False) # No need for full stack trace
+        # Attempt to provide a more user-friendly message from Typer/Pydantic if possible
+        # For now, just printing the error is fine.
+        print(f"Error: {ve}", file=sys.stderr)
+        raise typer.Exit(code=1)
     except Exception as e:
         logger.critical(
             f"A critical error occurred during database creation: {e}", exc_info=True
         )
-        sys.exit(1)
+        # Consider if specific error types should have different exit codes
+        raise typer.Exit(code=1)
 
     logger.info("StrainR Database Building Script Finished Successfully.")
+
+
+if __name__ == "__main__":
+    app()
 
 # %%
