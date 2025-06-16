@@ -64,16 +64,16 @@ if not logger.handlers:
 try:
     from kmer_counter_rs import extract_kmers_rs
 
-    # _extract_kmers_func = extract_kmers_rs
-    # _RUST_KMER_COUNTER_AVAILABLE = True
-    _extract_kmers_func = None
-    _RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = extract_kmers_rs
+    _RUST_KMER_COUNTER_AVAILABLE = True
+    # _extract_kmers_func = None # Fallback if Rust is not available
+    # _RUST_KMER_COUNTER_AVAILABLE = False # Fallback if Rust is not available
     logger.info(
         "Successfully imported Rust k-mer counter. Using Rust implementation for k-mer extraction."
     )
 except Exception as e:  # pragma: no cover - rust module optional
-    _extract_kmers_func = None
-    _RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = None # Fallback if Rust is not available
+    _RUST_KMER_COUNTER_AVAILABLE = False # Fallback if Rust is not available
     logger.warning(
         f"Rust k-mer counter not available ({e}). Falling back to Python implementation."
     )
@@ -422,35 +422,59 @@ class DatabaseBuilder:
         return kmer_bytes.translate(self.PY_RC_TRANSLATE_TABLE)[::-1]
 
     def _extract_kmers_from_bytes(self, sequence_bytes: bytes, k: int) -> List[bytes]:
-        """Extract k-mers using Rust implementation if available, else Python (canonical)."""
+        """
+        Extracts canonical k-mers from a sequence.
+
+        This method prioritizes using the Rust implementation (`kmer_counter_rs.extract_kmers_rs`)
+        if it's available (_extract_kmers_func is not None). The Rust function is expected
+        to return canonical k-mers and handle the `skip_n_kmers` logic internally via its
+        `perform_strict_dna_check` argument, which is passed from `_process_and_write_kmers_worker`.
+
+        If the Rust implementation is unavailable or fails, this method falls back to a
+        Python-based canonical k-mer extraction.
+
+        Args:
+            sequence_bytes: The DNA sequence as bytes.
+            k: The k-mer length.
+
+        Returns:
+            A list of canonical k-mers (bytes).
+        """
         # Ensure sequence is uppercase before kmer extraction
-        # Rust implementation is expected to handle this, or ensure input is uppercase
+        # Rust implementation also expects uppercase, or handles it internally.
         upper_sequence_bytes = sequence_bytes.upper()
 
-        # DEV NOTE / BIOINFORMATICS INTEGRITY:
-        # The Rust k-mer extraction function (`kmer_counter_rs.extract_kmers_rs`)
-        # is assumed to return CANONICAL k-mers (the lexicographically smaller of
-        # a k-mer and its reverse complement).
-        # This is crucial for consistency with the classification step, which typically
-        # processes reads by generating canonical k-mers to ensure strand-insensitivity.
-        # If the Rust implementation does not provide canonical k-mers, or provides
-        # raw k-mers, this could lead to mismatches during classification unless
-        # the k-mers from reads are also processed in the exact same (raw) way.
-        # The Python fallback in this script (`_py_extract_canonical_kmers` logic within
-        # `_extract_kmers_from_bytes`) *does* generate canonical k-mers.
-        # If kmer_counter_rs behavior is uncertain or needs to be raw, ensure downstream
-        # classification tools are aligned, or add an explicit canonicalization step here
-        # (though that would preferably be handled by the Rust library itself for performance).
+        # DEV NOTE / BIOINFORMATICS INTEGRITY & skip_n_kmers:
+        # 1. Canonical K-mers: The Rust k-mer extraction function (`kmer_counter_rs.extract_kmers_rs`)
+        #    is responsible for returning CANONICAL k-mers. This is vital for consistency
+        #    with downstream classification tools.
+        # 2. skip_n_kmers: The `skip_n_kmers` logic (handling k-mers with 'N' or other non-ACGT bases)
+        #    is primarily delegated to the Rust function via its `perform_strict_dna_check`
+        #    parameter. This parameter is set based on `self.args.skip_n_kmers` in the
+        #    `_process_and_write_kmers_worker` method, which calls this extraction logic.
+        #    The Python-side filter for 'N's on `kmers_from_rust` below is a secondary check.
+        #    If the Rust function *guarantees* that `perform_strict_dna_check=True` means
+        #    no k-mers with 'N' (or any non-ACGT) are returned, this Python filter is redundant
+        #    for the Rust path. Current tests suggest consistency, but this is an area
+        #    to watch if Rust library behavior changes.
 
-        if _extract_kmers_func is not None:  # Rust path
+        if _extract_kmers_func is not None:  # Rust path is available
             try:
-                # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
-                kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
-                if getattr(self.args, "skip_n_kmers", False):
-                    # Assuming kmer_counter_rs returns a list of bytes objects
+                # The `skip_n_kmers` argument is passed to the Rust function by `_process_and_write_kmers_worker`.
+                # The Rust function's `perform_strict_dna_check` (aliased by `skip_n_kmers` at call site)
+                # should handle filtering of k-mers with 'N's (or any non-ACGT characters).
+                kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k, self.args.skip_n_kmers)
+
+                # The following Python-side filter for 'N's might be redundant if the Rust
+                # function's `perform_strict_dna_check` (when True) already ensures this.
+                # Keeping it for now as an explicit safeguard or if Rust's definition of
+                # "strict" might differ subtly (e.g., only other ambiguous bases but not 'N').
+                # However, tests confirm current Rust `extract_kmers_rs` with `perform_strict_dna_check=True`
+                # does filter out k-mers containing 'N'.
+                if self.args.skip_n_kmers:
                     kmers_from_rust = [
                         kmer for kmer in kmers_from_rust if b"N" not in kmer
-                    ]  # N is already uppercase due to upper_sequence_bytes
+                    ]
                 return kmers_from_rust
 
             except Exception as e:  # pragma: no cover - runtime fallback
@@ -627,7 +651,7 @@ class DatabaseBuilder:
                 strain_names[i],  # strain_name string
                 i,  # strain_idx integer
                 self.args.kmerlen,  # kmer_length integer
-                self.args.skip_n_kmers,  # skip_n_kmers boolean
+                self.args.skip_n_kmers,  # skip_n_kmers boolean (passed to worker)
                 temp_dir,  # temp_dir path
             )
             for i in range(num_genomes)
@@ -635,10 +659,12 @@ class DatabaseBuilder:
 
         logger.info("Starting parallel k-mer extraction (writing to disk)...")
         with mp.Pool(processes=self.args.procs) as pool:
-            # Collect all results to ensure pool workers finish and avoid deadlock
+            # Using DatabaseBuilder._process_and_write_kmers_worker (static method) explicitly
+            # helps prevent pickling errors when the script is run as a module (e.g., `python -m strainr.build_db`),
+            # as it makes the function's import path less ambiguous for child processes.
             list(
                 tqdm(
-                    pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
+                    pool.imap_unordered(DatabaseBuilder._process_and_write_kmers_worker, tasks),
                     total=len(tasks),
                     desc="Extracting k-mers (Map)",
                 )
@@ -857,31 +883,22 @@ class DatabaseBuilder:
 
                     if extract_func is not None:
                         try:
+                            # Call Rust k-mer extractor.
+                            # `skip_n_kmers` is passed as `perform_strict_dna_check` to Rust.
+                            # Rust side should handle canonical k-mers and filtering of non-ACGT (if skip_n_kmers is True).
                             kmers_from_seq = extract_func(
                                 seq_bytes.upper(), kmer_length, skip_n_kmers
                             )
                             logger.debug(
                                 f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})"
                             )
-                            # The skip_n_kmers logic is now handled by the Rust function if perform_strict_dna_check is True (which skip_n_kmers implies)
-                            # However, the Rust function extract_kmers_rs currently filters based on any non-ACGT character,
-                            # not specifically 'N'. If 'N' is the only character to skip, and other non-ACGT should not be skipped
-                            # by the Rust call, then the Python-side filtering might still be needed depending on how
-                            # perform_strict_dna_check is interpreted by the Rust side.
-                            # For now, assuming perform_strict_dna_check in Rust means skip any non-ACGT (including N).
-                            # If only 'N' should be skipped, the Rust side needs adjustment or Python filtering remains.
-                            # Based on the previous subtask, extract_kmers_rs now has a perform_strict_dna_check
-                            # that skips if *any* char is not ACGT. So, if skip_n_kmers is true, we want that check.
-                            # The Python side N check can be removed if the Rust side handles it.
-                            # Let's remove the Python side N check for now, assuming the Rust side does what we want.
-                            # if skip_n_kmers:
-                            #     kmers_from_seq = [
-                            #         kmer for kmer in kmers_from_seq if b"N" not in kmer
-                            #     ]
+                            # Note: The Python-side N-filter in `_extract_kmers_from_bytes` acts as a secondary safeguard.
+                            # If Rust's `perform_strict_dna_check` (triggered by `skip_n_kmers=True`) is comprehensive,
+                            # that Python-side filter might be redundant. Current tests imply consistency.
                             strain_kmers.update(kmers_from_seq)
-                        except Exception as rust_exc:
+                        except Exception as rust_exc: # pragma: no cover
                             logger.warning(
-                                f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python."
+                                f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python for this sequence."
                             )
                             # Fallback to Python implementation
                             kmers_from_seq = (
