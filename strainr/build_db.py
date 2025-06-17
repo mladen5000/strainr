@@ -32,21 +32,20 @@ import sys
 from collections import Counter
 from itertools import groupby
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, Literal
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import ncbi_genome_download as ngd
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from Bio import SeqIO
-from tqdm import tqdm
-from pydantic import BaseModel, Field, FilePath, DirectoryPath, model_validator
 import typer
+from Bio import SeqIO
+from pydantic import BaseModel, DirectoryPath, Field, FilePath, model_validator
+from tqdm import tqdm
 from typing_extensions import Annotated
 
-
-from .utils import open_file_transparently, check_external_commands
+from .utils import check_external_commands, open_file_transparently
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -62,12 +61,12 @@ if not logger.handlers:
     )
 
 try:
-    from kmer_counter_rs import extract_kmers_rs
+    from kmer_counter_rs import extract_kmer_rs
 
-    # _extract_kmers_func = extract_kmers_rs
-    # _RUST_KMER_COUNTER_AVAILABLE = True
-    _extract_kmers_func = None
-    _RUST_KMER_COUNTER_AVAILABLE = False
+    _extract_kmers_func = extract_kmer_rs
+    _RUST_KMER_COUNTER_AVAILABLE = True
+    # _extract_kmers_func = None
+    # _RUST_KMER_COUNTER_AVAILABLE = False
     logger.info(
         "Successfully imported Rust k-mer counter. Using Rust implementation for k-mer extraction."
     )
@@ -444,13 +443,11 @@ class DatabaseBuilder:
 
         if _extract_kmers_func is not None:  # Rust path
             try:
-                # Assuming Rust version already returns canonical k-mers or raw if specified by its own logic
-                kmers_from_rust = _extract_kmers_func(upper_sequence_bytes, k)
-                if getattr(self.args, "skip_n_kmers", False):
-                    # Assuming kmer_counter_rs returns a list of bytes objects
-                    kmers_from_rust = [
-                        kmer for kmer in kmers_from_rust if b"N" not in kmer
-                    ]  # N is already uppercase due to upper_sequence_bytes
+                # Call Rust function with three arguments: (sequence_bytes, k, skip_n_kmers)
+                skip_n_kmers = getattr(self.args, "skip_n_kmers", False)
+                kmers_from_rust = _extract_kmers_func(
+                    upper_sequence_bytes, k, skip_n_kmers
+                )
                 return kmers_from_rust
 
             except Exception as e:  # pragma: no cover - runtime fallback
@@ -634,18 +631,30 @@ class DatabaseBuilder:
         ]
 
         logger.info("Starting parallel k-mer extraction (writing to disk)...")
+
+        # Collect results and fail fast if any worker fails
+        worker_results = []
         with mp.Pool(processes=self.args.procs) as pool:
-            # Collect all results to ensure pool workers finish and avoid deadlock
-            list(
-                tqdm(
-                    pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
-                    total=len(tasks),
-                    desc="Extracting k-mers (Map)",
-                )
-            )
-            pool.close()
-            pool.join()
+            for result in tqdm(
+                pool.imap_unordered(self._process_and_write_kmers_worker, tasks),
+                total=len(tasks),
+                desc="Extracting k-mers (Map)",
+            ):
+                worker_results.append(result)
+        # If any worker failed, an exception will be raised and execution will stop here
+
         logger.info("Map phase completed. All k-mers written to temporary files.")
+
+        # --- Check that all expected .part.gz files exist ---
+        expected_part_files = [temp_dir / f"{i}.part.gz" for i in range(num_genomes)]
+        missing_files = [str(f) for f in expected_part_files if not f.exists()]
+        if missing_files:
+            logger.error(
+                f"Missing expected k-mer part files: {missing_files}. Aborting before sort/concat phase."
+            )
+            raise FileNotFoundError(
+                f"Missing expected k-mer part files: {missing_files}"
+            )
 
         try:
             # --- 2. SORT PHASE ---
@@ -833,17 +842,17 @@ class DatabaseBuilder:
 
         # Initialize a local extractor
         try:
-            from kmer_counter_rs import extract_kmers_rs
+            from kmer_counter_rs import extract_kmer_rs
 
-            extract_func = extract_kmers_rs
+            extract_func = extract_kmer_rs
         except ImportError:
             extract_func = None
 
         # Process the genome file
         strain_kmers = set()
+
         try:
             from Bio import SeqIO
-
             from .utils import open_file_transparently
 
             with open_file_transparently(genome_file) as f_handle:
@@ -857,27 +866,13 @@ class DatabaseBuilder:
 
                     if extract_func is not None:
                         try:
+                            # Call Rust function with three arguments: (sequence_bytes, k, skip_n_kmers)
                             kmers_from_seq = extract_func(
-                                seq_bytes.upper(), kmer_length, skip_n_kmers
+                                seq_bytes.upper(), kmer_length
                             )
                             logger.debug(
                                 f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})"
                             )
-                            # The skip_n_kmers logic is now handled by the Rust function if perform_strict_dna_check is True (which skip_n_kmers implies)
-                            # However, the Rust function extract_kmers_rs currently filters based on any non-ACGT character,
-                            # not specifically 'N'. If 'N' is the only character to skip, and other non-ACGT should not be skipped
-                            # by the Rust call, then the Python-side filtering might still be needed depending on how
-                            # perform_strict_dna_check is interpreted by the Rust side.
-                            # For now, assuming perform_strict_dna_check in Rust means skip any non-ACGT (including N).
-                            # If only 'N' should be skipped, the Rust side needs adjustment or Python filtering remains.
-                            # Based on the previous subtask, extract_kmers_rs now has a perform_strict_dna_check
-                            # that skips if *any* char is not ACGT. So, if skip_n_kmers is true, we want that check.
-                            # The Python side N check can be removed if the Rust side handles it.
-                            # Let's remove the Python side N check for now, assuming the Rust side does what we want.
-                            # if skip_n_kmers:
-                            #     kmers_from_seq = [
-                            #         kmer for kmer in kmers_from_seq if b"N" not in kmer
-                            #     ]
                             strain_kmers.update(kmers_from_seq)
                         except Exception as rust_exc:
                             logger.warning(
@@ -893,14 +888,7 @@ class DatabaseBuilder:
                                 f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})"
                             )
                             strain_kmers.update(kmers_from_seq)
-                        except Exception as rust_exc:  # This is a nested try-except, which is a bit confusing.
-                            # This block is hit if the first rust_exc leads to another error during Python fallback.
-                            logger.warning(
-                                f"Python fallback k-mer extraction also failed for {genome_file} (record: {record.id}) after Rust failure: {rust_exc}"
-                            )
-                            # Ensure strain_kmers remains as it was before this attempt or is empty
-                            # No specific action to add k-mers here as it failed.
-                    else:  # This 'else' corresponds to 'if extract_func is not None'
+                    else:
                         # Python only path (Rust not available at all)
                         kmers_from_seq = (
                             DatabaseBuilder._py_extract_canonical_kmers_static(
@@ -914,6 +902,11 @@ class DatabaseBuilder:
 
         except Exception as e:
             logger.error(f"Error processing {genome_file}: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            # Raise exception so the main process knows this worker failed
+            raise
 
         # Write to compressed temp file for better I/O performance
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
@@ -1083,5 +1076,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-
-# %%

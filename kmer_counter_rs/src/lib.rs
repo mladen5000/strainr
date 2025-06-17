@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
-use pyo3::wrap_pyfunction;
 use pyo3::types::PyBytes;
+use pyo3::wrap_pyfunction;
 // Use the same imports as extract_kmer_rs for Sequence
+use log::{debug, error, info};
 use needletail::{parse_fastx_file, Sequence};
 use std::collections::HashMap;
-use log::{info, debug};
 use std::sync::Once;
 
 static INIT: Once = Once::new();
@@ -16,35 +16,72 @@ fn init_logging() {
 }
 
 #[pyfunction]
-fn extract_kmer_rs(file_path: &str) -> PyResult<HashMap<Vec<u8>, usize>> {
+fn extract_kmer_rs(file_path: &str, k: u8) -> PyResult<HashMap<Vec<u8>, usize>> {
+    init_logging();
+    info!("Starting extract_kmer_rs for file: {}", file_path);
     let mut reader = match parse_fastx_file(file_path) {
-        Ok(r) => r,
+        Ok(r) => {
+            info!("Successfully opened file: {}", file_path);
+            r
+        }
         Err(e) => {
+            info!("Failed to open file: {}. Error: {}", file_path, e);
             // Attempt to differentiate errors. If it's about reading initial bytes for format detection,
             // it might be an empty or malformed file.
-            if e.to_string().contains("Failed to read the first two bytes") || e.to_string().contains("empty file") {
+            if e.to_string().contains("Failed to read the first two bytes")
+                || e.to_string().contains("empty file")
+            {
+                info!(
+                    "File appears empty or unreadable as FASTA: {}. Returning empty map.",
+                    file_path
+                );
                 // For genuinely empty or unreadable-as-fasta files, return empty map.
                 return Ok(HashMap::new());
             }
             // For other IO errors, propagate them.
-            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to open or parse file: {}", e)));
+            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to open or parse file: {}",
+                e
+            )));
         }
     };
     let mut kmer_counts: HashMap<Vec<u8>, usize> = HashMap::new();
     let mut processed_any_record = false;
+    let mut total_records = 0;
+    let mut total_kmers = 0;
 
     while let Some(record) = reader.next() {
         processed_any_record = true;
-        let seqrec = record.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e)))?;
+        total_records += 1;
+        let seqrec = record.map_err(|e| {
+            error!("Invalid record in file {}: {}", file_path, e);
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e))
+        })?;
         let norm_seq = seqrec.normalize(false);
         let rc = norm_seq.reverse_complement();
-        for (_, kmer, _) in norm_seq.canonical_kmers(4, &rc) {
+        let mut record_kmers = 0;
+        for (_, kmer, _) in norm_seq.canonical_kmers(k, &rc) {
             let kmer_vec = kmer.to_vec();
             *kmer_counts.entry(kmer_vec).or_insert(0) += 1;
+            record_kmers += 1;
         }
+        total_kmers += record_kmers;
+        debug!(
+            "Processed record {}: {} k-mers",
+            total_records, record_kmers
+        );
     }
 
+    info!(
+        "extract_kmer_rs finished for file: {}. Records: {}, Total k-mers: {}",
+        file_path, total_records, total_kmers
+    );
+
     if !processed_any_record {
+        info!(
+            "No records found in file: {}. Returning empty map.",
+            file_path
+        );
         // If the file was valid FASTA but contained no sequences, or if parse_fastx_file succeeded
         // but then no records were found (e.g. file with only comments after header).
         return Ok(HashMap::new());
@@ -63,7 +100,7 @@ fn reverse_complement_dna(dna: &[u8]) -> Vec<u8> {
             b'G' | b'g' => b'C',
             b'T' | b't' => b'A',
             b'N' | b'n' => b'N', // Keep Ns as Ns in reverse complement
-            _ => b'N', // For any other character, treat as N
+            _ => b'N',           // For any other character, treat as N
         });
     }
     rc
@@ -80,15 +117,19 @@ fn is_valid_dna(kmer_slice: &[u8]) -> bool {
     true
 }
 
-
 #[pyfunction]
-fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_strict_dna_check: bool) -> PyResult<Vec<Vec<u8>>> {
+fn extract_kmers_rs(
+    sequence_bytes: &Bound<'_, PyBytes>,
+    k: usize,
+    perform_strict_dna_check: bool,
+) -> PyResult<Vec<Vec<u8>>> {
     init_logging();
-    
+
     let seq_bytes = sequence_bytes.as_bytes();
     let mut kmers = Vec::new();
-    
-    if k == 0 { // k=0 is problematic, return empty or error? Let's return empty.
+
+    if k == 0 {
+        // k=0 is problematic, return empty or error? Let's return empty.
         debug!("k cannot be 0, returning empty list.");
         return Ok(kmers);
     }
@@ -96,15 +137,19 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_stric
         debug!("Sequence too short ({} bp) for k={}", seq_bytes.len(), k);
         return Ok(kmers);
     }
-    
-    debug!("Manually processing sequence of {} bytes with k={}", seq_bytes.len(), k);
-    
+
+    debug!(
+        "Manually processing sequence of {} bytes with k={}",
+        seq_bytes.len(),
+        k
+    );
+
     let mut total_kmers_considered = 0;
     let mut actual_kmers_extracted = 0;
     let mut num_skipped_kmers = 0;
 
     for i in 0..=(seq_bytes.len() - k) {
-        let kmer_slice = &seq_bytes[i..i+k];
+        let kmer_slice = &seq_bytes[i..i + k];
         total_kmers_considered += 1;
 
         if perform_strict_dna_check {
@@ -115,7 +160,7 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_stric
                 continue;
             }
         }
-        
+
         let rc_kmer_vec = reverse_complement_dna(kmer_slice);
 
         // Determine canonical k-mer
@@ -128,17 +173,27 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_stric
             kmers.push(rc_kmer_vec);
         }
         actual_kmers_extracted += 1;
-            
+
         if actual_kmers_extracted % 100000 == 0 && actual_kmers_extracted > 0 {
-            debug!("Processed {} valid k-mers so far ({} considered)", actual_kmers_extracted, total_kmers_considered);
+            debug!(
+                "Processed {} valid k-mers so far ({} considered)",
+                actual_kmers_extracted, total_kmers_considered
+            );
         }
     }
-    
+
     if num_skipped_kmers > 0 {
-        debug!("Skipped {} k-mers containing non-ACGTacgt characters.", num_skipped_kmers);
+        debug!(
+            "Skipped {} k-mers containing non-ACGTacgt characters.",
+            num_skipped_kmers
+        );
     }
 
-    let expected_kmers_if_all_valid = if seq_bytes.len() >= k { seq_bytes.len() - k + 1 } else { 0 };
+    let expected_kmers_if_all_valid = if seq_bytes.len() >= k {
+        seq_bytes.len() - k + 1
+    } else {
+        0
+    };
     info!(
         "Extracted {} k-mers from {} bp sequence ({} windows considered, {} skipped, ~{} expected if all valid DNA)",
         kmers.len(),
@@ -147,7 +202,7 @@ fn extract_kmers_rs(sequence_bytes: &Bound<'_, PyBytes>, k: usize, perform_stric
         num_skipped_kmers,
         expected_kmers_if_all_valid
     );
-    
+
     Ok(kmers)
 }
 
@@ -182,7 +237,11 @@ mod tests {
             let perform_strict_dna_check = false;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed with error: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed with error: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
 
             // Expected k-mers (canonical):
@@ -198,13 +257,13 @@ mod tests {
             // So ACN vs NGT => ACN is canonical
             //    CNG vs NCA => CNG is canonical
             //    NGT vs ACN => ACN is canonical
-            let expected_kmers: Vec<Vec<u8>> = vec![
-                b"ACN".to_vec(),
-                b"CNG".to_vec(),
-                b"ACN".to_vec(),
-            ];
+            let expected_kmers: Vec<Vec<u8>> =
+                vec![b"ACN".to_vec(), b"CNG".to_vec(), b"ACN".to_vec()];
 
-            assert_eq!(kmers, expected_kmers, "K-mers with 'N' not handled as expected when strict check is off.");
+            assert_eq!(
+                kmers, expected_kmers,
+                "K-mers with 'N' not handled as expected when strict check is off."
+            );
         });
     }
 
@@ -217,13 +276,20 @@ mod tests {
             let perform_strict_dna_check = true; // Strict check is ON
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed with error: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed with error: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
 
             // Expected: No k-mers should be extracted because 'N' makes them invalid with strict checking
             let expected_kmers: Vec<Vec<u8>> = Vec::new();
 
-            assert_eq!(kmers, expected_kmers, "K-mers with 'N' should be skipped when strict check is on.");
+            assert_eq!(
+                kmers, expected_kmers,
+                "K-mers with 'N' should be skipped when strict check is on."
+            );
         });
     }
 
@@ -236,17 +302,18 @@ mod tests {
             let perform_strict_dna_check = false;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
 
             // ACG (rev-comp CGT) -> ACG
             // CGT (rev-comp ACG) -> ACG
             // GTA (rev-comp TAC) -> GTA
-            let expected_kmers: Vec<Vec<u8>> = vec![
-                b"ACG".to_vec(),
-                b"ACG".to_vec(),
-                b"GTA".to_vec(),
-            ];
+            let expected_kmers: Vec<Vec<u8>> =
+                vec![b"ACG".to_vec(), b"ACG".to_vec(), b"GTA".to_vec()];
             assert_eq!(kmers, expected_kmers);
         });
     }
@@ -260,14 +327,15 @@ mod tests {
             let perform_strict_dna_check = true;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
             // Expected k-mers are the same as without strict check because DNA is valid
-            let expected_kmers: Vec<Vec<u8>> = vec![
-                b"ACG".to_vec(),
-                b"ACG".to_vec(),
-                b"GTA".to_vec(),
-            ];
+            let expected_kmers: Vec<Vec<u8>> =
+                vec![b"ACG".to_vec(), b"ACG".to_vec(), b"GTA".to_vec()];
             assert_eq!(kmers, expected_kmers);
         });
     }
@@ -281,9 +349,16 @@ mod tests {
             let perform_strict_dna_check = false;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
-            assert!(kmers.is_empty(), "Expected empty k-mer list for empty sequence");
+            assert!(
+                kmers.is_empty(),
+                "Expected empty k-mer list for empty sequence"
+            );
         });
     }
 
@@ -296,9 +371,16 @@ mod tests {
             let perform_strict_dna_check = false;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
-            assert!(kmers.is_empty(), "Expected empty k-mer list when k is larger than sequence length");
+            assert!(
+                kmers.is_empty(),
+                "Expected empty k-mer list when k is larger than sequence length"
+            );
         });
     }
 
@@ -311,13 +393,17 @@ mod tests {
             let perform_strict_dna_check = false;
 
             let result = super::extract_kmers_rs(&py_bytes, k, perform_strict_dna_check);
-            assert!(result.is_ok(), "extract_kmers_rs failed: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "extract_kmers_rs failed: {:?}",
+                result.err()
+            );
             let kmers = result.unwrap();
             assert!(kmers.is_empty(), "Expected empty k-mer list for k=0");
         });
     }
 
-     #[test]
+    #[test]
     fn test_is_valid_dna_helper() {
         assert!(super::is_valid_dna(b"ACGT"));
         assert!(super::is_valid_dna(b"acgt"));

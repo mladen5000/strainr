@@ -21,7 +21,7 @@ class TestExtractKmerRs(unittest.TestCase):
     def test_empty_file(self):
         temp_fasta = self._create_temp_fasta_file([])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {})
         finally:
             os.remove(temp_fasta)
@@ -30,7 +30,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # Sequence "ACG" is shorter than k=4
         temp_fasta = self._create_temp_fasta_file([("seq1", "ACG")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {})
         finally:
             os.remove(temp_fasta)
@@ -39,7 +39,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # "AGCT" -> canonical is "AGCT"
         temp_fasta = self._create_temp_fasta_file([("seq1", "AGCT")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {b"AGCT": 1})
         finally:
             os.remove(temp_fasta)
@@ -48,7 +48,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # "AAAAA" -> "AAAA" (1st), "AAAA" (2nd)
         temp_fasta = self._create_temp_fasta_file([("seq1", "AAAAA")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {b"AAAA": 2})
         finally:
             os.remove(temp_fasta)
@@ -57,7 +57,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # Sequence "TTTT" -> canonical is "AAAA"
         temp_fasta = self._create_temp_fasta_file([("seq1", "TTTT")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {b"AAAA": 1})
         finally:
             os.remove(temp_fasta)
@@ -73,7 +73,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # TTCA -> TGAA (canonical)
         temp_fasta = self._create_temp_fasta_file([("seq1", "AGCTTTCA")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             expected = {
                 b"AGCT": 1,
                 b"AAGC": 1,  # Canonical of GCTT
@@ -89,7 +89,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # "TTTT" is reverse complement of "AAAA", canonical is "AAAA"
         temp_fasta = self._create_temp_fasta_file([("seq1", "TTTT")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {b"AAAA": 1})
         finally:
             os.remove(temp_fasta)
@@ -100,7 +100,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # Canonical: ACGT, AACG, AAAC, AAAA, AAAA
         temp_fasta = self._create_temp_fasta_file([("seq1", "ACGTTTTT")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             expected = {
                 b"ACGT": 1,  # ACGT
                 b"AACG": 1,  # CGTT -> AACG
@@ -112,15 +112,13 @@ class TestExtractKmerRs(unittest.TestCase):
             os.remove(temp_fasta)
 
     def test_multiple_sequences_in_file(self):
-        temp_fasta = self._create_temp_fasta_file(
-            [
-                ("seq1", "AAAAA"),  # AAAA: 2
-                ("seq2", "GATTACA"),  # GATT, ATTA, TTAC, TACA -> GATT, TAAT, GTAA, TACA
-                # GATT:1, TAAT:1, GTAA:1, TACA:1
-            ]
-        )
+        temp_fasta = self._create_temp_fasta_file([
+            ("seq1", "AAAAA"),  # AAAA: 2
+            ("seq2", "GATTACA"),  # GATT, ATTA, TTAC, TACA -> GATT, TAAT, GTAA, TACA
+            # GATT:1, TAAT:1, GTAA:1, TACA:1
+        ])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             expected = {
                 b"AAAA": 2,
                 b"AATC": 1,  # Canonical of GATT
@@ -136,14 +134,14 @@ class TestExtractKmerRs(unittest.TestCase):
         # Needletail should skip kmers with N
         # "AAANTTT" -> AAA (skip AAN, ANT, NTT), TTT
         # Canonical: AAA, AAA
-        temp_fasta = self._create_temp_fasta_file(
-            [("seq1", "AAANTTTT")]
-        )  # AAAN, AANT, ANTT, NTTT, TTTT
+        temp_fasta = self._create_temp_fasta_file([
+            ("seq1", "AAANTTTT")
+        ])  # AAAN, AANT, ANTT, NTTT, TTTT
         # Kmers from needletail: TTTT (AAAA)
         # If k=4, AAAN, AANT, ANTT, NTTT are skipped by needletail.
         # Only TTTT processed.
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             self.assertEqual(result, {b"AAAA": 1})  # Only TTTT -> AAAA
         finally:
             os.remove(temp_fasta)
@@ -163,7 +161,7 @@ class TestExtractKmerRs(unittest.TestCase):
         # AGCT (AGCT)
         temp_fasta = self._create_temp_fasta_file([("seq1", "AGCTAGCTAGCT")])
         try:
-            result = extract_kmer_rs(temp_fasta)
+            result = extract_kmer_rs(temp_fasta, 4)
             expected = {
                 b"AGCT": 3,
                 b"GCTA": 4,  # TAGC's canonical is GCTA

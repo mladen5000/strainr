@@ -107,7 +107,9 @@ class KmerExtractor:
         """Efficient reverse complement for DNA k-mers as bytes."""
         return seq.translate(KmerExtractor._RC_TABLE)[::-1]
 
-    def _py_extract_canonical_kmers(self, sequence: bytes, k: int, skip_n_kmers: bool) -> List[bytes]:
+    def _py_extract_canonical_kmers(
+        self, sequence: bytes, k: int, skip_n_kmers: bool
+    ) -> List[bytes]:
         """
         Extracts canonical k-mers from a DNA sequence using Python.
         A k-mer is canonical if it's lexicographically smaller than its reverse complement.
@@ -119,13 +121,15 @@ class KmerExtractor:
         kmers: List[bytes] = []
         for i in range(len(sequence) - k + 1):
             kmer = sequence[i : i + k]
-            if skip_n_kmers and b'N' in kmer: # Check for 'N' before reverse complement
+            if skip_n_kmers and b"N" in kmer:  # Check for 'N' before reverse complement
                 continue
             rc_kmer = self._py_reverse_complement(kmer)
             kmers.append(kmer if kmer <= rc_kmer else rc_kmer)
         return kmers
 
-    def extract_kmers(self, sequence_bytes: bytes, k: int, skip_n_kmers: bool) -> List[bytes]:
+    def extract_kmers(
+        self, sequence_bytes: bytes, k: int, skip_n_kmers: bool
+    ) -> List[bytes]:
         """Extract k-mers using the configured implementation."""
         if not sequence_bytes or len(sequence_bytes) < k:
             return []
@@ -134,17 +138,25 @@ class KmerExtractor:
             normalized_seq = sequence_bytes.upper()
             # Pass skip_n_kmers to the selected extraction function
             return self._extract_func(normalized_seq, k, skip_n_kmers)
-        except TypeError as te: # Catch if the underlying function doesn't take skip_n_kmers
-            if "_py_extract_canonical_kmers" in str(te) or "rust_wrapper" in str(te) : # Check if it's our functions
-                 # This might happen if the Rust wrapper or Python fallback was called incorrectly
-                 # or if the Rust function signature changes.
-                logging.getLogger(__name__).error(f"K-mer extraction function called with incorrect arguments: {te}. Falling back for this call.")
+        except (
+            TypeError
+        ) as te:  # Catch if the underlying function doesn't take skip_n_kmers
+            if "_py_extract_canonical_kmers" in str(te) or "rust_wrapper" in str(
+                te
+            ):  # Check if it's our functions
+                # This might happen if the Rust wrapper or Python fallback was called incorrectly
+                # or if the Rust function signature changes.
+                logging.getLogger(__name__).error(
+                    f"K-mer extraction function called with incorrect arguments: {te}. Falling back for this call."
+                )
                 # Fallback to Python version that we know accepts skip_n_kmers for this call
                 # Or, if Rust is available but wrapper failed, this is more complex.
                 # For simplicity, let's assume Python fallback is safest if signature mismatch.
                 return self._py_extract_canonical_kmers(normalized_seq, k, skip_n_kmers)
-            else: # Other TypeError
-                logging.getLogger(__name__).error(f"Error during k-mer extraction: {te}")
+            else:  # Other TypeError
+                logging.getLogger(__name__).error(
+                    f"Error during k-mer extraction: {te}"
+                )
                 return []
         except Exception as e:
             logging.getLogger(__name__).error(f"Error during k-mer extraction: {e}")
@@ -192,14 +204,22 @@ class SequenceFileProcessor:
         fwd_id = (
             getattr(fwd_record, "id", "")
             if hasattr(fwd_record, "id")
-            else (fwd_record[0] if isinstance(fwd_record, (tuple, list)) else str(fwd_record))
+            else (
+                fwd_record[0]
+                if isinstance(fwd_record, (tuple, list))
+                else str(fwd_record)
+            )
         )
         if not isinstance(fwd_id, str):
             fwd_id = str(fwd_id)
         fwd_seq_str = (
             str(getattr(fwd_record, "seq", ""))
             if hasattr(fwd_record, "seq")
-            else (fwd_record[1] if isinstance(fwd_record, (tuple, list)) and len(fwd_record) > 1 else "")
+            else (
+                fwd_record[1]
+                if isinstance(fwd_record, (tuple, list)) and len(fwd_record) > 1
+                else ""
+            )
         )
         fwd_seq_bytes = fwd_seq_str.encode("utf-8")
         rev_seq_bytes = b""
@@ -209,7 +229,11 @@ class SequenceFileProcessor:
                 rev_seq_str = (
                     str(getattr(rev_record, "seq", ""))
                     if hasattr(rev_record, "seq")
-                    else (rev_record[1] if isinstance(rev_record, (tuple, list)) and len(rev_record) > 1 else "")
+                    else (
+                        rev_record[1]
+                        if isinstance(rev_record, (tuple, list)) and len(rev_record) > 1
+                        else ""
+                    )
                 )
                 rev_seq_bytes = rev_seq_str.encode("utf-8")
             except StopIteration:
@@ -223,8 +247,10 @@ class SequenceFileProcessor:
     def parse_sequence_files(
         fwd_reads_path: pathlib.Path,
         rev_reads_path: Optional[pathlib.Path] = None,
-        chunk_size: int = DEFAULT_CHUNK_SIZE  # Added chunk_size parameter
-    ) -> Generator[List[Tuple[ReadId, bytes, bytes]], None, None]: # Yields List of Tuples
+        chunk_size: int = DEFAULT_CHUNK_SIZE,  # Added chunk_size parameter
+    ) -> Generator[
+        List[Tuple[ReadId, bytes, bytes]], None, None
+    ]:  # Yields List of Tuples
         """
         Parses sequence files and yields chunks of reads.
 
@@ -273,7 +299,7 @@ class SequenceFileProcessor:
                     if rev_fh:
                         rev_iter_provider = FastqGeneralIterator(rev_fh)
 
-                if fwd_iter_provider is None: # Should not happen with current logic
+                if fwd_iter_provider is None:  # Should not happen with current logic
                     return
 
                 for fwd_record in fwd_iter_provider:
@@ -286,7 +312,7 @@ class SequenceFileProcessor:
                             yield chunk
                             chunk = []
 
-                if chunk: # Yield any remaining reads
+                if chunk:  # Yield any remaining reads
                     yield chunk
 
             finally:
@@ -417,12 +443,16 @@ class KmerClassificationWorkflow:
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
         all_kmers: Set[bytes] = set()
 
-        if self.database is None: # Should not happen if workflow is correct
+        if self.database is None:  # Should not happen if workflow is correct
             raise RuntimeError("Database not initialized in _count_kmers_for_read.")
 
         k_len = self.database.kmer_length
         # Use db_skip_n_kmers from database metadata if available, otherwise default to False
-        skip_n = self.database.db_skip_n_kmers if self.database.db_skip_n_kmers is not None else False
+        skip_n = (
+            self.database.db_skip_n_kmers
+            if self.database.db_skip_n_kmers is not None
+            else False
+        )
 
         # Process forward sequence
         if fwd_seq_bytes:
@@ -433,16 +463,18 @@ class KmerClassificationWorkflow:
             kmers_rev = KMER_EXTRACTOR.extract_kmers(rev_seq_bytes, k_len, skip_n)
             all_kmers.update(kmers_rev)
 
-        # Count strain hits
-        # No need to check self.database is None again here, already checked.
-        # if self.database is None:
+            # Count strain hits
+            # No need to check self.database is None again here, already checked.
+            # if self.database is None:
             raise RuntimeError(
                 "Database is not initialized before accessing its attributes."
             )
         strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
         for kmer_bytes in all_kmers:
-            if self.database and hasattr(self.database, 'get_strain_counts_for_kmer'):
-                kmer_strain_counts = self.database.get_strain_counts_for_kmer(kmer_bytes)
+            if self.database and hasattr(self.database, "get_strain_counts_for_kmer"):
+                kmer_strain_counts = self.database.get_strain_counts_for_kmer(
+                    kmer_bytes
+                )
                 if kmer_strain_counts is not None:
                     strain_counts += kmer_strain_counts
         # Ensure read_id is str
@@ -458,15 +490,15 @@ class KmerClassificationWorkflow:
         """Classifies reads from input files in parallel."""
         self.logger.info(f"Starting parallel classification for {fwd_reads_path}")
 
-        if self.database is None: # Guard against uninitialized database
+        if self.database is None:  # Guard against uninitialized database
             self.logger.error("Database not initialized before classification.")
             raise RuntimeError("Database not initialized.")
 
-        analyzer = ClassificationAnalyzer( # Create an analyzer instance for this run
+        analyzer = ClassificationAnalyzer(  # Create an analyzer instance for this run
             strain_names=self.database.strain_names,
-            disambiguation_mode=self.args.disambiguation_mode, # This will be used later
+            disambiguation_mode=self.args.disambiguation_mode,  # This will be used later
             abundance_threshold=self.args.abundance_threshold,
-            num_processes=self.args.num_processes
+            num_processes=self.args.num_processes,
         )
 
         read_chunk_iterator = SequenceFileProcessor.parse_sequence_files(
@@ -487,18 +519,25 @@ class KmerClassificationWorkflow:
                 if not read_chunk:
                     continue
 
-                chunk_hit_results: ReadHitResults = pool.map(self._count_kmers_for_read, read_chunk)
+                chunk_hit_results: ReadHitResults = pool.map(
+                    self._count_kmers_for_read, read_chunk
+                )
 
-                if self.args.save_raw_kmer_hits: # Call save_raw_kmer_hits per chunk
+                if self.args.save_raw_kmer_hits:  # Call save_raw_kmer_hits per chunk
                     # Assuming fwd_reads_path gives a basis for sample_name
                     sample_name_for_raw_hits = _get_sample_name(fwd_reads_path)
-                    self._save_raw_kmer_hits(chunk_hit_results, sample_name_for_raw_hits, chunk_idx)
+                    self._save_raw_kmer_hits(
+                        chunk_hit_results, sample_name_for_raw_hits, chunk_idx
+                    )
 
                 # Process this chunk's results immediately
-                clear_hits_chunk, ambiguous_hits_chunk_dict, no_hit_ids_chunk = \
+                clear_hits_chunk, ambiguous_hits_chunk_dict, no_hit_ids_chunk = (
                     analyzer.separate_hit_categories(chunk_hit_results)
+                )
 
-                clear_assignments_chunk = analyzer.resolve_clear_hits_to_indices(clear_hits_chunk)
+                clear_assignments_chunk = analyzer.resolve_clear_hits_to_indices(
+                    clear_hits_chunk
+                )
                 accumulated_clear_assignments.update(clear_assignments_chunk)
                 accumulated_no_hit_ids.extend(no_hit_ids_chunk)
 
@@ -509,13 +548,19 @@ class KmerClassificationWorkflow:
                     ambiguous_hit_files.append(chunk_file)
                 chunk_idx += 1
 
-        self.logger.info(f"Finished first pass of classification for {fwd_reads_path}. "
-                         f"Clear assignments: {len(accumulated_clear_assignments)}, "
-                         f"No hits: {len(accumulated_no_hit_ids)}, "
-                         f"Ambiguous chunks: {len(ambiguous_hit_files)}")
+        self.logger.info(
+            f"Finished first pass of classification for {fwd_reads_path}. "
+            f"Clear assignments: {len(accumulated_clear_assignments)}, "
+            f"No hits: {len(accumulated_no_hit_ids)}, "
+            f"Ambiguous chunks: {len(ambiguous_hit_files)}"
+        )
 
-        return accumulated_clear_assignments, accumulated_no_hit_ids, ambiguous_hit_files, temp_ambiguous_dir
-
+        return (
+            accumulated_clear_assignments,
+            accumulated_no_hit_ids,
+            ambiguous_hit_files,
+            temp_ambiguous_dir,
+        )
 
     def _save_raw_kmer_hits(
         self, chunk_hit_results: ReadHitResults, sample_name: str, chunk_idx: int
@@ -523,24 +568,24 @@ class KmerClassificationWorkflow:
         """Saves raw k-mer hit counts for a chunk of reads to a CSV file."""
         if not chunk_hit_results or self.database is None:
             # self.logger.warning(f"No raw hit results to save for sample: {sample_name}, chunk {chunk_idx}")
-            return # Reduce noise for empty chunks
+            return  # Reduce noise for empty chunks
 
         # self.logger.info(f"Saving raw k-mer hit counts for sample: {sample_name}, chunk {chunk_idx}")
         df_data = []
         for read_id, count_vector in chunk_hit_results:
             row = {"read_id": read_id}
             # Ensure self.database and self.database.strain_names are valid
-            if self.database and hasattr(self.database, 'strain_names'):
-                 strain_names = self.database.strain_names
-            else: # Fallback, though database should be initialized
-                 strain_names = [f"strain_{j}" for j in range(len(count_vector))]
+            if self.database and hasattr(self.database, "strain_names"):
+                strain_names = self.database.strain_names
+            else:  # Fallback, though database should be initialized
+                strain_names = [f"strain_{j}" for j in range(len(count_vector))]
 
             for i, strain_name_val in enumerate(strain_names):
                 if i < len(count_vector):
                     row[strain_name_val] = count_vector[i]
             df_data.append(row)
 
-        if not df_data: # Possible if all count_vectors were empty or names issue
+        if not df_data:  # Possible if all count_vectors were empty or names issue
             return
 
         df = pd.DataFrame(df_data)
@@ -551,7 +596,6 @@ class KmerClassificationWorkflow:
         output_path = raw_hits_dir / f"raw_hits_chunk_{chunk_idx}.csv"
         df.to_csv(output_path, index=False)
         # self.logger.info(f"Raw k-mer hit counts for chunk {chunk_idx} saved to: {output_path}")
-
 
     def run_workflow(self) -> None:
         # This method orchestrates the main StrainR classification workflow.
@@ -567,9 +611,11 @@ class KmerClassificationWorkflow:
 
         try:
             self._initialize_database()
-            if self.database is None: # Should be caught by _initialize_database, but defensive check
+            if (
+                self.database is None
+            ):  # Should be caught by _initialize_database, but defensive check
                 self.logger.critical("Database initialization failed critically.")
-                return # Cannot proceed
+                return  # Cannot proceed
 
             # Analyzer is now created per-sample or per-run if its state is purely transient
             # For prior calculation, it's better to have one analyzer instance if it holds no state
@@ -577,7 +623,7 @@ class KmerClassificationWorkflow:
             analyzer = ClassificationAnalyzer(
                 strain_names=self.database.strain_names,
                 disambiguation_mode=self.args.disambiguation_mode,
-                abundance_threshold=self.args.abundance_threshold, # Not used by analyzer directly
+                abundance_threshold=self.args.abundance_threshold,  # Not used by analyzer directly
                 num_processes=self.args.num_processes,
             )
             abundance_calc = AbundanceCalculator(
@@ -605,17 +651,23 @@ class KmerClassificationWorkflow:
             # Process each sample
             for i, fwd_reads_path in enumerate(fwd_files):
                 sample_name = _get_sample_name(fwd_reads_path)
-                self.logger.info(f"Processing sample: {sample_name} (File: {fwd_reads_path.name})")
+                self.logger.info(
+                    f"Processing sample: {sample_name} (File: {fwd_reads_path.name})"
+                )
 
                 rev_reads_path: Optional[pathlib.Path] = None
-                if rev_files and i < len(rev_files): # Ensure index is valid
+                if rev_files and i < len(rev_files):  # Ensure index is valid
                     rev_reads_path = rev_files[i]
 
                 # 1. Classify reads (Pass 1: get clear assignments and temp ambiguous files)
                 # _classify_reads_parallel now returns:
                 # all_clear_assignments, all_no_hit_ids, ambiguous_hit_files_paths, temp_ambiguous_dir
-                all_clear_assignments, all_no_hit_ids, ambiguous_hit_files, temp_ambiguous_dir = \
-                    self._classify_reads_parallel(fwd_reads_path, rev_reads_path)
+                (
+                    all_clear_assignments,
+                    all_no_hit_ids,
+                    ambiguous_hit_files,
+                    temp_ambiguous_dir,
+                ) = self._classify_reads_parallel(fwd_reads_path, rev_reads_path)
 
                 # Note: _save_raw_kmer_hits is not called here with all_hit_results anymore.
                 # If raw hits need to be saved, _classify_reads_parallel should handle it per chunk
@@ -627,34 +679,49 @@ class KmerClassificationWorkflow:
                 # For this refactor, I'll assume saving raw hits is secondary to memory efficiency of classification.
 
                 # 2. Calculate global priors from all clear assignments
-                prior_counts = analyzer.calculate_strain_prior_from_assignments(all_clear_assignments)
-                prior_probs = analyzer.convert_prior_counts_to_probability_vector(prior_counts)
+                prior_counts = analyzer.calculate_strain_prior_from_assignments(
+                    all_clear_assignments
+                )
+                prior_probs = analyzer.convert_prior_counts_to_probability_vector(
+                    prior_counts
+                )
 
                 # 3. Resolve ambiguous hits (Pass 2: iterate through temp ambiguous files)
                 resolved_ambiguous_assignments_all_chunks: Dict[ReadId, int] = {}
                 for ambig_chunk_file in ambiguous_hit_files:
                     with open(ambig_chunk_file, "rb") as f:
-                        ambiguous_hits_chunk_dict: Dict[ReadId, CountVector] = pickle.load(f)
+                        ambiguous_hits_chunk_dict: Dict[ReadId, CountVector] = (
+                            pickle.load(f)
+                        )
 
-                    if ambiguous_hits_chunk_dict: # Ensure it's not empty
+                    if ambiguous_hits_chunk_dict:  # Ensure it's not empty
                         resolved_chunk = analyzer.resolve_ambiguous_hits_parallel(
                             ambiguous_hits_chunk_dict, prior_probs
                         )
                         resolved_ambiguous_assignments_all_chunks.update(resolved_chunk)
 
-                    try: # Clean up individual chunk file
+                    try:  # Clean up individual chunk file
                         ambig_chunk_file.unlink()
                     except OSError as e:
-                        self.logger.warning(f"Could not delete temp ambiguous chunk file {ambig_chunk_file}: {e}")
+                        self.logger.warning(
+                            f"Could not delete temp ambiguous chunk file {ambig_chunk_file}: {e}"
+                        )
 
-                try: # Clean up temp directory
-                    if temp_ambiguous_dir.exists() and not any(temp_ambiguous_dir.iterdir()):
+                try:  # Clean up temp directory
+                    if temp_ambiguous_dir.exists() and not any(
+                        temp_ambiguous_dir.iterdir()
+                    ):
                         temp_ambiguous_dir.rmdir()
-                    elif temp_ambiguous_dir.exists(): # If somehow files remain (e.g. error during deletion)
-                        self.logger.warning(f"Temporary ambiguous directory {temp_ambiguous_dir} is not empty after processing. Manual cleanup might be needed.")
+                    elif (
+                        temp_ambiguous_dir.exists()
+                    ):  # If somehow files remain (e.g. error during deletion)
+                        self.logger.warning(
+                            f"Temporary ambiguous directory {temp_ambiguous_dir} is not empty after processing. Manual cleanup might be needed."
+                        )
                 except OSError as e:
-                    self.logger.warning(f"Could not delete temp ambiguous directory {temp_ambiguous_dir}: {e}")
-
+                    self.logger.warning(
+                        f"Could not delete temp ambiguous directory {temp_ambiguous_dir}: {e}"
+                    )
 
                 # 4. Combine all assignments
                 final_assignments = analyzer.combine_assignments(
@@ -686,7 +753,11 @@ class KmerClassificationWorkflow:
                 )
                 try:
                     with open(strain_names_output_path, "w") as f_strains:
-                        strain_names = self.database.strain_names if self.database and hasattr(self.database, 'strain_names') else []
+                        strain_names = (
+                            self.database.strain_names
+                            if self.database and hasattr(self.database, "strain_names")
+                            else []
+                        )
                         for strain_name_item in strain_names:  # Corrected variable name
                             f_strains.write(f"{strain_name_item}\n")
                     self.logger.info(
@@ -700,7 +771,9 @@ class KmerClassificationWorkflow:
                 # New sequence using output.AbundanceCalculator:
                 final_named_assignments = (
                     abundance_calc.convert_assignments_to_strain_names(
-                        {k: v for k, v in final_assignments.items()},  # Convert to proper dict type
+                        {
+                            k: v for k, v in final_assignments.items()
+                        },  # Convert to proper dict type
                         unassigned_marker="NA",  # Assuming "NA" is the marker
                     )
                 )
@@ -719,9 +792,9 @@ class KmerClassificationWorkflow:
                 # Calculate sum of hits for strains passing threshold for intra_relab calculation
                 sum_hits_passing_threshold = 0
                 if total_reads_for_relab > 0:
-                    for (
-                        strain_name_iter
-                    ) in (self.database.strain_names if self.database else []):  # Iterate through known strains
+                    for strain_name_iter in (
+                        self.database.strain_names if self.database else []
+                    ):  # Iterate through known strains
                         count = raw_counts.get(strain_name_iter, 0)
                         sample_relab_temp = count / total_reads_for_relab
                         if sample_relab_temp >= self.args.abundance_threshold:
@@ -729,7 +802,9 @@ class KmerClassificationWorkflow:
 
                 # Ensure all strains and NA are in the df. Use a combined list of known strain names and any potentially new names from raw_counts (e.g. "NA" or others if they appear)
                 # However, the original logic iterated self.database.strain_names + ["NA"], so we stick to that to replicate behavior.
-                all_strain_keys_for_df = (self.database.strain_names if self.database else []) + ["NA"]
+                all_strain_keys_for_df = (
+                    self.database.strain_names if self.database else []
+                ) + ["NA"]
                 # Deduplicate if "NA" is somehow in self.database.strain_names (though unlikely)
                 processed_keys = set()
                 unique_keys_for_df = []
