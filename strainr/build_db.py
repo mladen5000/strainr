@@ -893,9 +893,9 @@ class DatabaseBuilder:
 
                     if extract_func is not None:
                         try:
-                            # Call Rust function with three arguments: (sequence_bytes, k, skip_n_kmers)
+                            # Call Rust function with file path and kmer_length
                             kmers_from_seq = extract_func(
-                                seq_bytes.upper(), kmer_length
+                                str(genome_file), kmer_length
                             )
                             logger.debug(
                                 f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})"
