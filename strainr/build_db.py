@@ -77,6 +77,24 @@ except Exception as e:  # pragma: no cover - rust module optional
         f"Rust k-mer counter not available ({e}). Falling back to Python implementation."
     )
 
+# Specific import for the byte-sequence k-mer extractor
+_rust_extract_kmers_from_bytes_func = None
+_RUST_BYTES_PROCESSOR_AVAILABLE = False
+try:
+    from kmer_counter_rs import extract_kmers_rs as _rust_extract_kmers_from_bytes_func_temp
+    _rust_extract_kmers_from_bytes_func = _rust_extract_kmers_from_bytes_func_temp
+    _RUST_BYTES_PROCESSOR_AVAILABLE = True
+    logger.info(
+        "Successfully imported Rust k-mer counter for byte sequences (extract_kmers_rs). "
+        "This will be used in _extract_kmers_from_bytes if available."
+    )
+except ImportError as e:
+    logger.warning(
+        f"Rust k-mer counter for byte sequences (extract_kmers_rs) not available ({e}). "
+        "Python fallback will be used in _extract_kmers_from_bytes."
+    )
+    # _rust_extract_kmers_from_bytes_func remains None
+    # _RUST_BYTES_PROCESSOR_AVAILABLE remains False
 
 # --- Pydantic Model for CLI Arguments ---
 class BuildDBArgs(BaseModel):
@@ -457,21 +475,22 @@ class DatabaseBuilder:
         #    for the Rust path. Current tests suggest consistency, but this is an area
         #    to watch if Rust library behavior changes.
 
-        if _extract_kmers_func is not None:  # Rust path is available
+        # Use the byte-sequence Rust k-mer extractor if available
+        if _RUST_BYTES_PROCESSOR_AVAILABLE and _rust_extract_kmers_from_bytes_func is not None:
             try:
-                # Call Rust function with three arguments: (sequence_bytes, k, skip_n_kmers)
-                skip_n_kmers = getattr(self.args, "skip_n_kmers", False)
-                kmers_from_rust = _extract_kmers_func(
-                    upper_sequence_bytes, k, skip_n_kmers
+                # The Rust function extract_kmers_rs expects (sequence_bytes, k, perform_strict_dna_check)
+                # perform_strict_dna_check corresponds to self.args.skip_n_kmers
+                # It already returns canonical k-mers and handles N-filtering internally.
+                kmers_from_rust = _rust_extract_kmers_from_bytes_func(
+                    upper_sequence_bytes, k, self.args.skip_n_kmers
                 )
                 return kmers_from_rust
-
             except Exception as e:  # pragma: no cover - runtime fallback
                 logger.error(
-                    f"Rust k-mer extraction failed: {e}. Falling back to Python canonical implementation."
+                    f"Rust k-mer extraction from bytes failed: {e}. "
+                    "Falling back to Python canonical implementation for this sequence."
                 )
-
-        # Python fallback: extract canonical k-mers
+        # Python fallback (if Rust for bytes not available or failed): extract canonical k-mers
         kmers_list: List[bytes] = []
         if len(upper_sequence_bytes) < k:
             return kmers_list
@@ -868,73 +887,82 @@ class DatabaseBuilder:
         genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = task
 
         # Initialize a local extractor
-        try:
-            from kmer_counter_rs import extract_kmer_rs
+        # _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func are globally defined
+        # We use _extract_kmers_func which is extract_kmer_rs (file path version) or None
 
-            extract_func = extract_kmer_rs
-        except ImportError:
-            extract_func = None
-
-        # Process the genome file
         strain_kmers = set()
+        rust_processing_attempted = False
+        rust_succeeded = False
 
-        try:
-            from Bio import SeqIO
-            from .utils import open_file_transparently
+        if _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func is not None:
+            rust_processing_attempted = True
+            logger.debug(f"Attempting Rust k-mer extraction for entire file {genome_file}")
+            try:
+                # _extract_kmers_func is extract_kmer_rs(file_path, k)
+                # It returns a dict {kmer_bytes: count}, we need the keys.
+                rust_kmers_map = _extract_kmers_func(str(genome_file), kmer_length)
 
-            with open_file_transparently(genome_file) as f_handle:
-                for record in SeqIO.parse(f_handle, "fasta"):
-                    if record is None:
-                        continue
-                    if record.seq is None:
-                        continue
-                    seq_str = str(record.seq)
-                    seq_bytes = seq_str.encode("utf-8")
+                raw_kmers_from_rust = rust_kmers_map.keys()
 
-                    if extract_func is not None:
-                        try:
-                            # Call Rust function with file path and kmer_length
-                            kmers_from_seq = extract_func(
-                                str(genome_file), kmer_length
-                            )
-                            logger.debug(
-                                f"Received {len(kmers_from_seq)} k-mers from Rust for {genome_file} (record: {record.id})"
-                            )
-                            strain_kmers.update(kmers_from_seq)
-                        except Exception as rust_exc:  # pragma: no cover
-                            logger.warning(
-                                f"Rust k-mer extraction failed for {genome_file} (record: {record.id}): {rust_exc}. Falling back to Python for this sequence."
-                            )
-                            # Fallback to Python implementation
-                            kmers_from_seq = (
-                                DatabaseBuilder._py_extract_canonical_kmers_static(
-                                    seq_bytes, kmer_length, skip_n_kmers
-                                )
-                            )
-                            logger.debug(
-                                f"Received {len(kmers_from_seq)} k-mers from Python fallback for {genome_file} (record: {record.id})"
-                            )
-                            strain_kmers.update(kmers_from_seq)
-                    else:
-                        # Python only path (Rust not available at all)
-                        kmers_from_seq = (
+                if skip_n_kmers:
+                    # Filter out k-mers with 'N' or 'n' if skip_n_kmers is True
+                    # Rust k-mers are bytes.
+                    final_kmers_to_add = {
+                        kmer for kmer in raw_kmers_from_rust if b"N" not in kmer and b"n" not in kmer
+                    }
+                else:
+                    final_kmers_to_add = set(raw_kmers_from_rust)
+
+                strain_kmers.update(final_kmers_to_add)
+                logger.info(
+                    f"Successfully extracted {len(strain_kmers)} k-mers from {genome_file} using Rust."
+                )
+                rust_succeeded = True
+            except Exception as rust_exc: # pragma: no cover
+                logger.warning(
+                    f"Rust k-mer extraction failed for {genome_file}: {rust_exc}. "
+                    f"Falling back to Python implementation for the entire file."
+                )
+                # rust_succeeded remains False, Python path will be taken
+
+        # Python fallback path:
+        # This executes if Rust is not available, or if Rust processing was attempted but failed.
+        if not rust_succeeded:
+            if rust_processing_attempted:
+                logger.info(f"Executing Python fallback for {genome_file} due to Rust failure.")
+            else:
+                logger.info(f"Using Python k-mer extraction for {genome_file} (Rust not available/selected).")
+
+            try: # 12 spaces
+                from Bio import SeqIO # 16 spaces
+                from .utils import open_file_transparently # 16 spaces
+
+                with open_file_transparently(genome_file) as f_handle: # 16 spaces
+                    for record in SeqIO.parse(f_handle, "fasta"): # 20 spaces
+                        if record is None: # 24 spaces
+                            continue # 28 spaces
+                        if record.seq is None: # 24 spaces
+                            continue # 28 spaces
+                        seq_str = str(record.seq) # 24 spaces
+                        # _py_extract_canonical_kmers_static expects bytes
+                        seq_bytes = seq_str.encode("utf-8") # 24 spaces
+
+                        # Python implementation for this sequence
+                        kmers_from_record = ( # 24 spaces
                             DatabaseBuilder._py_extract_canonical_kmers_static(
                                 seq_bytes, kmer_length, skip_n_kmers
                             )
                         )
-                        logger.debug(
-                            f"Received {len(kmers_from_seq)} k-mers from Python for {genome_file} (record: {record.id})"
-                        )
-                        strain_kmers.update(kmers_from_seq)
+                        strain_kmers.update(kmers_from_record) # 24 spaces
+                logger.info(f"Extracted {len(strain_kmers)} k-mers from {genome_file} using Python.") # 16 spaces
+            except Exception as py_exc: # 12 spaces
+                logger.error(f"Python k-mer extraction failed for {genome_file}: {py_exc}") # 16 spaces
+                import traceback # 16 spaces
+                logger.error(traceback.format_exc()) # 16 spaces
+                # Raise exception so the main process knows this worker failed
+                raise # 16 spaces
 
-        except Exception as e:
-            logger.error(f"Error processing {genome_file}: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
-            # Raise exception so the main process knows this worker failed
-            raise
-
+        # Continue with writing k-mers to file (common to both paths)
         # Write to compressed temp file for better I/O performance
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
         import gzip
