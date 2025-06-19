@@ -27,6 +27,7 @@ import logging
 import multiprocessing as mp
 import pathlib
 import shutil
+import shlex
 import subprocess
 import sys
 import gzip
@@ -681,8 +682,8 @@ class DatabaseBuilder:
 
         logger.info("Map phase completed. All k-mers written to temporary files.")
 
-        # --- Enhanced check for expected .part.gz files ---
-        expected_part_files = [temp_dir / f"{i}.part.gz" for i in range(num_genomes)]
+        # --- Enhanced check for expected .part.txt files ---
+        expected_part_files = [temp_dir / f"{i}.part.txt" for i in range(num_genomes)]
         problematic_files = []
         missing_files_list = []
         empty_files_list = []
@@ -713,14 +714,18 @@ class DatabaseBuilder:
             all_parts_file = temp_dir / "all_kmer_parts.tsv"
             sorted_parts_file = temp_dir / "all_kmer_parts.sorted.tsv"
 
-            logger.info(f"Fast concatenating temporary files into {all_parts_file}...")
-            # Optimized concatenation using system commands (much faster than Python shutil)
-            part_files = list(temp_dir.glob("*.part.gz"))
-            if len(part_files) > 100:  # For many files, use find + zcat
-                concat_command = f"find {temp_dir} -name '*.part.gz' -exec zcat {{}} + > {all_parts_file}"
-            else:  # For fewer files, direct zcat
-                part_paths = " ".join(str(f) for f in part_files)
-                concat_command = f"zcat {part_paths} > {all_parts_file}"
+            logger.info(f"Concatenating temporary part files into {all_parts_file}...")
+            part_files = list(temp_dir.glob("*.part.txt"))
+            if len(part_files) > 100:  # For many files, use find + cat (robustly)
+                # Using print0 and xargs -0 for robustness with filenames containing special characters or spaces.
+                # The '--' ensures that even if a filename starts with '-', cat doesn't interpret it as an option.
+                concat_command = f"find {temp_dir} -name '*.part.txt' -print0 | xargs -0 cat -- > {all_parts_file}"
+            else:  # For fewer files, direct cat
+                if not part_files: # Handle case where there are no files to avoid error with empty command
+                    concat_command = f"touch {all_parts_file}" # Create an empty file if no parts exist
+                else:
+                    part_paths_str = " ".join(shlex.quote(str(f)) for f in part_files) # Use shlex.quote for safety
+                    concat_command = f"cat {part_paths_str} > {all_parts_file}"
 
             logger.info(f"Executing concatenation command: {concat_command}")
             concat_process = subprocess.run(
@@ -737,10 +742,10 @@ class DatabaseBuilder:
             logger.info("Concatenation completed successfully.")
 
             logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
-            # Use parallel sort with memory buffer and compression for much better performance
+            # Use parallel sort with memory buffer. Compression is removed as inputs are plain text.
             sort_command = (
                 f"LC_ALL=C sort -k1,1 --parallel={self.args.procs} "
-                f"-S 2G --compress-program=gzip {all_parts_file} -o {sorted_parts_file}"
+                f"-S 2G {all_parts_file} -o {sorted_parts_file}"
             )
             logger.info(f"Executing sort command: {sort_command}")
             sort_process = subprocess.run(
@@ -865,8 +870,8 @@ class DatabaseBuilder:
 
         # Check for required external commands first
         try:
-            check_external_commands(["sort", "zcat"])
-            logger.info("External commands 'sort' and 'zcat' found.")
+            check_external_commands(["sort", "cat", "find", "xargs", "touch"])
+            logger.info("External commands 'sort', 'cat', 'find', 'xargs', 'touch' found.")
         except FileNotFoundError as e:
             logger.error(f"Missing required external command: {e}")
             # Depending on desired behavior, you might re-raise or sys.exit
@@ -983,7 +988,8 @@ class DatabaseBuilder:
                 raise # 16 spaces
 
         # Writing k-mers to file
-        temp_file_path = temp_dir / f"{strain_idx}.part.gz"
+        temp_file_path = temp_dir / f"{strain_idx}.part.txt"
+
 
         kmer_source_iterator = None
         num_kmers_to_write = 0
@@ -1006,14 +1012,15 @@ class DatabaseBuilder:
 
         if num_kmers_to_write == 0:
             logger.info(f"Worker for strain_idx {strain_idx}: No k-mers to write for {genome_file}.")
-            # Create an empty .part.gz file as the downstream process expects it
-            with gzip.open(temp_file_path, "wb") as f_out:
+            # Create an empty .part.txt file as the downstream process expects it
+            with open(temp_file_path, "w", encoding='utf-8') as f_out: # Ensure this uses the new open
                 pass # Creates an empty file
         else:
-            with gzip.open(temp_file_path, "wb") as f_out: # Note "wb"
+            with open(temp_file_path, "w", encoding='utf-8') as f_out: # Note "w" and encoding
                 for kmer_bytes in kmer_source_iterator:
                     line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
-                    batch.append(line.encode('utf-8')) # Encode to bytes
+                    batch.append(line) # Line is already a string, no encoding needed here
+
                     total_written_count += 1
                     if len(batch) >= batch_size:
                         f_out.writelines(batch)
