@@ -932,11 +932,10 @@ class DatabaseBuilder:
                 rust_kmers_map = _extract_kmers_func(str(genome_file), kmer_length, not skip_n_kmers)
 
                 # The Rust function now handles N-kmer processing based on the new flag.
-                # The keys of rust_kmers_map are the k-mers to be added directly.
-                raw_kmers_from_rust = rust_kmers_map.keys()
-                strain_kmers.update(raw_kmers_from_rust)
+                # The keys of rust_kmers_map are the k-mers.
+                # No longer update strain_kmers here for the Rust path.
                 logger.info(
-                    f"Successfully extracted {len(strain_kmers)} k-mers from {genome_file} using Rust."
+                    f"Successfully extracted {len(rust_kmers_map)} unique k-mers from {genome_file} using Rust."
                 )
                 rust_succeeded = True
             except Exception as rust_exc: # pragma: no cover
@@ -983,29 +982,49 @@ class DatabaseBuilder:
                 # Raise exception so the main process knows this worker failed
                 raise # 16 spaces
 
-        # Continue with writing k-mers to file (common to both paths)
-        # Write to compressed temp file for better I/O performance
+        # Writing k-mers to file
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
-        logger.info(f"Worker for strain_idx {strain_idx}: Starting to write {len(strain_kmers)} k-mers to {temp_file_path}")
+
+        kmer_source_iterator = None
+        num_kmers_to_write = 0
+
+        if rust_succeeded:
+            # This check implies rust_kmers_map is defined
+            logger.info(f"Worker for strain_idx {strain_idx}: Preparing to write {len(rust_kmers_map)} k-mers (from Rust) to {temp_file_path}")
+            kmer_source_iterator = iter(rust_kmers_map.keys()) # Iterate over keys from Rust result
+            num_kmers_to_write = len(rust_kmers_map)
+        else:
+            # This implies Python fallback was used, or Rust was not attempted.
+            # strain_kmers set should be populated by the Python logic.
+            logger.info(f"Worker for strain_idx {strain_idx}: Preparing to write {len(strain_kmers)} k-mers (from Python) to {temp_file_path}")
+            kmer_source_iterator = iter(strain_kmers)
+            num_kmers_to_write = len(strain_kmers)
 
         batch_size = 10000  # Write 10,000 lines at a time
         batch = []
         total_written_count = 0
 
-        with gzip.open(temp_file_path, "wb") as f_out: # Note "wb"
-            for kmer_bytes in strain_kmers:
-                line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
-                batch.append(line.encode('utf-8')) # Encode to bytes
-                total_written_count += 1
-                if len(batch) >= batch_size:
+        if num_kmers_to_write == 0:
+            logger.info(f"Worker for strain_idx {strain_idx}: No k-mers to write for {genome_file}.")
+            # Create an empty .part.gz file as the downstream process expects it
+            with gzip.open(temp_file_path, "wb") as f_out:
+                pass # Creates an empty file
+        else:
+            with gzip.open(temp_file_path, "wb") as f_out: # Note "wb"
+                for kmer_bytes in kmer_source_iterator:
+                    line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
+                    batch.append(line.encode('utf-8')) # Encode to bytes
+                    total_written_count += 1
+                    if len(batch) >= batch_size:
+                        f_out.writelines(batch)
+                        batch = []
+
+                    # Log every 10 batches, and include total expected for context
+                    if total_written_count > 0 and total_written_count % (batch_size * 10) == 0:
+                        logger.info(f"Worker for strain_idx {strain_idx}: Written {total_written_count}/{num_kmers_to_write} k-mers so far to {temp_file_path}")
+
+                if batch: # Write any remaining lines
                     f_out.writelines(batch)
-                    batch = []
-
-                if total_written_count > 0 and total_written_count % (batch_size * 10) == 0:
-                    logger.info(f"Worker for strain_idx {strain_idx}: Written {total_written_count} k-mers so far to {temp_file_path}")
-
-            if batch: # Write any remaining lines
-                f_out.writelines(batch)
 
         logger.info(f"Worker for strain_idx {strain_idx}: Finished writing {total_written_count} k-mers to {temp_file_path}")
         logger.info(f"Worker finished for {task}")
