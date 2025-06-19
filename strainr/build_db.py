@@ -733,6 +733,7 @@ class DatabaseBuilder:
                 logger.error(f"Stdout: {concat_process.stdout.strip()}")
                 logger.error(f"Stderr: {concat_process.stderr.strip()}")
                 raise RuntimeError(f"Concatenation of k-mer part files failed. Command: {concat_command}")
+            logger.info(f"Concatenation command finished with return code {concat_process.returncode}.")
             logger.info("Concatenation completed successfully.")
 
             logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
@@ -752,11 +753,13 @@ class DatabaseBuilder:
                 logger.error(f"Stdout: {sort_process.stdout.strip()}")
                 logger.error(f"Stderr: {sort_process.stderr.strip()}")
                 raise RuntimeError(f"Disk-based sort command failed. Command: {sort_command}")
+            logger.info(f"Sort command finished with return code {sort_process.returncode}.")
             logger.info("Sort phase completed.")
 
             # --- 3. REDUCE PHASE (OPTIMIZED) ---
             # Group sorted k-mers and write to Parquet file in batches.
             output_path = self.base_path / (self.output_db_name + ".db.parquet")
+            logger.info(f"Starting Reduce phase: Aggregating sorted k-mers from {sorted_parts_file}")
             logger.info(f"Aggregating sorted k-mers into Parquet file: {output_path}")
 
             # Define the schema for the output Parquet file.
@@ -783,9 +786,13 @@ class DatabaseBuilder:
                     )
 
                     batch_count = 0
+                    processed_kmer_groups_count = 0
                     for kmer_hex, group in tqdm(
                         grouped_iterator, desc="Aggregating k-mers (Reduce)"
                     ):
+                        processed_kmer_groups_count += 1
+                        if processed_kmer_groups_count % 100000 == 0 and processed_kmer_groups_count > 0:
+                            logger.info(f"Reduce phase: Aggregated {processed_kmer_groups_count} unique k-mer groups so far.")
                         presence_vector = np.zeros(num_genomes, dtype=bool)
 
                         # Process all lines for this k-mer
@@ -979,22 +986,28 @@ class DatabaseBuilder:
         # Continue with writing k-mers to file (common to both paths)
         # Write to compressed temp file for better I/O performance
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
-        logger.debug(f"Worker for strain_idx {strain_idx}: Starting to write {len(strain_kmers)} k-mers to {temp_file_path}")
+        logger.info(f"Worker for strain_idx {strain_idx}: Starting to write {len(strain_kmers)} k-mers to {temp_file_path}")
 
         batch_size = 10000  # Write 10,000 lines at a time
         batch = []
+        total_written_count = 0
 
         with gzip.open(temp_file_path, "wb") as f_out: # Note "wb"
             for kmer_bytes in strain_kmers:
                 line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
                 batch.append(line.encode('utf-8')) # Encode to bytes
+                total_written_count += 1
                 if len(batch) >= batch_size:
                     f_out.writelines(batch)
                     batch = []
+
+                if total_written_count > 0 and total_written_count % (batch_size * 10) == 0:
+                    logger.info(f"Worker for strain_idx {strain_idx}: Written {total_written_count} k-mers so far to {temp_file_path}")
+
             if batch: # Write any remaining lines
                 f_out.writelines(batch)
 
-        logger.debug(f"Worker for strain_idx {strain_idx}: Finished writing k-mers to {temp_file_path}")
+        logger.info(f"Worker for strain_idx {strain_idx}: Finished writing {total_written_count} k-mers to {temp_file_path}")
         logger.info(f"Worker finished for {task}")
         return temp_file_path
 
