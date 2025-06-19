@@ -29,6 +29,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import gzip
 from collections import Counter
 from itertools import groupby
 from pathlib import Path
@@ -680,28 +681,32 @@ class DatabaseBuilder:
 
         logger.info("Map phase completed. All k-mers written to temporary files.")
 
-        # --- Check that all expected .part.gz files exist ---
+        # --- Enhanced check for expected .part.gz files ---
         expected_part_files = [temp_dir / f"{i}.part.gz" for i in range(num_genomes)]
-        missing_files = [str(f) for f in expected_part_files if not f.exists()]
-        if missing_files:
-            logger.error(
-                f"Missing expected k-mer part files: {missing_files}. Aborting before sort/concat phase."
-            )
-            raise FileNotFoundError(
-                f"Missing expected k-mer part files: {missing_files}"
-            )
+        problematic_files = []
+        missing_files_list = []
+        empty_files_list = []
 
-        # --- Check that all expected .part.gz files exist ---
-        expected_part_files = [temp_dir / f"{i}.part.gz" for i in range(num_genomes)]
-        missing_files = [str(f) for f in expected_part_files if not f.exists()]
-        if missing_files:
-            logger.error(
-                f"Missing expected k-mer part files: {missing_files}. Aborting before sort/concat phase."
-            )
-            raise FileNotFoundError(
-                f"Missing expected k-mer part files: {missing_files}"
-            )
+        for f_path in expected_part_files:
+            if not f_path.exists():
+                missing_files_list.append(str(f_path))
+                problematic_files.append(str(f_path)) # Also add to general problematic list
+            elif f_path.stat().st_size == 0:
+                empty_files_list.append(str(f_path))
+                problematic_files.append(str(f_path)) # Also add to general problematic list
 
+        if missing_files_list or empty_files_list:
+            error_messages = []
+            if missing_files_list:
+                error_messages.append(f"Missing expected k-mer part files: {missing_files_list}")
+            if empty_files_list:
+                error_messages.append(f"Empty k-mer part files (suggesting worker error): {empty_files_list}")
+
+            full_error_message = ". ".join(error_messages) + ". Aborting before sort/concat phase."
+            logger.error(full_error_message)
+            raise RuntimeError(full_error_message) # Changed from FileNotFoundError to RuntimeError for broader scope
+
+        logger.info("All expected k-mer part files exist and are non-empty.")
         try:
             # --- 2. SORT PHASE ---
             # Concatenate and sort the temporary files on disk.
@@ -717,7 +722,18 @@ class DatabaseBuilder:
                 part_paths = " ".join(str(f) for f in part_files)
                 concat_command = f"zcat {part_paths} > {all_parts_file}"
 
-            subprocess.run(concat_command, shell=True, check=True)
+            logger.info(f"Executing concatenation command: {concat_command}")
+            concat_process = subprocess.run(
+                concat_command, shell=True, capture_output=True, text=True
+            )
+            if concat_process.returncode != 0:
+                logger.error(
+                    f"Concatenation command ('{concat_command}') failed with exit code {concat_process.returncode}."
+                )
+                logger.error(f"Stdout: {concat_process.stdout.strip()}")
+                logger.error(f"Stderr: {concat_process.stderr.strip()}")
+                raise RuntimeError(f"Concatenation of k-mer part files failed. Command: {concat_command}")
+            logger.info("Concatenation completed successfully.")
 
             logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
             # Use parallel sort with memory buffer and compression for much better performance
@@ -725,12 +741,17 @@ class DatabaseBuilder:
                 f"LC_ALL=C sort -k1,1 --parallel={self.args.procs} "
                 f"-S 2G --compress-program=gzip {all_parts_file} -o {sorted_parts_file}"
             )
-            process = subprocess.run(
-                sort_command, shell=True, check=True, capture_output=True, text=True
+            logger.info(f"Executing sort command: {sort_command}")
+            sort_process = subprocess.run(
+                sort_command, shell=True, capture_output=True, text=True
             )
-            if process.returncode != 0:
-                logger.error(f"Sorting failed. Stderr: {process.stderr}")
-                raise RuntimeError("Disk-based sort command failed.")
+            if sort_process.returncode != 0:
+                logger.error(
+                    f"Sort command ('{sort_command}') failed with exit code {sort_process.returncode}."
+                )
+                logger.error(f"Stdout: {sort_process.stdout.strip()}")
+                logger.error(f"Stderr: {sort_process.stderr.strip()}")
+                raise RuntimeError(f"Disk-based sort command failed. Command: {sort_command}")
             logger.info("Sort phase completed.")
 
             # --- 3. REDUCE PHASE (OPTIMIZED) ---
@@ -958,12 +979,22 @@ class DatabaseBuilder:
         # Continue with writing k-mers to file (common to both paths)
         # Write to compressed temp file for better I/O performance
         temp_file_path = temp_dir / f"{strain_idx}.part.gz"
-        import gzip
+        logger.debug(f"Worker for strain_idx {strain_idx}: Starting to write {len(strain_kmers)} k-mers to {temp_file_path}")
 
-        with gzip.open(temp_file_path, "wt") as f_out:
+        batch_size = 10000  # Write 10,000 lines at a time
+        batch = []
+
+        with gzip.open(temp_file_path, "wb") as f_out: # Note "wb"
             for kmer_bytes in strain_kmers:
-                f_out.write(f"{kmer_bytes.hex()}\t{strain_idx}\n")
+                line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
+                batch.append(line.encode('utf-8')) # Encode to bytes
+                if len(batch) >= batch_size:
+                    f_out.writelines(batch)
+                    batch = []
+            if batch: # Write any remaining lines
+                f_out.writelines(batch)
 
+        logger.debug(f"Worker for strain_idx {strain_idx}: Finished writing k-mers to {temp_file_path}")
         logger.info(f"Worker finished for {task}")
         return temp_file_path
 
