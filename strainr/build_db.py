@@ -990,6 +990,7 @@ class DatabaseBuilder:
         # Writing k-mers to file
         temp_file_path = temp_dir / f"{strain_idx}.part.txt"
 
+
         kmer_source_iterator = None
         num_kmers_to_write = 0
 
@@ -1019,6 +1020,7 @@ class DatabaseBuilder:
                 for kmer_bytes in kmer_source_iterator:
                     line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
                     batch.append(line) # Line is already a string, no encoding needed here
+
                     total_written_count += 1
                     if len(batch) >= batch_size:
                         f_out.writelines(batch)
