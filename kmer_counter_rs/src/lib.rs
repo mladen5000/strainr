@@ -16,9 +16,9 @@ fn init_logging() {
 }
 
 #[pyfunction]
-fn extract_kmer_rs(file_path: &str, k: u8) -> PyResult<HashMap<Vec<u8>, usize>> {
+fn extract_kmer_rs(file_path: &str, k: u8, process_n_kmers: bool) -> PyResult<HashMap<Vec<u8>, usize>> {
     init_logging();
-    info!("Starting extract_kmer_rs for file: {}", file_path);
+    info!("Starting extract_kmer_rs for file: {}, k: {}, process_n_kmers: {}", file_path, k, process_n_kmers);
     let mut reader = match parse_fastx_file(file_path) {
         Ok(r) => {
             info!("Successfully opened file: {}", file_path);
@@ -48,7 +48,7 @@ fn extract_kmer_rs(file_path: &str, k: u8) -> PyResult<HashMap<Vec<u8>, usize>> 
     let mut kmer_counts: HashMap<Vec<u8>, usize> = HashMap::new();
     let mut processed_any_record = false;
     let mut total_records = 0;
-    let mut total_kmers = 0;
+    let mut total_kmers_counted = 0; // Renamed for clarity
 
     while let Some(record) = reader.next() {
         processed_any_record = true;
@@ -57,24 +57,52 @@ fn extract_kmer_rs(file_path: &str, k: u8) -> PyResult<HashMap<Vec<u8>, usize>> 
             error!("Invalid record in file {}: {}", file_path, e);
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid record: {}", e))
         })?;
-        let norm_seq = seqrec.normalize(false);
-        let rc = norm_seq.reverse_complement();
+
+        let norm_seq = seqrec.normalize(false); // Normalizes to uppercase, no N removal by default
         let mut record_kmers = 0;
-        for (_, kmer, _) in norm_seq.canonical_kmers(k, &rc) {
-            let kmer_vec = kmer.to_vec();
-            *kmer_counts.entry(kmer_vec).or_insert(0) += 1;
-            record_kmers += 1;
+
+        if process_n_kmers {
+            // Manual k-mer extraction including Ns
+            let seq_bytes = norm_seq.sequence();
+            if seq_bytes.len() >= k as usize {
+                for i in 0..=(seq_bytes.len() - k as usize) {
+                    let kmer_slice = &seq_bytes[i..i + k as usize];
+
+                    // Convert k-mer to Vec<u8> for ownership
+                    let kmer_vec = kmer_slice.to_vec();
+                    let rc_kmer_vec = reverse_complement_dna(&kmer_vec);
+
+                    // Determine canonical k-mer
+                    let canonical_kmer = if kmer_vec <= rc_kmer_vec {
+                        kmer_vec
+                    } else {
+                        rc_kmer_vec
+                    };
+
+                    *kmer_counts.entry(canonical_kmer).or_insert(0) += 1;
+                    record_kmers += 1;
+                }
+            }
+        } else {
+            // Original logic: uses needletail's canonical_kmers which skips Ns
+            let rc = norm_seq.reverse_complement(); // needletail's reverse_complement
+            for (_, kmer, _) in norm_seq.canonical_kmers(k, &rc) {
+                let kmer_vec = kmer.to_vec();
+                *kmer_counts.entry(kmer_vec).or_insert(0) += 1;
+                record_kmers += 1;
+            }
         }
-        total_kmers += record_kmers;
+
+        total_kmers_counted += record_kmers;
         debug!(
-            "Processed record {}: {} k-mers",
-            total_records, record_kmers
+            "Processed record {}: {} k-mers (process_n_kmers: {})",
+            total_records, record_kmers, process_n_kmers
         );
     }
 
     info!(
-        "extract_kmer_rs finished for file: {}. Records: {}, Total k-mers: {}",
-        file_path, total_records, total_kmers
+        "extract_kmer_rs finished for file: {}. Records: {}, Total k-mers counted: {}",
+        file_path, total_records, total_kmers_counted
     );
 
     if !processed_any_record {
