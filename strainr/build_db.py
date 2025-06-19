@@ -898,22 +898,15 @@ class DatabaseBuilder:
             rust_processing_attempted = True
             logger.debug(f"Attempting Rust k-mer extraction for entire file {genome_file}")
             try:
-                # _extract_kmers_func is extract_kmer_rs(file_path, k)
-                # It returns a dict {kmer_bytes: count}, we need the keys.
-                rust_kmers_map = _extract_kmers_func(str(genome_file), kmer_length)
+                # _extract_kmers_func is extract_kmer_rs(file_path, k, process_n_kmers)
+                # process_n_kmers is true if we WANT to process N-containing kmers (i.e., NOT skip them)
+                # So, process_n_kmers = not skip_n_kmers
+                rust_kmers_map = _extract_kmers_func(str(genome_file), kmer_length, not skip_n_kmers)
 
+                # The Rust function now handles N-kmer processing based on the new flag.
+                # The keys of rust_kmers_map are the k-mers to be added directly.
                 raw_kmers_from_rust = rust_kmers_map.keys()
-
-                if skip_n_kmers:
-                    # Filter out k-mers with 'N' or 'n' if skip_n_kmers is True
-                    # Rust k-mers are bytes.
-                    final_kmers_to_add = {
-                        kmer for kmer in raw_kmers_from_rust if b"N" not in kmer and b"n" not in kmer
-                    }
-                else:
-                    final_kmers_to_add = set(raw_kmers_from_rust)
-
-                strain_kmers.update(final_kmers_to_add)
+                strain_kmers.update(raw_kmers_from_rust)
                 logger.info(
                     f"Successfully extracted {len(strain_kmers)} k-mers from {genome_file} using Rust."
                 )

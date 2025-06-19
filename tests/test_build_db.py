@@ -504,3 +504,152 @@ def test_rust_kmer_counter_usage_and_correctness(tmp_path: pathlib.Path):
         # Restore original state
         strainr.build_db._RUST_KMER_COUNTER_AVAILABLE = original_rust_available
         strainr.build_db._extract_kmers_func = original_extract_func
+
+
+# --- Integration test for k-mer extraction pipeline consistency ---
+def test_pipeline_kmer_extraction_consistency(tmp_path: pathlib.Path):
+    """
+    Tests that the k-mer extraction pipeline (_process_and_write_kmers_worker)
+    produces consistent results between the Rust path and Python path,
+    for both skip_n_kmers=True and skip_n_kmers=False.
+    """
+    import gzip
+    import shutil
+    from unittest.mock import patch
+    import strainr.build_db # Import the module to modify its globals
+    from strainr.build_db import BuildDBArgs, DatabaseBuilder
+
+    # 1. Setup: Create dummy FASTA file
+    fasta_content = """>seq1
+AAANTTTTCCCGGGNA
+>seq2
+GGNNAACCTTGGNACC
+"""
+    genome_file = tmp_path / "test_genome.fna"
+    genome_file.write_text(fasta_content)
+    kmer_len = 4
+
+    # Helper function to get k-mers from the pipeline
+    def get_kmers_from_pipeline(
+        build_args: BuildDBArgs,
+        genome_file_path: pathlib.Path,
+        k_len: int,
+        force_python: bool
+    ) -> set:
+        # Create a temporary directory for the worker's output
+        # This dir will be inside tmp_path, managed by the test fixture
+        worker_output_dir = tmp_path / f"worker_output_{'py' if force_python else 'rs'}_{build_args.skip_n_kmers}"
+        if worker_output_dir.exists():
+            shutil.rmtree(worker_output_dir) # Clean up from previous helper call if any
+        worker_output_dir.mkdir()
+
+        task_tuple = (
+            genome_file_path,
+            "test_strain", # strain_name
+            0,             # strain_idx
+            k_len,
+            build_args.skip_n_kmers,
+            worker_output_dir
+        )
+
+        original_rust_available = strainr.build_db._RUST_KMER_COUNTER_AVAILABLE
+        original_extract_func = strainr.build_db._extract_kmers_func
+
+        # Access the static method via the class
+        worker_fn = DatabaseBuilder._process_and_write_kmers_worker
+
+        if force_python:
+            # Temporarily disable Rust path
+            strainr.build_db._RUST_KMER_COUNTER_AVAILABLE = False
+            strainr.build_db._extract_kmers_func = None
+        else:
+            # Ensure Rust path is enabled (it should be by default in test env)
+            strainr.build_db._RUST_KMER_COUNTER_AVAILABLE = True
+            # Attempt to import the actual rust function to reset _extract_kmers_func
+            # This assumes kmer_counter_rs.extract_kmer_rs is the actual function
+            try:
+                from kmer_counter_rs import extract_kmer_rs
+                strainr.build_db._extract_kmers_func = extract_kmer_rs
+            except ImportError: # pragma: no cover
+                # If Rust module not found at all, this path can't run as "rust" path.
+                # The test running this helper would then effectively test Python vs Python, or fail.
+                # This shouldn't happen if Rust is part of the test environment.
+                 pytest.skip("Rust kmer_counter_rs module not available, cannot run Rust path for consistency test.")
+
+
+        extracted_kmers = set()
+        try:
+            # Call the worker function (which is now static)
+            output_part_file = worker_fn(task_tuple)
+
+            if not output_part_file.exists(): # pragma: no cover
+                raise FileNotFoundError(f"Worker did not produce output file: {output_part_file}")
+
+            with gzip.open(output_part_file, "rt") as f_in:
+                for line in f_in:
+                    kmer_hex = line.strip().split("\t")[0]
+                    extracted_kmers.add(bytes.fromhex(kmer_hex))
+        finally:
+            # Restore original state of globals
+            strainr.build_db._RUST_KMER_COUNTER_AVAILABLE = original_rust_available
+            strainr.build_db._extract_kmers_func = original_extract_func
+            # Clean up worker_output_dir
+            if worker_output_dir.exists():
+                shutil.rmtree(worker_output_dir)
+
+        return extracted_kmers
+
+    # Scenario 1: skip_n_kmers = False (process N-containing k-mers)
+    args_skip_n_false = BuildDBArgs(
+        custom=tmp_path, kmerlen=kmer_len, skip_n_kmers=False, procs=1
+    )
+
+    # Ensure Rust is available for this path, otherwise skip
+    if not strainr.build_db._RUST_KMER_COUNTER_AVAILABLE : # pragma: no cover
+        pytest.skip("Rust kmer_counter_rs module not available for Rust path in Scenario 1.")
+
+    kmers_rust_skip_false = get_kmers_from_pipeline(
+        args_skip_n_false, genome_file, kmer_len, force_python=False
+    )
+    kmers_python_skip_false = get_kmers_from_pipeline(
+        args_skip_n_false, genome_file, kmer_len, force_python=True
+    )
+
+    assert kmers_rust_skip_false == kmers_python_skip_false, \
+        f"K-mer sets differ for skip_n_kmers=False. Rust: {len(kmers_rust_skip_false)}, Python: {len(kmers_python_skip_false)}"
+
+    # Scenario 2: skip_n_kmers = True (do NOT process N-containing k-mers)
+    args_skip_n_true = BuildDBArgs(
+        custom=tmp_path, kmerlen=kmer_len, skip_n_kmers=True, procs=1
+    )
+
+    if not strainr.build_db._RUST_KMER_COUNTER_AVAILABLE: # pragma: no cover
+        pytest.skip("Rust kmer_counter_rs module not available for Rust path in Scenario 2.")
+
+    kmers_rust_skip_true = get_kmers_from_pipeline(
+        args_skip_n_true, genome_file, kmer_len, force_python=False
+    )
+    kmers_python_skip_true = get_kmers_from_pipeline(
+        args_skip_n_true, genome_file, kmer_len, force_python=True
+    )
+
+    assert kmers_rust_skip_true == kmers_python_skip_true, \
+        f"K-mer sets differ for skip_n_kmers=True. Rust: {len(kmers_rust_skip_true)}, Python: {len(kmers_python_skip_true)}"
+
+    # For sanity check, ensure the two scenarios produce different results from each other
+    assert kmers_rust_skip_false != kmers_rust_skip_true, \
+        "K-mer sets for skip_n_kmers=False and skip_n_kmers=True should be different with N-containing sequences (Rust path)."
+    assert kmers_python_skip_false != kmers_python_skip_true, \
+        "K-mer sets for skip_n_kmers=False and skip_n_kmers=True should be different with N-containing sequences (Python path)."
+
+    # Verify that when skip_n_kmers=True, no k-mers contain 'N'
+    for kmer in kmers_rust_skip_true:
+        assert b"N" not in kmer.upper(), f"Found N in kmer {kmer.decode()} when skip_n_kmers=True (Rust path)"
+    for kmer in kmers_python_skip_true:
+        assert b"N" not in kmer.upper(), f"Found N in kmer {kmer.decode()} when skip_n_kmers=True (Python path)"
+
+    # Verify that when skip_n_kmers=False, some k-mers *do* contain 'N' (given the input)
+    assert any(b"N" in kmer.upper() for kmer in kmers_rust_skip_false), \
+        "Expected N-containing kmers when skip_n_kmers=False (Rust path)"
+    assert any(b"N" in kmer.upper() for kmer in kmers_python_skip_false), \
+        "Expected N-containing kmers when skip_n_kmers=False (Python path)"
