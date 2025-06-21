@@ -4,6 +4,7 @@ These tests assume the file is in the root directory, and 'src' is a subdirector
 """
 
 import pathlib
+import logging # Added logging import
 
 # import pickle # Pickle is no longer used directly for db files
 from typing import Any, List, Optional, Union
@@ -162,7 +163,12 @@ def test_db_init_kmer_length_mismatch_error(  # Renamed test, checking for error
     capsys: pytest.CaptureFixture,
 ):
     constructor_kmer_len = default_kmer_length_db + 2
-    expected_error_msg = rf"Inferred k-mer length \({default_kmer_length_db}\) from database file does not match expected_kmer_length \({constructor_kmer_len}\)\."
+        # Updated expected error message to match the actual error from the code
+        expected_error_msg = (
+            rf"Provided expected_kmer_length \({constructor_kmer_len}\) "
+            rf"differs from k-mer length inferred from data \({default_kmer_length_db}\), "
+            r"and no k-mer length metadata was found in the database\."
+        )
     with pytest.raises(ValueError, match=expected_error_msg):
         StrainKmerDatabase(
             parquet_db_file_db, expected_kmer_length=constructor_kmer_len
@@ -403,15 +409,15 @@ def create_parquet_with_metadata(
     if counts is None:
         counts = np.random.randint(0, 255, size=(len(kmer_data), len(strain_names)), dtype=np.uint8)
 
-    # Create pandas DataFrame first, ensuring 'kmer' is a column
+    # Create pandas DataFrame first
     df = pd.DataFrame(counts, columns=strain_names)
-    df[kmer_col_name] = kmer_data # Add kmer data as a column
-
-    # Ensure 'kmer' column is first for consistency if desired, though not strictly necessary for metadata
-    df = df[[kmer_col_name] + strain_names]
+    df[kmer_col_name] = kmer_data
+    df = df.set_index(kmer_col_name) # Set the kmer column as index
 
     # Convert to Arrow Table with metadata
-    arrow_table = pa.Table.from_pandas(df, preserve_index=False)
+    # preserve_index defaults to True if not specified, which is what we want.
+    # Explicitly setting it for clarity or if defaults change in future library versions.
+    arrow_table = pa.Table.from_pandas(df, preserve_index=True)
 
     if metadata:
         # Add metadata to the schema

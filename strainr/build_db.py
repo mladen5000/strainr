@@ -22,7 +22,6 @@ K-mer Strategy:
   a common choice for bacterial genomes balancing specificity and sensitivity.
 """
 
-import contextlib
 import logging
 import multiprocessing as mp
 import pathlib
@@ -78,25 +77,6 @@ except Exception as e:  # pragma: no cover - rust module optional
     logger.warning(
         f"Rust k-mer counter not available ({e}). Falling back to Python implementation."
     )
-
-# Specific import for the byte-sequence k-mer extractor
-_rust_extract_kmers_from_bytes_func = None
-_RUST_BYTES_PROCESSOR_AVAILABLE = False
-try:
-    from kmer_counter_rs import extract_kmers_rs as _rust_extract_kmers_from_bytes_func_temp
-    _rust_extract_kmers_from_bytes_func = _rust_extract_kmers_from_bytes_func_temp
-    _RUST_BYTES_PROCESSOR_AVAILABLE = True
-    logger.info(
-        "Successfully imported Rust k-mer counter for byte sequences (extract_kmers_rs). "
-        "This will be used in _extract_kmers_from_bytes if available."
-    )
-except ImportError as e:
-    logger.warning(
-        f"Rust k-mer counter for byte sequences (extract_kmers_rs) not available ({e}). "
-        "Python fallback will be used in _extract_kmers_from_bytes."
-    )
-    # _rust_extract_kmers_from_bytes_func remains None
-    # _RUST_BYTES_PROCESSOR_AVAILABLE remains False
 
 # --- Pydantic Model for CLI Arguments ---
 class BuildDBArgs(BaseModel):
@@ -421,195 +401,6 @@ class DatabaseBuilder:
 
         return genome_names
 
-    @staticmethod
-    def fast_kmers_numpy(seq: str, k: int) -> Set[bytes]:
-        """
-        Returns a set of unique k-mers as np.void blocks. Handles any sequence length.
-        """
-        seq = seq.upper()
-        arr = np.frombuffer(seq.encode("ascii"), dtype="S1")
-        n = arr.shape[0] - k + 1
-        if n <= 0:
-            return set()
-
-        windows = np.lib.stride_tricks.sliding_window_view(arr, window_shape=k)
-        void_windows = windows.view(np.dtype((np.void, k))).ravel()
-        return {vw.tobytes() for vw in void_windows}
-
-    def _py_reverse_complement_db(self, kmer_bytes: bytes) -> bytes:
-        """Computes the reverse complement of a DNA sequence."""
-        return kmer_bytes.translate(self.PY_RC_TRANSLATE_TABLE)[::-1]
-
-    def _extract_kmers_from_bytes(self, sequence_bytes: bytes, k: int) -> List[bytes]:
-        """
-        Extracts canonical k-mers from a sequence.
-
-        This method prioritizes using the Rust implementation (`kmer_counter_rs.extract_kmers_rs`)
-        if it's available (_extract_kmers_func is not None). The Rust function is expected
-        to return canonical k-mers and handle the `skip_n_kmers` logic internally via its
-        `perform_strict_dna_check` argument, which is passed from `_process_and_write_kmers_worker`.
-
-        If the Rust implementation is unavailable or fails, this method falls back to a
-        Python-based canonical k-mer extraction.
-
-        Args:
-            sequence_bytes: The DNA sequence as bytes.
-            k: The k-mer length.
-
-        Returns:
-            A list of canonical k-mers (bytes).
-        """
-        # Ensure sequence is uppercase before kmer extraction
-        # Rust implementation also expects uppercase, or handles it internally.
-        upper_sequence_bytes = sequence_bytes.upper()
-
-        # DEV NOTE / BIOINFORMATICS INTEGRITY & skip_n_kmers:
-        # 1. Canonical K-mers: The Rust k-mer extraction function (`kmer_counter_rs.extract_kmers_rs`)
-        #    is responsible for returning CANONICAL k-mers. This is vital for consistency
-        #    with downstream classification tools.
-        # 2. skip_n_kmers: The `skip_n_kmers` logic (handling k-mers with 'N' or other non-ACGT bases)
-        #    is primarily delegated to the Rust function via its `perform_strict_dna_check`
-        #    parameter. This parameter is set based on `self.args.skip_n_kmers` in the
-        #    `_process_and_write_kmers_worker` method, which calls this extraction logic.
-        #    The Python-side filter for 'N's on `kmers_from_rust` below is a secondary check.
-        #    If the Rust function *guarantees* that `perform_strict_dna_check=True` means
-        #    no k-mers with 'N' (or any non-ACGT) are returned, this Python filter is redundant
-        #    for the Rust path. Current tests suggest consistency, but this is an area
-        #    to watch if Rust library behavior changes.
-
-        # Use the byte-sequence Rust k-mer extractor if available
-        if _RUST_BYTES_PROCESSOR_AVAILABLE and _rust_extract_kmers_from_bytes_func is not None:
-            try:
-                # The Rust function extract_kmers_rs expects (sequence_bytes, k, perform_strict_dna_check)
-                # perform_strict_dna_check corresponds to self.args.skip_n_kmers
-                # It already returns canonical k-mers and handles N-filtering internally.
-                kmers_from_rust = _rust_extract_kmers_from_bytes_func(
-                    upper_sequence_bytes, k, self.args.skip_n_kmers
-                )
-                return kmers_from_rust
-            except Exception as e:  # pragma: no cover - runtime fallback
-                logger.error(
-                    f"Rust k-mer extraction from bytes failed: {e}. "
-                    "Falling back to Python canonical implementation for this sequence."
-                )
-        # Python fallback (if Rust for bytes not available or failed): extract canonical k-mers
-        kmers_list: List[bytes] = []
-        if len(upper_sequence_bytes) < k:
-            return kmers_list
-
-        with memoryview(upper_sequence_bytes) as seq_view:
-            for i in range(len(upper_sequence_bytes) - k + 1):
-                kmer_candidate_bytes = seq_view[
-                    i : i + k
-                ].tobytes()  # kmer candidate before canonicalization
-
-                if (
-                    getattr(self.args, "skip_n_kmers", False)
-                    and b"N" in kmer_candidate_bytes
-                ):
-                    continue
-
-                rc_kmer = self._py_reverse_complement_db(kmer_candidate_bytes)
-                kmers_list.append(
-                    kmer_candidate_bytes if kmer_candidate_bytes <= rc_kmer else rc_kmer
-                )
-
-        return kmers_list
-
-    def _process_single_fasta_for_kmers(
-        self,
-        genome_file_info: Tuple[
-            pathlib.Path, str, int, Optional[pathlib.Path]
-        ],  # (file_path, strain_name, strain_idx, optional_output_path)
-        kmer_length: int,  # This comes from self.args.kmerlen
-        skip_n_kmers: bool,  # This comes from self.args.skip_n_kmers
-        num_total_strains: Optional[int] = None,
-    ) -> Union[
-        Tuple[str, int, Set[bytes]],
-        Tuple[str, int, int, pathlib.Path],
-        Tuple[str, int, pathlib.Path],
-    ]:
-        """
-        Extracts k-mers from a single FASTA file.
-
-        Args:
-            genome_file_info: Tuple containing the path to the FASTA file,
-                the assigned strain name, its column index and optionally a
-                path where k-mers should be written.
-            kmer_length: The length of k-mers to extract.
-            skip_n_kmers: Boolean, whether to skip k-mers with 'N'.
-
-        Returns:
-            * ``(strain_name, strain_idx, strain_kmers_set)`` when no output
-              path is provided.
-            * ``(strain_name, strain_idx, written_kmer_count, output_path)`` or
-              ``(strain_name, written_kmer_count, output_path)`` when an output
-              path is provided depending on whether ``num_total_strains`` is
-              given.
-        """
-        genome_file, strain_name, strain_idx, output_path = genome_file_info
-        logger.debug(
-            f"Processing {genome_file} for strain '{strain_name}' (index {strain_idx})."
-        )
-
-        strain_kmers: Set[bytes] = set()
-        written_kmer_count = 0
-        try:
-            with open_file_transparently(genome_file) as f_handle:
-                if output_path:
-                    out_f = open(output_path, "w", encoding="utf-8")
-                else:
-                    out_f = None
-                with out_f if out_f else contextlib.nullcontext():
-                    for record in SeqIO.parse(f_handle, "fasta"):
-                        if record is None:
-                            continue
-                        if record.seq is None:
-                            continue
-                        seq_str = str(record.seq).upper()
-                        for i in range(0, len(seq_str) - kmer_length + 1):
-                            kmer = seq_str[i : i + kmer_length]
-                            if skip_n_kmers and "N" in kmer:
-                                continue
-                            if out_f:
-                                out_f.write(f"{kmer}\n")
-                                written_kmer_count += 1
-                            else:
-                                strain_kmers.add(kmer.encode("utf-8"))
-
-        except Exception as e:
-            logger.error(
-                f"Error processing FASTA file {genome_file} for strain {strain_name}: {e}"
-            )
-
-            if output_path:
-                return (
-                    strain_name,
-                    strain_idx,
-                    0,
-                    output_path,
-                )
-            return strain_name, strain_idx, set()
-
-        if output_path:
-            logger.debug(
-                f"Extracted {written_kmer_count} k-mers for strain '{strain_name}'."
-            )
-            if num_total_strains is not None:
-                return (
-                    strain_name,
-                    strain_idx,
-                    written_kmer_count,
-                    output_path,
-                )
-            return strain_name, written_kmer_count, output_path
-
-        logger.debug(
-            f"Extracted {len(strain_kmers)} unique k-mers for strain '{strain_name}'."
-        )
-
-        return strain_name, strain_idx, strain_kmers
-
     def _build_kmer_database_parallel(
         self, genome_files: List[pathlib.Path], strain_names: List[str]
     ) -> Optional[pathlib.Path]:
@@ -847,21 +638,6 @@ class DatabaseBuilder:
             logger.info(f"Cleaning up temporary directory: {temp_dir}")
             shutil.rmtree(temp_dir)
 
-    def _save_database_to_parquet(self, database_df: pd.DataFrame) -> None:
-        """
-        Saves the k-mer database DataFrame to a Parquet file.
-        """
-        output_path = self.base_path / (self.output_db_name + ".db.parquet")
-        logger.info(f"Saving k-mer database to (Parquet format): {output_path}")
-        try:
-            database_df.to_parquet(output_path, index=True)
-            logger.info("Database saved successfully to Parquet.")
-        except Exception as e:
-            logger.error(
-                f"Failed to save database to {output_path} (Parquet format): {e}"
-            )
-            raise
-
     def create_database(self) -> None:
         """
         Main public method to orchestrate the entire database creation process.
@@ -1066,24 +842,6 @@ class DatabaseBuilder:
                 )
 
         return kmers_list
-
-    def _process_and_write_kmers(
-        self, genome_file_info, kmer_length, temp_dir
-    ) -> pathlib.Path:
-        """
-        Legacy method - now redirects to static worker for consistency.
-        """
-        # Reconstruct task tuple for worker
-        genome_file, strain_name, strain_idx = genome_file_info[:3]
-        task_tuple = (
-            genome_file,
-            strain_name,
-            strain_idx,
-            kmer_length,  # kmer_length is passed directly
-            self.args.skip_n_kmers,  # skip_n_kmers from pydantic model
-            temp_dir,
-        )
-        return self._process_and_write_kmers_worker(task_tuple)
 
 
 # Typer application

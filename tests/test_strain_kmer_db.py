@@ -229,7 +229,8 @@ def test_skdb_init_kmer_length_inferred(
     captured = capsys.readouterr()
     # The specific log message about inference is not present, the main check is db.kmer_length
     # Ensure the summary print contains the kmer length, e.g.
-    assert f"- K-mer length: {default_kmer_length_skdb}" in captured.out
+    # Updated to match the new log format which includes "(final)"
+    assert f"- K-mer length (final): {default_kmer_length_skdb}" in captured.out
 
 
 @pytest.mark.parametrize("parquet_skdb_path", [{"kmer_type": "str"}], indirect=True)
