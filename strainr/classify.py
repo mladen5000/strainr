@@ -212,6 +212,8 @@ class SequenceFileProcessor:
         )
         if not isinstance(fwd_id, str):
             fwd_id = str(fwd_id)
+        # Normalize read ID
+        fwd_id = fwd_id.split(' ')[0].split('/')[0]
         fwd_seq_str = (
             str(getattr(fwd_record, "seq", ""))
             if hasattr(fwd_record, "seq")
@@ -241,7 +243,8 @@ class SequenceFileProcessor:
                     f"Reverse file ended before forward file at read {fwd_id}. Treating remaining as single-end."
                 )
                 rev_iter = None
-        yield fwd_id, fwd_seq_bytes, rev_seq_bytes
+        if fwd_seq_bytes: # Only yield if forward sequence is not empty
+            yield fwd_id, fwd_seq_bytes, rev_seq_bytes
 
     @staticmethod
     def parse_sequence_files(

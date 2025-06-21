@@ -74,15 +74,16 @@ class TestExtractKmerRs(unittest.TestCase):
         temp_fasta = self._create_temp_fasta_file([("seq1", "AGCTTTCA")])
         try:
             result = extract_kmer_rs(temp_fasta, 4, False)
-            # AGCT -> AGCT
-            # GCTT -> AAGC (canonical)
-            # CTTT -> AAAG (canonical)
-            # TTTC -> AAAG (canonical)
-            # TTCA -> TGAA (canonical)
+            # AGCT (rc AGCT) -> AGCT
+            # GCTT (rc AAGC) -> AAGC
+            # CTTT (rc AAAG) -> AAAG
+            # TTTC (rc GAAA) -> GAAA
+            # TTCA (rc TGAA) -> TGAA
             expected = {
                 b"AGCT": 1,
                 b"AAGC": 1,
-                b"AAAG": 2, # CTTT and TTTC both map to AAAG
+                b"AAAG": 1,
+                b"GAAA": 1,
                 b"TGAA": 1,
             }
             self.assertEqual(result, expected)
@@ -202,11 +203,14 @@ class TestExtractKmerRs(unittest.TestCase):
             # ANNA (k=3):
             # ANN (rc NNT) -> ANN (A < N)
             # NNA (rc TNN). Canonical of NNA and ANN. ANN is smaller (A vs N).
-            #   NNA vs ANN. N vs A. ANN is smaller.
-            #   So, for "NNA", its canonical is "ANN".
+            #   NNA vs ANN. N vs A. ANN is smaller. -> This logic was flawed.
+            #   Correct:
+            #   ANN (rc NNT) -> canonical is ANN
+            #   NNA (rc TNN) -> canonical is NNA
             expected = {
                 b"ACG": 2,
-                b"ANN": 2,
+                b"ANN": 1,
+                b"NNA": 1,
             }
             self.assertEqual(result, expected)
         finally:

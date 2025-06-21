@@ -253,17 +253,13 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         kmer_strain_df: pd.DataFrame,
         count_matrix: np.ndarray,
         kmer_type_is_str: bool,
+        current_k_len: int,
     ) -> None:
         """Populates the self.kmer_to_counts_map from the DataFrame and count matrix."""
         self.kmer_to_counts_map.clear()  # Ensure it's empty before populating
         skipped_kmers_count = 0
 
-        # self.kmer_length should be set (either from metadata, expected_kmer_length, or inferred)
-        # and validated by _infer_and_set_kmer_length before this method is called.
-        if self.kmer_length is None:
-            raise RuntimeError("K-mer length was not set before calling _populate_kmer_map.")
-
-        current_k_len = self.kmer_length # Should be an int now
+        # current_k_len is now passed directly
 
         for i, kmer_obj in enumerate(kmer_strain_df.index):
             # Validate type and encode if needed
@@ -293,7 +289,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 kmer_bytes = kmer_obj
 
             # Validate length
-            if len(kmer_bytes) != current_k_len:
+            if len(kmer_bytes) != current_k_len: # Ensure this uses the passed current_k_len
                 logger.warning(
                     f"K-mer '{kmer_obj}' (index {i}) has inconsistent length: {len(kmer_bytes)}. Expected {current_k_len}. Skipping."
                 )

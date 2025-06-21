@@ -3,8 +3,10 @@ Pytest unit tests for strainr.classify module.
 """
 import pytest
 import pathlib
+import numpy as np # Added numpy import
 from typing import List, Tuple, Generator
-from unittest.mock import patch, mock_open
+from collections import Counter # Added Counter import
+from unittest.mock import patch, mock_open, MagicMock
 
 from strainr.classify import SequenceFileProcessor, DEFAULT_CHUNK_SIZE
 from strainr.genomic_types import ReadId # Assuming ReadId is just str
