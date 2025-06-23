@@ -30,7 +30,7 @@ import shlex
 import subprocess
 import sys
 import gzip
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import groupby
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
@@ -104,6 +104,9 @@ class BuildDBArgs(BaseModel):
         False, description="Filter NCBI genomes for unique strain-level taxID."
     )
     skip_n_kmers: bool = Field(False, description="Exclude k-mers with 'N' bases.")
+    in_memory_processing: bool = Field(
+        False, description="Use in-memory k-mer processing instead of disk-based."
+    )
 
     @model_validator(mode="after")
     def check_genome_source(cls, values):
@@ -638,20 +641,176 @@ class DatabaseBuilder:
             logger.info(f"Cleaning up temporary directory: {temp_dir}")
             shutil.rmtree(temp_dir)
 
+    @staticmethod
+    def _extract_kmers_from_file(
+        genome_file: pathlib.Path, kmerlen: int, skip_n_kmers: bool, use_rust_if_available: bool
+    ) -> Set[bytes]:
+        """
+        Extracts canonical k-mers from a single genome FASTA/FASTA.gz file.
+        Chooses between Rust and Python implementation based on availability and arguments.
+        """
+        logger_func = logging.getLogger(__name__) # Use a local logger or pass one if static
+        kmers_set: Set[bytes] = set()
+
+        rust_available = _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func is not None
+        attempt_rust = use_rust_if_available and rust_available
+
+        processed_with_rust_successfully = False
+        if attempt_rust:
+            try:
+                # _extract_kmers_func is extract_kmer_rs(file_path, k, process_n_kmers)
+                # process_n_kmers is true if we WANT to process N-containing kmers (i.e., NOT skip them)
+                rust_kmers_map = _extract_kmers_func(
+                    str(genome_file), kmerlen, not skip_n_kmers
+                )
+                kmers_set.update(rust_kmers_map.keys())
+                processed_with_rust_successfully = True
+                logger_func.debug(f"Extracted {len(kmers_set)} unique k-mers from {genome_file} using Rust.")
+            except Exception as e:
+                logger_func.warning(
+                    f"Rust k-mer extraction failed for {genome_file}: {e}. "
+                    f"Falling back to Python for this file."
+                )
+
+        if not processed_with_rust_successfully:
+            if attempt_rust: # Log if this is a fallback
+                 logger_func.info(f"Executing Python fallback for {genome_file} due to Rust failure or Rust not being selected.")
+            else: # Log if Python was the primary choice
+                 logger_func.info(f"Using Python k-mer extraction for {genome_file}.")
+
+            try:
+                with open_file_transparently(genome_file) as f_handle:
+                    for record in SeqIO.parse(f_handle, "fasta"):
+                        if record and record.seq:
+                            seq_bytes = str(record.seq).encode("utf-8")
+                            kmers_from_record = (
+                                DatabaseBuilder._py_extract_canonical_kmers_static(
+                                    seq_bytes,
+                                    kmerlen,
+                                    skip_n_kmers,
+                                )
+                            )
+                            kmers_set.update(kmers_from_record)
+                logger_func.debug(f"Extracted {len(kmers_set)} unique k-mers (after Python processing) from {genome_file}.")
+            except Exception as e:
+                logger_func.error(f"Python k-mer extraction failed critically for {genome_file}: {e}", exc_info=True)
+                # Re-raise or handle as appropriate for the caller.
+                # For now, let the caller decide. If this helper is used by the worker,
+                # the worker might raise to stop its process. If used by in-memory, it might skip.
+                raise  # Or return an empty set / specific error indicator
+        return kmers_set
+
+    def _build_kmer_database_in_memory(
+        self, genome_files: List[pathlib.Path], strain_names: List[str]
+    ) -> Optional[pathlib.Path]:
+        """
+        Builds the k-mer database entirely in memory using defaultdict and NumPy arrays.
+        """
+        if not genome_files:
+            logger.warning("No genome files provided to build in-memory database.")
+            return None
+
+        if len(genome_files) != len(strain_names):
+            raise ValueError(
+                "Mismatch between number of genome files and strain names for in-memory build."
+            )
+
+        num_genomes = len(genome_files)
+        logger.info(
+            f"Starting in-memory k-mer database construction for {num_genomes} genomes."
+        )
+
+        # Initialize defaultdict: kmer (bytes) -> np.array (bool, size num_genomes)
+        kmer_dict: Dict[bytes, np.ndarray] = defaultdict(
+            lambda: np.zeros(num_genomes, dtype=bool)
+        )
+
+        # Determine if Rust should be attempted based on global availability
+        # The helper function `_extract_kmers_from_file` will also check availability
+        # but this top-level check can inform general logging.
+        can_attempt_rust = _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func is not None
+        if can_attempt_rust:
+            logger.info("Rust k-mer extractor is available and will be attempted for in-memory build.")
+        else:
+            logger.info("Rust k-mer extractor not available. Using Python for in-memory build.")
+
+        for i, (genome_file, strain_name) in tqdm(
+            enumerate(zip(genome_files, strain_names)),
+            total=num_genomes,
+            desc="Processing genomes (In-memory)",
+        ):
+            logger.debug(f"Processing {genome_file} for strain {strain_name} (index {i})")
+            try:
+                current_strain_kmers = DatabaseBuilder._extract_kmers_from_file(
+                    genome_file,
+                    self.args.kmerlen,
+                    self.args.skip_n_kmers,
+                    use_rust_if_available=True # Always try Rust if available globally
+                )
+
+                # Populate the main kmer_dict
+                for kmer_bytes in current_strain_kmers:
+                    kmer_dict[kmer_bytes][i] = True
+
+                logger.info(f"Processed {i+1}/{num_genomes}: {strain_name} - {len(current_strain_kmers)} unique kmers found and added to main dictionary.")
+
+            except Exception as e:
+                # The _extract_kmers_from_file method logs specifics, here we log the consequence.
+                logger.error(f"Critical error extracting k-mers from {genome_file} for strain {strain_name}. Skipping this file. Error: {e}", exc_info=True)
+                # Optionally, mark this strain's columns as all False or handle differently if needed,
+                # but for now, its k-mers simply won't be added.
+                continue # Skip to the next genome file
+
+        if not kmer_dict:
+            logger.warning("No k-mers found in any of the provided (and successfully processed) genomes.")
+            return None
+
+        logger.info(f"Total unique k-mers found across all genomes: {len(kmer_dict)}")
+
+        output_path = self.base_path / (self.output_db_name + ".db.parquet")
+        logger.info(f"Converting k-mer data to Parquet format at {output_path}")
+
+        # Prepare data for PyArrow Table
+        # This approach is more memory-efficient than creating intermediate lists of all k-mers/vectors
+        kmer_column_data = list(kmer_dict.keys()) # Still need all k-mers once for the column
+
+        # Strain columns: each is a list of booleans
+        strain_columns_pa_data = []
+        for strain_idx in range(num_genomes):
+            # For each strain, create its boolean column based on the presence vectors in kmer_dict
+            strain_col = [kmer_dict[kmer][strain_idx] for kmer in kmer_column_data]
+            strain_columns_pa_data.append(pa.array(strain_col, type=pa.bool_()))
+
+        pa_arrays = [pa.array(kmer_column_data, type=pa.binary())] + strain_columns_pa_data
+        pa_names = ["kmer"] + strain_names
+
+        # Define schema with metadata
+        schema_fields = [pa.field("kmer", pa.binary())] + [
+            pa.field(name, pa.bool_()) for name in strain_names
+        ]
+        custom_metadata = {
+            b"strainr_kmerlen": str(self.args.kmerlen).encode("utf-8"),
+            b"strainr_skip_n_kmers": str(self.args.skip_n_kmers).encode("utf-8"),
+        }
+        schema = pa.schema(schema_fields, metadata=custom_metadata)
+
+        try:
+            # If schema is provided, it defines the names and types.
+            # Do not pass pa_names separately if schema is passed.
+            table = pa.Table.from_arrays(pa_arrays, schema=schema)
+            pq.write_table(table, output_path)
+            logger.info(f"In-memory k-mer database successfully saved to {output_path}")
+        except Exception as e:
+            logger.error(f"Failed to write Parquet file for in-memory database: {e}", exc_info=True)
+            return None # Indicate failure
+
+        return output_path
+
     def create_database(self) -> None:
         """
         Main public method to orchestrate the entire database creation process.
         """
         logger.info("Starting k-mer database creation workflow.")
-
-        # Check for required external commands first
-        try:
-            check_external_commands(["sort", "cat", "find", "xargs", "touch"])
-            logger.info("External commands 'sort', 'cat', 'find', 'xargs', 'touch' found.")
-        except FileNotFoundError as e:
-            logger.error(f"Missing required external command: {e}")
-            # Depending on desired behavior, you might re-raise or sys.exit
-            raise  # Re-raise to stop execution if commands are critical
 
         genome_files, metadata_file_path = self._get_genome_file_list()
         if not genome_files:
@@ -669,7 +828,28 @@ class DatabaseBuilder:
 
         # This method now handles file creation and returns the path.
         # It no longer returns a DataFrame.
-        db_path = self._build_kmer_database_parallel(genome_files, strain_identifiers)
+        if self.args.in_memory_processing:
+            logger.info("Using in-memory k-mer database construction strategy.")
+            db_path = self._build_kmer_database_in_memory(
+                genome_files, strain_identifiers
+            )
+        else:
+            logger.info("Using disk-based (parallel) k-mer database construction strategy.")
+            # Check for external commands only if using the parallel disk-based method
+            try:
+                check_external_commands(["sort", "cat", "find", "xargs", "touch"])
+                logger.info("External commands for disk-based processing found.")
+            except FileNotFoundError as e:
+                logger.error(
+                    f"Missing required external command for disk-based processing: {e}. "
+                    "Consider using --in-memory-processing if system resources allow, "
+                    "or ensure the command is installed and in PATH."
+                )
+                raise # Re-raise to stop execution
+
+            db_path = self._build_kmer_database_parallel(
+                genome_files, strain_identifiers
+            )
 
         if not db_path or not db_path.exists():
             logger.error(
@@ -691,126 +871,62 @@ class DatabaseBuilder:
 
     @staticmethod
     def _process_and_write_kmers_worker(task):
-        logger = logging.getLogger(__name__)
-        logger.info(f"Worker starting for {task}")
+        # Ensure logger is available in static context
+        worker_logger = logging.getLogger(f"{__name__}._process_and_write_kmers_worker")
+
         genome_file, strain_name, strain_idx, kmer_length, skip_n_kmers, temp_dir = task
+        worker_logger.info(f"Worker starting for strain {strain_name} (index {strain_idx}), file {genome_file}")
 
-        # Initialize a local extractor
-        # _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func are globally defined
-        # We use _extract_kmers_func which is extract_kmer_rs (file path version) or None
+        try:
+            # Use the centralized k-mer extraction method.
+            # For workers in the parallel disk-based method, always try to use Rust if available.
+            extracted_kmers = DatabaseBuilder._extract_kmers_from_file(
+                genome_file,
+                kmer_length,
+                skip_n_kmers,
+                use_rust_if_available=True
+            )
+            worker_logger.info(f"Worker for strain {strain_name}: Successfully extracted {len(extracted_kmers)} k-mers.")
 
-        strain_kmers = set()
-        rust_processing_attempted = False
-        rust_succeeded = False
-
-        if _RUST_KMER_COUNTER_AVAILABLE and _extract_kmers_func is not None:
-            rust_processing_attempted = True
-            logger.debug(f"Attempting Rust k-mer extraction for entire file {genome_file}")
-            try:
-                # _extract_kmers_func is extract_kmer_rs(file_path, k, process_n_kmers)
-                # process_n_kmers is true if we WANT to process N-containing kmers (i.e., NOT skip them)
-                # So, process_n_kmers = not skip_n_kmers
-                rust_kmers_map = _extract_kmers_func(str(genome_file), kmer_length, not skip_n_kmers)
-
-                # The Rust function now handles N-kmer processing based on the new flag.
-                # The keys of rust_kmers_map are the k-mers.
-                # No longer update strain_kmers here for the Rust path.
-                logger.info(
-                    f"Successfully extracted {len(rust_kmers_map)} unique k-mers from {genome_file} using Rust."
-                )
-                rust_succeeded = True
-            except Exception as rust_exc: # pragma: no cover
-                logger.warning(
-                    f"Rust k-mer extraction failed for {genome_file}: {rust_exc}. "
-                    f"Falling back to Python implementation for the entire file."
-                )
-                # rust_succeeded remains False, Python path will be taken
-
-        # Python fallback path:
-        # This executes if Rust is not available, or if Rust processing was attempted but failed.
-        if not rust_succeeded:
-            if rust_processing_attempted:
-                logger.info(f"Executing Python fallback for {genome_file} due to Rust failure.")
-            else:
-                logger.info(f"Using Python k-mer extraction for {genome_file} (Rust not available/selected).")
-
-            try: # 12 spaces
-                from Bio import SeqIO # 16 spaces
-                from .utils import open_file_transparently # 16 spaces
-
-                with open_file_transparently(genome_file) as f_handle: # 16 spaces
-                    for record in SeqIO.parse(f_handle, "fasta"): # 20 spaces
-                        if record is None: # 24 spaces
-                            continue # 28 spaces
-                        if record.seq is None: # 24 spaces
-                            continue # 28 spaces
-                        seq_str = str(record.seq) # 24 spaces
-                        # _py_extract_canonical_kmers_static expects bytes
-                        seq_bytes = seq_str.encode("utf-8") # 24 spaces
-
-                        # Python implementation for this sequence
-                        kmers_from_record = ( # 24 spaces
-                            DatabaseBuilder._py_extract_canonical_kmers_static(
-                                seq_bytes, kmer_length, skip_n_kmers
-                            )
-                        )
-                        strain_kmers.update(kmers_from_record) # 24 spaces
-                logger.info(f"Extracted {len(strain_kmers)} k-mers from {genome_file} using Python.") # 16 spaces
-            except Exception as py_exc: # 12 spaces
-                logger.error(f"Python k-mer extraction failed for {genome_file}: {py_exc}") # 16 spaces
-                import traceback # 16 spaces
-                logger.error(traceback.format_exc()) # 16 spaces
-                # Raise exception so the main process knows this worker failed
-                raise # 16 spaces
+        except Exception as e:
+            worker_logger.error(
+                f"Worker for strain {strain_name} (file {genome_file}) failed during k-mer extraction: {e}",
+                exc_info=True
+            )
+            # Re-raise the exception. This will be caught by the main process if it's observing worker results,
+            # allowing for a fail-fast mechanism.
+            raise
 
         # Writing k-mers to file
         temp_file_path = temp_dir / f"{strain_idx}.part.txt"
-
-
-        kmer_source_iterator = None
-        num_kmers_to_write = 0
-
-        if rust_succeeded:
-            # This check implies rust_kmers_map is defined
-            logger.info(f"Worker for strain_idx {strain_idx}: Preparing to write {len(rust_kmers_map)} k-mers (from Rust) to {temp_file_path}")
-            kmer_source_iterator = iter(rust_kmers_map.keys()) # Iterate over keys from Rust result
-            num_kmers_to_write = len(rust_kmers_map)
-        else:
-            # This implies Python fallback was used, or Rust was not attempted.
-            # strain_kmers set should be populated by the Python logic.
-            logger.info(f"Worker for strain_idx {strain_idx}: Preparing to write {len(strain_kmers)} k-mers (from Python) to {temp_file_path}")
-            kmer_source_iterator = iter(strain_kmers)
-            num_kmers_to_write = len(strain_kmers)
-
-        batch_size = 10000  # Write 10,000 lines at a time
-        batch = []
-        total_written_count = 0
+        num_kmers_to_write = len(extracted_kmers)
 
         if num_kmers_to_write == 0:
-            logger.info(f"Worker for strain_idx {strain_idx}: No k-mers to write for {genome_file}.")
-            # Create an empty .part.txt file as the downstream process expects it
-            with open(temp_file_path, "w", encoding='utf-8') as f_out: # Ensure this uses the new open
-                pass # Creates an empty file
+            worker_logger.info(f"Worker for strain_idx {strain_idx} ({strain_name}): No k-mers to write for {genome_file}.")
+            with open(temp_file_path, "w", encoding='utf-8') as f_out:
+                pass
         else:
-            with open(temp_file_path, "w", encoding='utf-8') as f_out: # Note "w" and encoding
-                for kmer_bytes in kmer_source_iterator:
+            worker_logger.info(f"Worker for strain_idx {strain_idx} ({strain_name}): Preparing to write {num_kmers_to_write} k-mers to {temp_file_path}")
+            batch_size = 10000
+            batch = []
+            total_written_count = 0
+            with open(temp_file_path, "w", encoding='utf-8') as f_out:
+                for kmer_bytes in extracted_kmers:
                     line = f"{kmer_bytes.hex()}\t{strain_idx}\n"
-                    batch.append(line) # Line is already a string, no encoding needed here
-
+                    batch.append(line)
                     total_written_count += 1
                     if len(batch) >= batch_size:
                         f_out.writelines(batch)
                         batch = []
 
-                    # Log every 10 batches, and include total expected for context
-                    if total_written_count > 0 and total_written_count % (batch_size * 10) == 0:
-                        logger.info(f"Worker for strain_idx {strain_idx}: Written {total_written_count}/{num_kmers_to_write} k-mers so far to {temp_file_path}")
+                    if total_written_count > 0 and total_written_count % (batch_size * 50) == 0:
+                        worker_logger.debug(f"Worker for strain_idx {strain_idx} ({strain_name}): Written {total_written_count}/{num_kmers_to_write} k-mers so far to {temp_file_path}")
 
-                if batch: # Write any remaining lines
+                if batch:
                     f_out.writelines(batch)
 
-        logger.info(f"Worker for strain_idx {strain_idx}: Finished writing {total_written_count} k-mers to {temp_file_path}")
-        logger.info(f"Worker finished for {task}")
+        worker_logger.info(f"Worker for strain_idx {strain_idx} ({strain_name}): Finished writing {total_written_count} k-mers to {temp_file_path}")
+        worker_logger.info(f"Worker finished for task processing {genome_file.name} for strain {strain_name}")
         return temp_file_path
 
     @staticmethod
@@ -905,6 +1021,13 @@ def main(
     skip_n_kmers: Annotated[
         bool, typer.Option("--skip-n-kmers", help="Exclude k-mers with 'N' bases.")
     ] = False,
+    in_memory_processing: Annotated[
+        bool,
+        typer.Option(
+            "--in-memory-processing",
+            help="Use in-memory k-mer processing (faster but requires more RAM).",
+        ),
+    ] = False,
 ):
     """
     Main CLI entry point for building the StrainR database.
@@ -927,6 +1050,7 @@ def main(
             out=out,
             unique_taxid=unique_taxid,
             skip_n_kmers=skip_n_kmers,
+            in_memory_processing=in_memory_processing,
         )
 
         builder = DatabaseBuilder(args=build_args)
