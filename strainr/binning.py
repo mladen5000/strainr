@@ -1,6 +1,7 @@
 # Standard library imports
 import gzip  # For writing gzipped example files
 import pathlib
+import re  # For filename sanitization
 import traceback  # For more detailed error info in main example
 from typing import Optional, Dict, List, Set, Tuple, Union
 import multiprocessing as mp
@@ -243,9 +244,8 @@ def _extract_reads_for_strain(
     # The minimal docstring and the first parameter/path validation block have been removed as requested.
     # The more complete docstring and validation block below are retained.
 
-    safe_strain_filename = (
-        strain_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    )
+    # Sanitize strain name for use in filename - only allow alphanumeric, underscore, and hyphen
+    safe_strain_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', strain_name)
     fastq_files_to_process: List[Tuple[pathlib.Path, str]] = [
         (forward_fastq_path, "R1")
     ]
