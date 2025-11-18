@@ -217,29 +217,3 @@ def extract_kmers_from_sequence(
         # kmer_list[i] = sequence_view[i : i + kmer_length].tobytes() # If pre-allocated
 
     return kmer_list
-
-
-# Alternative optimized implementation (commented out as requested in original file)
-# def extract_kmers_optimized(sequence: GenomicSequence, kmer_length: int = 31) -> Generator[bytes, None, None]:
-#     """
-#     Generator-based k-mer extraction for memory efficiency with large sequences.
-#
-#     This alternative implementation uses a generator to avoid storing all k-mers
-#     in memory simultaneously, which is beneficial for very long sequences.
-#     """
-#     if not isinstance(sequence, GenomicSequence):
-#         raise TypeError(f"Input 'sequence' must be a GenomicSequence object, got {type(sequence)}.")
-#     if not isinstance(kmer_length, int):
-#         raise TypeError(f"kmer_length must be an integer, got {type(kmer_length)}.")
-#     if kmer_length <= 0:
-#         raise ValueError(f"K-mer length must be positive, got {kmer_length}.")
-#
-#     sequence_len = len(sequence.sequence_data)
-#     if kmer_length > sequence_len:
-#         raise ValueError(f"K-mer length ({kmer_length}) cannot exceed sequence length ({sequence_len})")
-#
-#     num_kmers = sequence_len - kmer_length + 1
-#     sequence_view = memoryview(sequence.sequence_data)
-#
-#     for i in range(num_kmers):
-#         yield sequence_view[i:i + kmer_length].tobytes()

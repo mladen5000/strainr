@@ -88,18 +88,6 @@ class KmerExtractor:
                 f"Error importing Rust k-mer counter: {e}. Using Python fallback."
             )
 
-    # @staticmethod
-    # def _py_reverse_complement(dna_sequence: bytes) -> bytes:
-    #     """Computes the reverse complement of a DNA sequence."""
-    #     complement_map = {
-    #         ord("A"): ord("T"),
-    #         ord("T"): ord("A"),
-    #         ord("C"): ord("G"),
-    #         ord("G"): ord("C"),
-    #         ord("N"): ord("N"),
-    #     }
-    #     return bytes(complement_map.get(base, base) for base in reversed(dna_sequence))
-
     _RC_TABLE = bytes.maketrans(b"ACGTacgt", b"TGCAtgca")
 
     @staticmethod
@@ -404,13 +392,6 @@ class CliArgs(BaseModel):
                 raise ValueError("Number of forward and reverse read files must match.")
         return self
 
-    # __init__ is not needed for Pydantic models unless custom logic beyond validation is required at instantiation.
-    # Pydantic handles initialization from kwargs automatically.
-    # def __init__(self, **data):
-    # super().__init__() # This is incorrect for Pydantic V2. Use super().__init__(**data) if overriding.
-    # For Pydantic, usually no custom __init__ is needed if only using field definitions and validators.
-    # If it was `super().__init__(**data)` it would be fine, but it's not needed here.
-
 
 class KmerClassificationWorkflow:
     """Orchestrates the k-mer based strain classification workflow."""
@@ -466,12 +447,7 @@ class KmerClassificationWorkflow:
             kmers_rev = KMER_EXTRACTOR.extract_kmers(rev_seq_bytes, k_len, skip_n)
             all_kmers.update(kmers_rev)
 
-            # Count strain hits
-            # No need to check self.database is None again here, already checked.
-            # if self.database is None:
-            raise RuntimeError(
-                "Database is not initialized before accessing its attributes."
-            )
+        # Count strain hits
         strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
         for kmer_bytes in all_kmers:
             if self.database and hasattr(self.database, "get_strain_counts_for_kmer"):

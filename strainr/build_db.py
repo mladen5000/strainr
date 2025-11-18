@@ -66,8 +66,6 @@ try:
 
     _extract_kmers_func = extract_kmer_rs
     _RUST_KMER_COUNTER_AVAILABLE = True
-    # _extract_kmers_func = None
-    # _RUST_KMER_COUNTER_AVAILABLE = False
     logger.info(
         "Successfully imported Rust k-mer counter. Using Rust implementation for k-mer extraction."
     )
@@ -510,48 +508,58 @@ class DatabaseBuilder:
 
             logger.info(f"Concatenating temporary part files into {all_parts_file}...")
             part_files = list(temp_dir.glob("*.part.txt"))
-            if len(part_files) > 100:  # For many files, use find + cat (robustly)
-                # Using print0 and xargs -0 for robustness with filenames containing special characters or spaces.
-                # The '--' ensures that even if a filename starts with '-', cat doesn't interpret it as an option.
-                concat_command = f"find {temp_dir} -name '*.part.txt' -print0 | xargs -0 cat -- > {all_parts_file}"
-            else:  # For fewer files, direct cat
-                if not part_files: # Handle case where there are no files to avoid error with empty command
-                    concat_command = f"touch {all_parts_file}" # Create an empty file if no parts exist
-                else:
-                    part_paths_str = " ".join(shlex.quote(str(f)) for f in part_files) # Use shlex.quote for safety
-                    concat_command = f"cat {part_paths_str} > {all_parts_file}"
 
-            logger.info(f"Executing concatenation command: {concat_command}")
-            concat_process = subprocess.run(
-                concat_command, shell=True, capture_output=True, text=True
-            )
-            if concat_process.returncode != 0:
-                logger.error(
-                    f"Concatenation command ('{concat_command}') failed with exit code {concat_process.returncode}."
-                )
-                logger.error(f"Stdout: {concat_process.stdout.strip()}")
-                logger.error(f"Stderr: {concat_process.stderr.strip()}")
-                raise RuntimeError(f"Concatenation of k-mer part files failed. Command: {concat_command}")
-            logger.info(f"Concatenation command finished with return code {concat_process.returncode}.")
-            logger.info("Concatenation completed successfully.")
+            if not part_files:
+                # Handle case where there are no files - create empty file
+                logger.info("No part files found, creating empty output file")
+                all_parts_file.touch()
+                concat_process = None  # No process to check
+            else:
+                # Use Python to concatenate files instead of shell commands for security
+                logger.info(f"Concatenating {len(part_files)} part files...")
+                try:
+                    with open(all_parts_file, 'wb') as outfile:
+                        for part_file in part_files:
+                            with open(part_file, 'rb') as infile:
+                                shutil.copyfileobj(infile, outfile)
+                    concat_process = type('obj', (object,), {'returncode': 0})()  # Mock success
+                    logger.info("Concatenation completed successfully.")
+                except Exception as e:
+                    logger.error(f"Concatenation of k-mer part files failed: {e}")
+                    raise RuntimeError(f"Concatenation of k-mer part files failed: {e}")
 
             logger.info("Optimized sorting all k-mer parts on disk (parallel sort)...")
             # Use parallel sort with memory buffer. Compression is removed as inputs are plain text.
-            sort_command = (
-                f"LC_ALL=C sort -k1,1 --parallel={self.args.procs} "
-                f"-S 2G {all_parts_file} -o {sorted_parts_file}"
-            )
-            logger.info(f"Executing sort command: {sort_command}")
+            # Validate procs is a positive integer for security
+            try:
+                num_procs = int(self.args.procs)
+                if num_procs < 1:
+                    num_procs = 1
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid procs value '{self.args.procs}', using 1")
+                num_procs = 1
+
+            # Use subprocess.run with argument list instead of shell=True for security
+            sort_cmd = [
+                'sort',
+                '-k1,1',
+                f'--parallel={num_procs}',
+                '-S', '2G',
+                str(all_parts_file),
+                '-o', str(sorted_parts_file)
+            ]
+            logger.info(f"Executing sort command: {' '.join(sort_cmd)}")
+            env = {'LC_ALL': 'C'}
             sort_process = subprocess.run(
-                sort_command, shell=True, capture_output=True, text=True
+                sort_cmd, capture_output=True, text=True, env=env
             )
             if sort_process.returncode != 0:
                 logger.error(
-                    f"Sort command ('{sort_command}') failed with exit code {sort_process.returncode}."
+                    f"Sort command failed with exit code {sort_process.returncode}."
                 )
                 logger.error(f"Stdout: {sort_process.stdout.strip()}")
                 logger.error(f"Stderr: {sort_process.stderr.strip()}")
-                raise RuntimeError(f"Disk-based sort command failed. Command: {sort_command}")
+                raise RuntimeError(f"Disk-based sort command failed.")
             logger.info(f"Sort command finished with return code {sort_process.returncode}.")
             logger.info("Sort phase completed.")
 
