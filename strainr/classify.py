@@ -14,7 +14,7 @@ import multiprocessing as mp
 import pathlib
 import pickle
 import sys
-from typing import Callable, Generator, List, Optional, Set, TextIO, Tuple, Union
+from typing import Callable, Generator, Optional, TextIO, Union
 
 import numpy as np
 import pandas as pd
@@ -42,11 +42,20 @@ from .output import AbundanceCalculator
 from .utils import _get_sample_name
 
 # Type aliases for better readability
-ReadHitResults = List[Tuple[ReadId, CountVector]]
+ReadHitResults = list[tuple[ReadId, CountVector]]
 
 # Global constants
+# DEFAULT_CHUNK_SIZE: Number of reads to process in each chunk for parallel processing.
+# Larger values use more memory but reduce overhead; smaller values increase parallelism.
+# 10,000 reads provides good balance for typical FASTQ files (~2-5MB per chunk).
 DEFAULT_CHUNK_SIZE = 10000
+
+# DEFAULT_NUM_PROCESSES: Default number of parallel worker processes.
+# Set to 4 as a conservative default that works on most systems.
 DEFAULT_NUM_PROCESSES = 4
+
+# DEFAULT_ABUNDANCE_THRESHOLD: Minimum relative abundance to report a strain (0.1%).
+# Strains below this threshold are filtered out to reduce noise in results.
 DEFAULT_ABUNDANCE_THRESHOLD = 0.001
 
 
@@ -97,7 +106,7 @@ class KmerExtractor:
 
     def _py_extract_canonical_kmers(
         self, sequence: bytes, k: int, skip_n_kmers: bool
-    ) -> List[bytes]:
+    ) -> list[bytes]:
         """
         Extracts canonical k-mers from a DNA sequence using Python.
         A k-mer is canonical if it's lexicographically smaller than its reverse complement.
@@ -106,7 +115,7 @@ class KmerExtractor:
         if k <= 0 or not sequence or len(sequence) < k:
             return []
 
-        kmers: List[bytes] = []
+        kmers: list[bytes] = []
         for i in range(len(sequence) - k + 1):
             kmer = sequence[i : i + k]
             if skip_n_kmers and b"N" in kmer:  # Check for 'N' before reverse complement
@@ -117,7 +126,7 @@ class KmerExtractor:
 
     def extract_kmers(
         self, sequence_bytes: bytes, k: int, skip_n_kmers: bool
-    ) -> List[bytes]:
+    ) -> list[bytes]:
         """Extract k-mers using the configured implementation."""
         if not sequence_bytes or len(sequence_bytes) < k:
             return []
@@ -146,7 +155,10 @@ class KmerExtractor:
                     f"Error during k-mer extraction: {te}"
                 )
                 return []
-        except Exception as e:
+        except (ValueError, MemoryError, RuntimeError) as e:
+            # ValueError: Invalid sequence data
+            # MemoryError: Sequence too large
+            # RuntimeError: Issues with extraction logic
             logging.getLogger(__name__).error(f"Error during k-mer extraction: {e}")
             return []
 
@@ -185,7 +197,7 @@ class SequenceFileProcessor:
     @staticmethod
     def _process_read_pair(
         fwd_record, rev_iter, logger
-    ) -> Generator[Tuple[str, bytes, bytes], None, None]:
+    ) -> Generator[tuple[str, bytes, bytes], None, None]:
         """Processes a forward read and its corresponding reverse read."""
         if fwd_record is None:
             return
@@ -272,7 +284,7 @@ class SequenceFileProcessor:
 
         with SequenceFileProcessor.open_file_handle(fwd_reads_path) as fwd_fh:
             rev_fh: Optional[TextIO] = None
-            chunk: List[Tuple[ReadId, bytes, bytes]] = []
+            chunk: list[tuple[ReadId, bytes, bytes]] = []
             read_counter = 0
 
             if rev_reads_path:
@@ -314,10 +326,10 @@ class SequenceFileProcessor:
 class CliArgs(BaseModel):
     """Pydantic model for command-line argument validation and management."""
 
-    input_forward: List[pathlib.Path] = Field(
+    input_forward: list[pathlib.Path] = Field(
         description="Input forward read file(s) (FASTA/FASTQ, possibly gzipped)."
     )
-    input_reverse: Optional[List[pathlib.Path]] = Field(
+    input_reverse: Optional[list[pathlib.Path]] = Field(
         default=None,
         description="Optional input reverse read file(s) for paired-end data.",
     )
@@ -405,6 +417,12 @@ class KmerClassificationWorkflow:
 
     def _initialize_database(self) -> None:
         """Loads and initializes the StrainKmerDatabase."""
+        # Validate database path exists before attempting to load
+        if not self.args.db_path.exists():
+            raise FileNotFoundError(f"Database file not found: {self.args.db_path}")
+        if not self.args.db_path.is_file():
+            raise ValueError(f"Database path is not a file: {self.args.db_path}")
+
         self.logger.info(f"Loading k-mer database from: {self.args.db_path}")
         try:
             self.database = StrainKmerDatabase(self.args.db_path)
@@ -418,14 +436,14 @@ class KmerClassificationWorkflow:
             raise
 
     def _count_kmers_for_read(
-        self, record_tuple: Tuple[ReadId, bytes, bytes]
-    ) -> Tuple[ReadId, CountVector]:
+        self, record_tuple: tuple[ReadId, bytes, bytes]
+    ) -> tuple[ReadId, CountVector]:
         """Processes a single read to count k-mer occurrences against the database."""
         if self.database is None:
             raise RuntimeError("Database not initialized.")
 
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
-        all_kmers: Set[bytes] = set()
+        all_kmers: set[bytes] = set()
 
         if self.database is None:  # Should not happen if workflow is correct
             raise RuntimeError("Database not initialized in _count_kmers_for_read.")
@@ -484,9 +502,9 @@ class KmerClassificationWorkflow:
             fwd_reads_path, rev_reads_path, chunk_size=self.args.chunk_size
         )
 
-        accumulated_clear_assignments: Dict[ReadId, int] = {}
-        accumulated_no_hit_ids: List[ReadId] = []
-        ambiguous_hit_files: List[pathlib.Path] = []
+        accumulated_clear_assignments: dict[ReadId, int] = {}
+        accumulated_no_hit_ids: list[ReadId] = []
+        ambiguous_hit_files: list[pathlib.Path] = []
 
         temp_ambiguous_dir = self.args.output_dir / "temp_ambiguous_chunks"
         temp_ambiguous_dir.mkdir(parents=True, exist_ok=True)

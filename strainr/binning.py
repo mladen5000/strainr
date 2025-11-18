@@ -234,6 +234,7 @@ def _extract_reads_for_strain(
         reverse_fastq_path: Path to the reverse (R2) FASTQ file (optional).
         output_bin_dir: Directory where binned FASTQ files will be written.
     """
+    # Validate argument types
     if (
         not isinstance(forward_fastq_path, pathlib.Path)
         or (reverse_fastq_path and not isinstance(reverse_fastq_path, pathlib.Path))
@@ -241,8 +242,19 @@ def _extract_reads_for_strain(
     ):
         raise TypeError("All path arguments must be pathlib.Path objects.")
 
-    # The minimal docstring and the first parameter/path validation block have been removed as requested.
-    # The more complete docstring and validation block below are retained.
+    # Validate forward FASTQ file exists
+    if not forward_fastq_path.exists():
+        raise FileNotFoundError(f"Forward FASTQ file not found: {forward_fastq_path}")
+    if not forward_fastq_path.is_file():
+        raise ValueError(f"Forward FASTQ path is not a file: {forward_fastq_path}")
+
+    # Validate strain name is not empty
+    if not strain_name or not strain_name.strip():
+        raise ValueError("Strain name cannot be empty")
+
+    # Validate read_ids is not empty
+    if not read_ids_for_strain:
+        raise ValueError(f"No read IDs provided for strain: {strain_name}")
 
     # Sanitize strain name for use in filename - only allow alphanumeric, underscore, and hyphen
     safe_strain_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', strain_name)

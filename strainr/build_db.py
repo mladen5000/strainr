@@ -368,7 +368,7 @@ class DatabaseBuilder:
                         f"'assembly_accession' column not found in {metadata_file_path}. Cannot use it for name generation effectively."
                     )
                     metadata_df = None
-            except Exception as e:
+            except (FileNotFoundError, pd.errors.ParserError, KeyError) as e:
                 logger.error(
                     f"Error reading metadata file {metadata_file_path}: {e}. Proceeding with filenames."
                 )
@@ -583,7 +583,10 @@ class DatabaseBuilder:
             logger.info(f"Parquet schema metadata set with: {custom_metadata}")
 
             # Batch processing for much better performance
-            BATCH_SIZE = 10000  # Process 10k k-mers at a time
+            # BATCH_SIZE: Number of k-mers to accumulate before writing to Parquet.
+            # Larger batches improve write performance but use more memory.
+            # 10,000 k-mers ≈ 1-2MB memory overhead, good balance for most systems.
+            BATCH_SIZE = 10000
             batch_data = {field.name: [] for field in schema_fields}
 
             with pq.ParquetWriter(output_path, schema) as writer:
@@ -879,6 +882,26 @@ class DatabaseBuilder:
 
     @staticmethod
     def _process_and_write_kmers_worker(task):
+        """
+        Worker function for parallel k-mer extraction and writing.
+
+        Extracts canonical k-mers from a single genome file and writes them to a
+        temporary part file. This function is designed to be called in parallel
+        by multiprocessing workers.
+
+        Args:
+            task: Tuple containing (genome_file, strain_name, strain_idx, kmer_length,
+                  skip_n_kmers, temp_dir)
+                - genome_file (Path): Path to the genome FASTA file
+                - strain_name (str): Name of the strain
+                - strain_idx (int): Index of the strain in the database
+                - kmer_length (int): Length of k-mers to extract
+                - skip_n_kmers (bool): Whether to skip k-mers containing 'N'
+                - temp_dir (Path): Directory to write temporary k-mer part files
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         # Ensure logger is available in static context
         worker_logger = logging.getLogger(f"{__name__}._process_and_write_kmers_worker")
 
