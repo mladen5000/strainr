@@ -80,6 +80,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         self.data_derived_kmer_length: Optional[int] = None # Inferred from actual data in Parquet
 
         self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {}
+        self.kmer_specificity_map: Dict[bytes, int] = {}  # Track how many strains each k-mer appears in
         self.strain_names: List[str] = []
         self.num_strains: int = 0
         self.num_kmers: int = 0
@@ -297,8 +298,23 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 continue
 
             self.kmer_to_counts_map[kmer_bytes] = count_matrix[i]
+            # Calculate k-mer specificity (number of strains this k-mer appears in)
+            # Higher specificity = appears in more strains = less discriminative
+            self.kmer_specificity_map[kmer_bytes] = int(np.count_nonzero(count_matrix[i]))
 
         self.num_kmers = len(self.kmer_to_counts_map)
+
+        # Log k-mer specificity statistics for scientific insight
+        if self.kmer_specificity_map:
+            specificity_values = list(self.kmer_specificity_map.values())
+            unique_to_one = sum(1 for s in specificity_values if s == 1)
+            shared_by_all = sum(1 for s in specificity_values if s == self.num_strains)
+            logger.info(
+                f"K-mer specificity analysis:\n"
+                f" - Unique to single strain: {unique_to_one} ({100*unique_to_one/self.num_kmers:.1f}%)\n"
+                f" - Shared by all strains: {shared_by_all} ({100*shared_by_all/self.num_kmers:.1f}%)\n"
+                f" - Average strain count per k-mer: {np.mean(specificity_values):.2f}"
+            )
 
         if (
             self.num_kmers == 0
@@ -380,6 +396,23 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
         return self.kmer_to_counts_map.get(
             kmer
         )  # A NumPy array (np.ndarray[np.uint8]) of counts for each strain if the k-mer is found, otherwise None.
+
+    def get_kmer_specificity(self, kmer: bytes) -> Optional[int]:
+        """
+        Get the specificity of a k-mer (how many strains it appears in).
+
+        A k-mer with specificity=1 is unique to one strain (highly discriminative).
+        A k-mer with specificity=num_strains appears in all strains (not discriminative).
+
+        Args:
+            kmer: The k-mer (bytes) to query.
+
+        Returns:
+            Number of strains this k-mer appears in, or None if k-mer not in database.
+        """
+        if not isinstance(kmer, bytes):
+            return None
+        return self.kmer_specificity_map.get(kmer)
 
     def get_database_stats(self) -> Dict[str, Any]:
         """
