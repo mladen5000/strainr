@@ -272,3 +272,66 @@ class AbundanceCalculator:
             report_lines.append(f"{strain}: {abundance * 100:.2f}%")
 
         return "\n".join(report_lines)
+
+
+def calculate_assignment_confidence(
+    strain_counts: "np.ndarray", kmer_specificity_scores: List[int]
+) -> float:
+    """
+    Calculate statistical confidence score for a strain assignment.
+
+    Confidence is based on:
+    1. Number of unique k-mers supporting the assignment
+    2. Specificity of those k-mers (strain-unique k-mers = high confidence)
+    3. Relative strength vs. other strains
+
+    Args:
+        strain_counts: Array of k-mer hit counts per strain
+        kmer_specificity_scores: Specificity of each k-mer that was observed
+                                 (1 = unique to one strain, higher = less specific)
+
+    Returns:
+        Confidence score between 0.0 (low) and 1.0 (high)
+
+    Scientific rationale:
+    - Assignments supported by many strain-unique k-mers are highly confident
+    - Assignments based only on k-mers shared across many strains are less confident
+    - This helps identify ambiguous/uncertain classifications
+    """
+    import numpy as np
+
+    if len(strain_counts) == 0 or np.sum(strain_counts) == 0:
+        return 0.0  # No evidence
+
+    # Get the maximum strain count (winning strain)
+    max_count = np.max(strain_counts)
+    if max_count == 0:
+        return 0.0
+
+    # Factor 1: Relative strength (how much better than 2nd place?)
+    sorted_counts = np.sort(strain_counts)[::-1]
+    second_best = sorted_counts[1] if len(sorted_counts) > 1 else 0
+    relative_strength = (max_count - second_best) / max_count if max_count > 0 else 0
+
+    # Factor 2: K-mer specificity (prefer strain-unique k-mers)
+    if kmer_specificity_scores:
+        avg_specificity = np.mean(kmer_specificity_scores)
+        # Normalize: specificity=1 (unique) gives 1.0, higher values give lower scores
+        # Using inverse: 1/avg_specificity, capped at 1.0
+        specificity_score = min(1.0, 1.0 / avg_specificity) if avg_specificity > 0 else 0
+    else:
+        specificity_score = 0.5  # Unknown, assume moderate
+
+    # Factor 3: Number of supporting k-mers (more evidence = higher confidence)
+    # Log-scale normalization: 10 k-mers = ~0.5, 100 k-mers = ~0.67, 1000 k-mers = ~0.75
+    num_kmers = max_count
+    evidence_score = min(1.0, np.log10(num_kmers + 1) / 3.0)
+
+    # Combined confidence (weighted average)
+    confidence = (
+        0.4 * relative_strength +
+        0.4 * specificity_score +
+        0.2 * evidence_score
+    )
+
+    return float(np.clip(confidence, 0.0, 1.0))

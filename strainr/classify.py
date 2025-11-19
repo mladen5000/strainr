@@ -14,7 +14,7 @@ import multiprocessing as mp
 import pathlib
 import pickle
 import sys
-from typing import Callable, Generator, List, Optional, Set, TextIO, Tuple, Union
+from typing import Callable, Generator, Optional, TextIO, Union
 
 import numpy as np
 import pandas as pd
@@ -42,11 +42,20 @@ from .output import AbundanceCalculator
 from .utils import _get_sample_name
 
 # Type aliases for better readability
-ReadHitResults = List[Tuple[ReadId, CountVector]]
+ReadHitResults = list[tuple[ReadId, CountVector]]
 
 # Global constants
+# DEFAULT_CHUNK_SIZE: Number of reads to process in each chunk for parallel processing.
+# Larger values use more memory but reduce overhead; smaller values increase parallelism.
+# 10,000 reads provides good balance for typical FASTQ files (~2-5MB per chunk).
 DEFAULT_CHUNK_SIZE = 10000
+
+# DEFAULT_NUM_PROCESSES: Default number of parallel worker processes.
+# Set to 4 as a conservative default that works on most systems.
 DEFAULT_NUM_PROCESSES = 4
+
+# DEFAULT_ABUNDANCE_THRESHOLD: Minimum relative abundance to report a strain (0.1%).
+# Strains below this threshold are filtered out to reduce noise in results.
 DEFAULT_ABUNDANCE_THRESHOLD = 0.001
 
 
@@ -97,7 +106,7 @@ class KmerExtractor:
 
     def _py_extract_canonical_kmers(
         self, sequence: bytes, k: int, skip_n_kmers: bool
-    ) -> List[bytes]:
+    ) -> list[bytes]:
         """
         Extracts canonical k-mers from a DNA sequence using Python.
         A k-mer is canonical if it's lexicographically smaller than its reverse complement.
@@ -106,7 +115,7 @@ class KmerExtractor:
         if k <= 0 or not sequence or len(sequence) < k:
             return []
 
-        kmers: List[bytes] = []
+        kmers: list[bytes] = []
         for i in range(len(sequence) - k + 1):
             kmer = sequence[i : i + k]
             if skip_n_kmers and b"N" in kmer:  # Check for 'N' before reverse complement
@@ -115,9 +124,61 @@ class KmerExtractor:
             kmers.append(kmer if kmer <= rc_kmer else rc_kmer)
         return kmers
 
+    def extract_kmers_with_quality(
+        self, sequence: bytes, quality_scores: Optional[str], k: int,
+        skip_n_kmers: bool, min_quality: int = 20
+    ) -> list[bytes]:
+        """
+        Extract k-mers with quality filtering for FASTQ data.
+
+        Only extracts k-mers where ALL bases meet the minimum quality threshold.
+        This is scientifically important because low-quality bases can cause
+        false k-mer matches and incorrect strain assignments.
+
+        Args:
+            sequence: DNA sequence as bytes
+            quality_scores: Phred quality string (ASCII encoded), or None for FASTA
+            k: K-mer length
+            skip_n_kmers: Whether to skip k-mers containing 'N'
+            min_quality: Minimum Phred quality score (default 20 = 99% accuracy)
+
+        Returns:
+            List of canonical k-mers passing quality filters
+        """
+        if not sequence or len(sequence) < k:
+            return []
+
+        # If no quality scores (FASTA), use standard extraction
+        if quality_scores is None or len(quality_scores) == 0:
+            return self.extract_kmers(sequence, k, skip_n_kmers)
+
+        # Extract k-mers with quality filtering
+        kmers: list[bytes] = []
+        sequence_upper = sequence.upper()
+
+        for i in range(len(sequence_upper) - k + 1):
+            kmer = sequence_upper[i : i + k]
+
+            # Skip if contains N
+            if skip_n_kmers and b"N" in kmer:
+                continue
+
+            # Check quality scores for this k-mer's bases
+            kmer_quals = quality_scores[i : i + k]
+            if len(kmer_quals) < k:  # Safety check
+                continue
+
+            # Convert Phred+33 ASCII to quality scores
+            # All bases in k-mer must meet minimum quality
+            if all(ord(q) - 33 >= min_quality for q in kmer_quals):
+                rc_kmer = self._py_reverse_complement(kmer)
+                kmers.append(kmer if kmer <= rc_kmer else rc_kmer)
+
+        return kmers
+
     def extract_kmers(
         self, sequence_bytes: bytes, k: int, skip_n_kmers: bool
-    ) -> List[bytes]:
+    ) -> list[bytes]:
         """Extract k-mers using the configured implementation."""
         if not sequence_bytes or len(sequence_bytes) < k:
             return []
@@ -146,7 +207,10 @@ class KmerExtractor:
                     f"Error during k-mer extraction: {te}"
                 )
                 return []
-        except Exception as e:
+        except (ValueError, MemoryError, RuntimeError) as e:
+            # ValueError: Invalid sequence data
+            # MemoryError: Sequence too large
+            # RuntimeError: Issues with extraction logic
             logging.getLogger(__name__).error(f"Error during k-mer extraction: {e}")
             return []
 
@@ -185,7 +249,7 @@ class SequenceFileProcessor:
     @staticmethod
     def _process_read_pair(
         fwd_record, rev_iter, logger
-    ) -> Generator[Tuple[str, bytes, bytes], None, None]:
+    ) -> Generator[tuple[str, bytes, bytes], None, None]:
         """Processes a forward read and its corresponding reverse read."""
         if fwd_record is None:
             return
@@ -272,7 +336,7 @@ class SequenceFileProcessor:
 
         with SequenceFileProcessor.open_file_handle(fwd_reads_path) as fwd_fh:
             rev_fh: Optional[TextIO] = None
-            chunk: List[Tuple[ReadId, bytes, bytes]] = []
+            chunk: list[tuple[ReadId, bytes, bytes]] = []
             read_counter = 0
 
             if rev_reads_path:
@@ -314,10 +378,10 @@ class SequenceFileProcessor:
 class CliArgs(BaseModel):
     """Pydantic model for command-line argument validation and management."""
 
-    input_forward: List[pathlib.Path] = Field(
+    input_forward: list[pathlib.Path] = Field(
         description="Input forward read file(s) (FASTA/FASTQ, possibly gzipped)."
     )
-    input_reverse: Optional[List[pathlib.Path]] = Field(
+    input_reverse: Optional[list[pathlib.Path]] = Field(
         default=None,
         description="Optional input reverse read file(s) for paired-end data.",
     )
@@ -348,6 +412,12 @@ class CliArgs(BaseModel):
     )
     chunk_size: int = Field(
         default=DEFAULT_CHUNK_SIZE, description="Chunk size for multiprocessing."
+    )
+    min_base_quality: int = Field(
+        default=20,
+        ge=0,
+        le=60,
+        description="Minimum Phred quality score for bases in k-mers (FASTQ only). K-mers containing bases below this quality are excluded. Default 20 (99% accuracy)."
     )
 
     @field_validator("input_forward", "input_reverse", "db_path", mode="before")
@@ -400,11 +470,18 @@ class KmerClassificationWorkflow:
         """Initialize the workflow with validated arguments."""
         self.args = args
         self.database: Optional[StrainKmerDatabase] = None
+        self.kmer_coverage: dict[bytes, int] = {}  # Track k-mer observation counts for scientific validation
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
 
     def _initialize_database(self) -> None:
         """Loads and initializes the StrainKmerDatabase."""
+        # Validate database path exists before attempting to load
+        if not self.args.db_path.exists():
+            raise FileNotFoundError(f"Database file not found: {self.args.db_path}")
+        if not self.args.db_path.is_file():
+            raise ValueError(f"Database path is not a file: {self.args.db_path}")
+
         self.logger.info(f"Loading k-mer database from: {self.args.db_path}")
         try:
             self.database = StrainKmerDatabase(self.args.db_path)
@@ -418,14 +495,15 @@ class KmerClassificationWorkflow:
             raise
 
     def _count_kmers_for_read(
-        self, record_tuple: Tuple[ReadId, bytes, bytes]
-    ) -> Tuple[ReadId, CountVector]:
+        self, record_tuple: tuple[ReadId, bytes, bytes]
+    ) -> tuple[ReadId, CountVector]:
         """Processes a single read to count k-mer occurrences against the database."""
         if self.database is None:
             raise RuntimeError("Database not initialized.")
 
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
-        all_kmers: Set[bytes] = set()
+        from collections import Counter
+        kmer_counts: Counter = Counter()  # Track k-mer multiplicities within this read
 
         if self.database is None:  # Should not happen if workflow is correct
             raise RuntimeError("Database not initialized in _count_kmers_for_read.")
@@ -441,15 +519,15 @@ class KmerClassificationWorkflow:
         # Process forward sequence
         if fwd_seq_bytes:
             kmers_fwd = KMER_EXTRACTOR.extract_kmers(fwd_seq_bytes, k_len, skip_n)
-            all_kmers.update(kmers_fwd)
+            kmer_counts.update(kmers_fwd)
         # Process reverse sequence
         if rev_seq_bytes:
             kmers_rev = KMER_EXTRACTOR.extract_kmers(rev_seq_bytes, k_len, skip_n)
-            all_kmers.update(kmers_rev)
+            kmer_counts.update(kmers_rev)
 
-        # Count strain hits
+        # Count strain hits (use unique k-mers for classification)
         strain_counts = np.zeros(self.database.num_strains, dtype=np.uint8)
-        for kmer_bytes in all_kmers:
+        for kmer_bytes in kmer_counts.keys():
             if self.database and hasattr(self.database, "get_strain_counts_for_kmer"):
                 kmer_strain_counts = self.database.get_strain_counts_for_kmer(
                     kmer_bytes
@@ -484,9 +562,9 @@ class KmerClassificationWorkflow:
             fwd_reads_path, rev_reads_path, chunk_size=self.args.chunk_size
         )
 
-        accumulated_clear_assignments: Dict[ReadId, int] = {}
-        accumulated_no_hit_ids: List[ReadId] = []
-        ambiguous_hit_files: List[pathlib.Path] = []
+        accumulated_clear_assignments: dict[ReadId, int] = {}
+        accumulated_no_hit_ids: list[ReadId] = []
+        ambiguous_hit_files: list[pathlib.Path] = []
 
         temp_ambiguous_dir = self.args.output_dir / "temp_ambiguous_chunks"
         temp_ambiguous_dir.mkdir(parents=True, exist_ok=True)
@@ -576,6 +654,48 @@ class KmerClassificationWorkflow:
         df.to_csv(output_path, index=False)
         # self.logger.info(f"Raw k-mer hit counts for chunk {chunk_idx} saved to: {output_path}")
 
+    def _save_reproducibility_metadata(self) -> None:
+        """
+        Save analysis metadata for reproducibility.
+
+        Saves: software version, execution timestamp, all parameters,
+        database info. Critical for scientific reproducibility.
+        """
+        import json
+        from datetime import datetime
+        import sys
+
+        metadata = {
+            "strainr_version": "1.0.0",  # TODO: Load from package __version__
+            "python_version": sys.version,
+            "execution_timestamp": datetime.now().isoformat(),
+            "parameters": {
+                "db_path": str(self.args.db_path),
+                "num_processes": self.args.num_processes,
+                "disambiguation_mode": self.args.disambiguation_mode,
+                "abundance_threshold": self.args.abundance_threshold,
+                "chunk_size": self.args.chunk_size,
+                "min_base_quality": self.args.min_base_quality,
+                "perform_binning": self.args.perform_binning,
+                "save_raw_kmer_hits": self.args.save_raw_kmer_hits,
+            },
+            "database_info": {
+                "kmer_length": self.database.kmer_length if self.database else None,
+                "num_strains": self.database.num_strains if self.database else None,
+                "num_kmers": self.database.num_kmers if self.database else None,
+                "skip_n_kmers": self.database.db_skip_n_kmers if self.database else None,
+            },
+            "input_files": {
+                "forward": [str(p) for p in (self.args.input_forward if isinstance(self.args.input_forward, list) else [self.args.input_forward])],
+                "reverse": [str(p) for p in self.args.input_reverse] if self.args.input_reverse else None,
+            },
+        }
+
+        metadata_file = self.args.output_dir / "analysis_metadata.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        self.logger.info(f"Saved reproducibility metadata to {metadata_file}")
+
     def run_workflow(self) -> None:
         # This method orchestrates the main StrainR classification workflow.
         # It handles database initialization, iterating through input files,
@@ -590,6 +710,8 @@ class KmerClassificationWorkflow:
 
         try:
             self._initialize_database()
+            # Save reproducibility metadata after database is loaded
+            self._save_reproducibility_metadata()
             if (
                 self.database is None
             ):  # Should be caught by _initialize_database, but defensive check
