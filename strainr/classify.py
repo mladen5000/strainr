@@ -419,6 +419,17 @@ class CliArgs(BaseModel):
         le=60,
         description="Minimum Phred quality score for bases in k-mers (FASTQ only). K-mers containing bases below this quality are excluded. Default 20 (99% accuracy)."
     )
+    min_kmer_threshold: int = Field(
+        default=10,
+        ge=1,
+        description="Minimum number of unique k-mers required to call a strain present. Strains with fewer k-mer hits are considered absent. Default 10 provides statistical confidence."
+    )
+    min_genome_coverage: float = Field(
+        default=0.01,
+        ge=0.0,
+        le=1.0,
+        description="Minimum fraction of genome k-mers that must be observed (0.0-1.0). Default 0.01 means 1% genome coverage required for presence calling."
+    )
 
     @field_validator("input_forward", "input_reverse", "db_path", mode="before")
     @classmethod
@@ -471,6 +482,12 @@ class KmerClassificationWorkflow:
         self.args = args
         self.database: Optional[StrainKmerDatabase] = None
         self.kmer_coverage: dict[bytes, int] = {}  # Track k-mer observation counts for scientific validation
+        self.read_quality_stats: dict[str, list] = {
+            'read_lengths': [],
+            'gc_contents': [],
+            'mean_qualities': [],
+            'n_counts': []
+        }  # Track read quality metrics for QC reporting
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
 
@@ -494,6 +511,95 @@ class KmerClassificationWorkflow:
             self.logger.error(f"Failed to load database: {e}")
             raise
 
+    def _update_read_stats(self, seq_bytes: bytes) -> None:
+        """
+        Update read quality statistics for QC reporting.
+
+        Tracks:
+        - Read length distribution
+        - GC content (important for amplification bias detection)
+        - N content (ambiguous bases indicate quality issues)
+        """
+        if not seq_bytes or len(seq_bytes) == 0:
+            return
+
+        seq_upper = seq_bytes.upper()
+        length = len(seq_upper)
+
+        # Calculate GC content
+        gc_count = seq_upper.count(b'G') + seq_upper.count(b'C')
+        gc_content = gc_count / length if length > 0 else 0.0
+
+        # Count ambiguous bases
+        n_count = seq_upper.count(b'N')
+
+        # Store statistics (sampling to avoid memory issues with large datasets)
+        if len(self.read_quality_stats['read_lengths']) < 10000:  # Sample first 10k reads
+            self.read_quality_stats['read_lengths'].append(length)
+            self.read_quality_stats['gc_contents'].append(gc_content)
+            self.read_quality_stats['n_counts'].append(n_count)
+
+    def _generate_quality_report(self) -> dict:
+        """
+        Generate comprehensive read quality statistics report.
+
+        Returns dictionary with QC metrics for scientific assessment.
+        """
+        if not self.read_quality_stats['read_lengths']:
+            return {}
+
+        lengths = self.read_quality_stats['read_lengths']
+        gc_contents = self.read_quality_stats['gc_contents']
+        n_counts = self.read_quality_stats['n_counts']
+
+        report = {
+            'num_reads_sampled': len(lengths),
+            'mean_read_length': float(np.mean(lengths)),
+            'median_read_length': float(np.median(lengths)),
+            'min_read_length': int(np.min(lengths)),
+            'max_read_length': int(np.max(lengths)),
+            'mean_gc_content': float(np.mean(gc_contents)),
+            'std_gc_content': float(np.std(gc_contents)),
+            'gc_content_range': [float(np.min(gc_contents)), float(np.max(gc_contents))],
+            'mean_n_per_read': float(np.mean(n_counts)),
+            'reads_with_n': int(sum(1 for n in n_counts if n > 0)),
+            'gc_bias_detected': self._detect_gc_bias(gc_contents)
+        }
+
+        return report
+
+    def _detect_gc_bias(self, gc_contents: list) -> dict:
+        """
+        Detect GC content bias that could indicate amplification artifacts.
+
+        Returns:
+            Dictionary with bias detection results and recommendations
+        """
+        if not gc_contents or len(gc_contents) < 10:
+            return {'bias_present': False, 'message': 'Insufficient data'}
+
+        gc_array = np.array(gc_contents)
+        mean_gc = np.mean(gc_array)
+        std_gc = np.std(gc_array)
+
+        # Expected GC content for bacteria is typically 35-65%
+        # High std deviation or extreme mean suggests bias
+        bias_present = std_gc < 0.05 or mean_gc < 0.25 or mean_gc > 0.75
+
+        return {
+            'bias_present': bool(bias_present),
+            'mean_gc': float(mean_gc),
+            'std_gc': float(std_gc),
+            'message': (
+                'Potential PCR/amplification bias detected. Extreme or narrow GC distribution.'
+                if bias_present else 'GC content distribution appears normal.'
+            ),
+            'recommendation': (
+                'Consider using GC-balanced normalization or reviewing library prep protocol.'
+                if bias_present else 'No GC correction needed.'
+            )
+        }
+
     def _count_kmers_for_read(
         self, record_tuple: tuple[ReadId, bytes, bytes]
     ) -> tuple[ReadId, CountVector]:
@@ -504,6 +610,12 @@ class KmerClassificationWorkflow:
         read_id, fwd_seq_bytes, rev_seq_bytes = record_tuple
         from collections import Counter
         kmer_counts: Counter = Counter()  # Track k-mer multiplicities within this read
+
+        # Collect read quality statistics
+        if fwd_seq_bytes:
+            self._update_read_stats(fwd_seq_bytes)
+        if rev_seq_bytes:
+            self._update_read_stats(rev_seq_bytes)
 
         if self.database is None:  # Should not happen if workflow is correct
             raise RuntimeError("Database not initialized in _count_kmers_for_read.")

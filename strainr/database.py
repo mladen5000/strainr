@@ -81,6 +81,7 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         self.kmer_to_counts_map: Dict[bytes, np.ndarray] = {}
         self.kmer_specificity_map: Dict[bytes, int] = {}  # Track how many strains each k-mer appears in
+        self.strain_genome_lengths: Dict[str, int] = {}  # Track genome length per strain for normalization
         self.strain_names: List[str] = []
         self.num_strains: int = 0
         self.num_kmers: int = 0
@@ -304,6 +305,16 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         self.num_kmers = len(self.kmer_to_counts_map)
 
+        # Calculate estimated genome lengths for normalization
+        # Estimate by counting total k-mers per strain (not perfect but reasonable proxy)
+        for strain_idx, strain_name in enumerate(self.strain_names):
+            kmer_count = sum(1 for kmer_counts in self.kmer_to_counts_map.values()
+                           if kmer_counts[strain_idx] > 0)
+            # Approximate genome length: num_kmers + (k - 1)
+            # This is a lower bound since we only see unique k-mers
+            estimated_length = kmer_count + (self.kmer_length - 1) if self.kmer_length else kmer_count
+            self.strain_genome_lengths[strain_name] = estimated_length
+
         # Log k-mer specificity statistics for scientific insight
         if self.kmer_specificity_map:
             specificity_values = list(self.kmer_specificity_map.values())
@@ -314,6 +325,16 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 f" - Unique to single strain: {unique_to_one} ({100*unique_to_one/self.num_kmers:.1f}%)\n"
                 f" - Shared by all strains: {shared_by_all} ({100*shared_by_all/self.num_kmers:.1f}%)\n"
                 f" - Average strain count per k-mer: {np.mean(specificity_values):.2f}"
+            )
+
+        # Log genome length estimates
+        if self.strain_genome_lengths:
+            lengths = list(self.strain_genome_lengths.values())
+            logger.info(
+                f"Estimated genome lengths (for normalization):\n"
+                f" - Mean: {np.mean(lengths):,.0f} bp\n"
+                f" - Median: {np.median(lengths):,.0f} bp\n"
+                f" - Range: {min(lengths):,.0f} - {max(lengths):,.0f} bp"
             )
 
         if (
