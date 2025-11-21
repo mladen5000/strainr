@@ -4,6 +4,7 @@ import gzip
 import mimetypes
 import pathlib
 import pickle
+import re
 import shutil # Added for shutil.which
 from typing import Dict, List, Tuple, Union, TextIO, BinaryIO
 
@@ -13,7 +14,21 @@ from Bio.Seq import Seq
 
 
 def _get_sample_name(file_path: pathlib.Path) -> str:
-    """Extract sample name from file path."""
+    """
+    Extract sample name from file path.
+
+    Sanitizes the result to prevent path traversal attacks by removing
+    potentially dangerous characters and patterns.
+
+    Args:
+        file_path: Path to the input file
+
+    Returns:
+        Sanitized sample name safe for use in filesystem paths
+
+    Raises:
+        ValueError: If the resulting sanitized name is empty
+    """
     # Remove common suffixes and prefixes
     name = file_path.name
     for suffix in [".fastq", ".fasta", ".fq", ".fa", ".gz"]:
@@ -26,7 +41,21 @@ def _get_sample_name(file_path: pathlib.Path) -> str:
             name = name.split(pattern)[0]
             break
 
-    return name
+    # Sanitize to prevent path traversal attacks
+    # Only allow alphanumeric characters, underscores, hyphens, and dots
+    # This prevents "../", "//", "\\", and other path manipulation
+    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', name)
+
+    # Remove leading/trailing dots and underscores (can be problematic)
+    safe_name = safe_name.strip('._')
+
+    # Ensure name is not empty after sanitization
+    if not safe_name:
+        # Fallback to a hash of the original name to ensure uniqueness
+        import hashlib
+        safe_name = f"sample_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+
+    return safe_name
 
 
 def open_file_transparently(

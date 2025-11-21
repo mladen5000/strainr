@@ -91,13 +91,19 @@ class ClassificationError(ProcessingException):
     pass
 
 
-class MemoryError(ProcessingException):
-    """Insufficient memory for operation."""
+class StrainRMemoryError(ProcessingException):
+    """Insufficient memory for operation.
+
+    Note: Named StrainRMemoryError to avoid shadowing built-in MemoryError.
+    """
     pass
 
 
-class TimeoutError(ProcessingException):
-    """Operation exceeded timeout limit."""
+class StrainRTimeoutError(ProcessingException):
+    """Operation exceeded timeout limit.
+
+    Note: Named StrainRTimeoutError to avoid shadowing built-in TimeoutError.
+    """
     pass
 
 

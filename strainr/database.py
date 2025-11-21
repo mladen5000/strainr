@@ -195,6 +195,23 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
                 details={'path': str(self.database_path)}
             )
 
+        # Validate file size before loading to prevent resource exhaustion
+        MAX_DB_SIZE_GB = 50  # Maximum database file size in GB
+        file_size_bytes = self.database_path.stat().st_size
+        file_size_gb = file_size_bytes / (1024 ** 3)
+
+        if file_size_gb > MAX_DB_SIZE_GB:
+            raise DatabaseLoadError(
+                f"Database file too large: {file_size_gb:.2f} GB exceeds maximum of {MAX_DB_SIZE_GB} GB",
+                details={
+                    'file_size_gb': file_size_gb,
+                    'max_size_gb': MAX_DB_SIZE_GB,
+                    'path': str(self.database_path)
+                }
+            )
+
+        logger.info(f"Database file size: {file_size_gb:.2f} GB")
+
         try:
             kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_path)
         except (IOError, ValueError, pd.errors.EmptyDataError) as e:
@@ -217,6 +234,35 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
 
         if kmer_strain_df.empty:
             raise ValueError(f"Loaded database is empty: {self.database_path}")
+
+        # Validate database dimensions to prevent resource exhaustion
+        MAX_STRAINS = 100000  # Maximum number of strains
+        MAX_KMERS = 1000000000  # Maximum number of k-mers (1 billion)
+
+        num_kmers = len(kmer_strain_df)
+        num_strains = len(kmer_strain_df.columns)
+
+        if num_strains > MAX_STRAINS:
+            raise DatabaseLoadError(
+                f"Database has too many strains: {num_strains} exceeds maximum of {MAX_STRAINS}",
+                details={
+                    'num_strains': num_strains,
+                    'max_strains': MAX_STRAINS,
+                    'path': str(self.database_path)
+                }
+            )
+
+        if num_kmers > MAX_KMERS:
+            raise DatabaseLoadError(
+                f"Database has too many k-mers: {num_kmers} exceeds maximum of {MAX_KMERS}",
+                details={
+                    'num_kmers': num_kmers,
+                    'max_kmers': MAX_KMERS,
+                    'path': str(self.database_path)
+                }
+            )
+
+        logger.info(f"Database dimensions: {num_kmers:,} k-mers × {num_strains:,} strains")
 
         self.strain_names = list(kmer_strain_df.columns.astype(str))
         self.num_strains = len(self.strain_names)

@@ -459,8 +459,10 @@ def filter_by_coverage_thresholds(
     read_assignments: Dict[str, int],
     strain_hit_counts: Dict[str, int],
     strain_genome_lengths: Dict[str, int],
+    strain_names: List[str],
     min_kmer_count: int = 10,
-    min_genome_fraction: float = 0.01
+    min_genome_fraction: float = 0.01,
+    unassigned_marker: int = -1
 ) -> Dict[str, int]:
     """
     Filter strain assignments based on minimum coverage thresholds.
@@ -472,11 +474,17 @@ def filter_by_coverage_thresholds(
         read_assignments: Dictionary mapping read IDs to strain indices
         strain_hit_counts: Number of unique k-mers observed per strain
         strain_genome_lengths: Estimated genome length (in k-mers) per strain
+        strain_names: List of strain names for index-to-name mapping
         min_kmer_count: Minimum number of unique k-mers (absolute threshold)
         min_genome_fraction: Minimum fraction of genome k-mers observed (0.0-1.0)
+        unassigned_marker: Strain index value for unassigned reads (default: -1)
 
     Returns:
-        Filtered read_assignments with low-coverage strains removed
+        Filtered read_assignments with low-coverage strains marked as unassigned
+
+    Raises:
+        TypeError: If input types are incorrect
+        ValueError: If thresholds are invalid
 
     Scientific rationale:
     - Random k-mer matches occur at low frequency
@@ -484,18 +492,26 @@ def filter_by_coverage_thresholds(
     - Default: ≥10 k-mers AND ≥1% genome coverage
     - Prevents false positives from contamination or sequencing errors
     """
-    import numpy as np
-
+    # Input validation
+    if not isinstance(read_assignments, dict):
+        raise TypeError("read_assignments must be a dictionary")
     if not isinstance(strain_hit_counts, dict):
         raise TypeError("strain_hit_counts must be a dictionary")
     if not isinstance(strain_genome_lengths, dict):
         raise TypeError("strain_genome_lengths must be a dictionary")
+    if not isinstance(strain_names, list):
+        raise TypeError("strain_names must be a list")
+    if min_kmer_count < 0:
+        raise ValueError("min_kmer_count must be non-negative")
+    if not (0.0 <= min_genome_fraction <= 1.0):
+        raise ValueError("min_genome_fraction must be between 0.0 and 1.0")
 
-    filtered_assignments = {}
-    strains_to_keep = set()
+    # Build set of strain indices that meet the thresholds
+    valid_strain_indices = set()
 
     # Identify strains meeting both thresholds
-    for strain_name, kmer_count in strain_hit_counts.items():
+    for strain_idx, strain_name in enumerate(strain_names):
+        kmer_count = strain_hit_counts.get(strain_name, 0)
         genome_length = strain_genome_lengths.get(strain_name, 0)
 
         # Check absolute k-mer threshold
@@ -506,14 +522,21 @@ def filter_by_coverage_thresholds(
             coverage_fraction = kmer_count / genome_length
             meets_coverage_threshold = coverage_fraction >= min_genome_fraction
         else:
-            meets_coverage_threshold = False
+            # If genome length unknown, only use absolute count threshold
+            meets_coverage_threshold = True
 
         # Keep strain if it meets BOTH thresholds
         if meets_count_threshold and meets_coverage_threshold:
-            strains_to_keep.add(strain_name)
+            valid_strain_indices.add(strain_idx)
 
-    # Filter read assignments (keeping only reads assigned to valid strains)
-    # Note: This function signature suggests strain_name lookup, but read_assignments
-    # has strain indices. This needs strain_names list for proper filtering.
-    # For now, return all assignments - caller should handle strain-level filtering
-    return read_assignments  # TODO: Implement proper filtering with strain name mapping
+    # Filter read assignments: reassign reads to unassigned if strain doesn't meet thresholds
+    filtered_assignments = {}
+    for read_id, strain_idx in read_assignments.items():
+        if strain_idx in valid_strain_indices:
+            # Strain meets thresholds, keep assignment
+            filtered_assignments[read_id] = strain_idx
+        else:
+            # Strain doesn't meet thresholds, mark as unassigned
+            filtered_assignments[read_id] = unassigned_marker
+
+    return filtered_assignments
