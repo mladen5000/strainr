@@ -4,12 +4,19 @@ K-mer database management for strain classification.
 
 import pathlib
 import logging # Added for logging
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq # Added for reading schema
+
+from .exceptions import (
+    DatabaseNotFoundError,
+    DatabaseLoadError,
+    DatabaseCorruptedError
+)
 
 logger = logging.getLogger(__name__) # Added logger
 
@@ -131,26 +138,74 @@ class StrainKmerDatabase:  # Renamed from StrainKmerDb
     def __contains__(self, kmer: bytes) -> bool:
         return kmer in self.kmer_to_counts_map
 
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit with cleanup."""
+        self.cleanup()
+        return False
+
+    def cleanup(self):
+        """
+        Release resources and clear memory.
+
+        Call this method when done with the database to free memory.
+        Especially important for large databases in long-running processes.
+        """
+        logger.info(f"Cleaning up database resources for {self.database_path.name}")
+        self.kmer_to_counts_map.clear()
+        self.kmer_specificity_map.clear()
+        self.strain_genome_lengths.clear()
+        self.strain_names.clear()
+        self.num_kmers = 0
+        self.num_strains = 0
+
+    def get_memory_usage(self) -> dict:
+        """
+        Estimate memory usage of database components.
+
+        Returns:
+            Dictionary with memory usage estimates in MB
+        """
+        import sys
+
+        kmer_map_size = sys.getsizeof(self.kmer_to_counts_map)
+        for k, v in self.kmer_to_counts_map.items():
+            kmer_map_size += sys.getsizeof(k) + v.nbytes
+
+        spec_map_size = sys.getsizeof(self.kmer_specificity_map)
+        for k, v in self.kmer_specificity_map.items():
+            spec_map_size += sys.getsizeof(k) + sys.getsizeof(v)
+
+        return {
+            'kmer_map_mb': kmer_map_size / (1024 * 1024),
+            'specificity_map_mb': spec_map_size / (1024 * 1024),
+            'total_mb': (kmer_map_size + spec_map_size) / (1024 * 1024)
+        }
+
     def _read_and_validate_parquet_file(self) -> pd.DataFrame:
         """Reads and performs initial validation on the Parquet database file."""
 
-        print(f"Loading k-mer database from {self.database_path} (Parquet format)...")
+        logger.info(f"Loading k-mer database from {self.database_path} (Parquet format)...")
         if not self.database_path.is_file():
-            raise FileNotFoundError(f"Database file not found: {self.database_path}")
+            raise DatabaseNotFoundError(
+                f"Database file not found: {self.database_path}",
+                details={'path': str(self.database_path)}
+            )
 
         try:
             kmer_strain_df: pd.DataFrame = pd.read_parquet(self.database_path)
-        except (
-            IOError,
-            ValueError,
-            pd.errors.EmptyDataError,
-        ) as e:  # More specific pandas/IO errors
-            raise RuntimeError(
-                f"Failed to read or process Parquet database from {self.database_path}: {e}"
+        except (IOError, ValueError, pd.errors.EmptyDataError) as e:
+            raise DatabaseLoadError(
+                f"Failed to read or process Parquet database from {self.database_path}",
+                details={'error': str(e), 'path': str(self.database_path)}
             ) from e
-        except Exception as e:  # Catch other potential pyarrow/pandas load errors
-            raise RuntimeError(
-                f"An unexpected error occurred while reading Parquet file {self.database_path}: {e}"
+        except Exception as e:
+            raise DatabaseCorruptedError(
+                f"Database file appears corrupted or invalid: {self.database_path}",
+                details={'error': str(e), 'path': str(self.database_path)}
             ) from e
 
         if not isinstance(

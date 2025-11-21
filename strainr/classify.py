@@ -14,12 +14,29 @@ import multiprocessing as mp
 import pathlib
 import pickle
 import sys
+import time
+from contextlib import contextmanager
 from typing import Callable, Generator, Optional, TextIO, Union
 
 import numpy as np
 import pandas as pd
 
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Fallback: create dummy tqdm that just returns the iterable
+    def tqdm(iterable, **kwargs):
+        return iterable
+
 from strainr import ClassificationAnalyzer, StrainKmerDatabase
+from strainr.exceptions import (
+    DatabaseLoadError,
+    InvalidInputFileError,
+    ProcessingException,
+    InsufficientResourcesError
+)
 
 try:
     from Bio import SeqIO
@@ -488,8 +505,36 @@ class KmerClassificationWorkflow:
             'mean_qualities': [],
             'n_counts': []
         }  # Track read quality metrics for QC reporting
+        self.performance_metrics: dict[str, float] = {
+            'database_load_time': 0.0,
+            'classification_time': 0.0,
+            'total_reads_processed': 0,
+            'reads_per_second': 0.0
+        }  # Track performance for monitoring
         self.logger = logging.getLogger(__name__)
         self.logger.info("Initialized KmerClassificationWorkflow")
+
+    @contextmanager
+    def _timed_operation(self, operation_name: str):
+        """
+        Context manager for timing operations and logging performance.
+
+        Usage:
+            with self._timed_operation("database_loading"):
+                # operation code here
+        """
+        start_time = time.time()
+        self.logger.info(f"Starting: {operation_name}")
+        try:
+            yield
+        except Exception as e:
+            self.logger.error(f"Failed: {operation_name} - {e}")
+            raise
+        finally:
+            elapsed = time.time() - start_time
+            self.logger.info(f"Completed: {operation_name} in {elapsed:.2f}s")
+            if operation_name in self.performance_metrics:
+                self.performance_metrics[operation_name] = elapsed
 
     def _initialize_database(self) -> None:
         """Loads and initializes the StrainKmerDatabase."""
